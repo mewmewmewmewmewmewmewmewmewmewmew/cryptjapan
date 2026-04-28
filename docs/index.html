@@ -284,10 +284,10 @@
   </select>
 
   <select id="step">
-    <option value="all">Show all</option>
-    <option value="96">96 per page</option>
-    <option value="48" selected>48 per page</option>
     <option value="24">24 per page</option>
+    <option value="48" selected>48 per page</option>
+    <option value="96">96 per page</option>
+    <option value="all">Show all</option>
   </select>
 
   <button id="fetch-btn" onclick="fetchListings(true)">Fetch listings</button>
@@ -320,7 +320,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.15</footer>
+<footer>v0.16</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
