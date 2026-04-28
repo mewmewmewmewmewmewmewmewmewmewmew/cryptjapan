@@ -320,7 +320,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.16</footer>
+<footer>v0.17</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -413,26 +413,52 @@
       const total = firstData.findTotal ?? cards.length;
       const pages = firstData.totalPages ?? 1;
 
-      if (showAll && pages > 1) {
-        for (let p = 2; p <= pages; p++) {
-          status.textContent = `Fetching page ${p} of ${pages}…`;
-          const d = await fetchPage(p);
-          cards = cards.concat((d.filterNFtCard || []).filter(c => c.listing));
+      await getSolPrice();
+      updatePagination(showAll ? 1 : pages);
+
+      if (showAll) {
+        // Render first page immediately so user sees results while rest loads
+        allRows = cards;
+        renderTable(cards);
+        repopulateAltCells(cards);
+        repopulateSnkrdunkCells(cards);
+        window.scrollTo(0, 0);
+
+        if (pages > 1) {
+          const tbody = document.getElementById("results-body");
+          document.getElementById("empty-msg").style.display = "none";
+          for (let p = 2; p <= pages; p++) {
+            status.textContent = `Loading page ${p} of ${pages} — ${cards.length} cards so far…`;
+            await new Promise(r => setTimeout(r, 600));
+            try {
+              const d = await fetchPage(p);
+              const newCards = (d.filterNFtCard || []).filter(c => c.listing);
+              cards = cards.concat(newCards);
+              allRows = cards;
+              tbody.insertAdjacentHTML("beforeend", newCards.map(buildRowHtml).join(""));
+              repopulateAltCells(newCards);
+              repopulateSnkrdunkCells(newCards);
+            } catch (e) {
+              status.textContent = `Stopped at page ${p} (${e.message}) — showing ${cards.length} cards`;
+              break;
+            }
+          }
         }
+
+        status.textContent = `${cards.length.toLocaleString()} listings loaded`;
+        fetchAltPrices(cards);
+        fetchSnkrdunkPrices(cards);
+      } else {
+        allRows = cards;
+        status.textContent = `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
+        renderTable(cards);
+        repopulateAltCells(cards);
+        repopulateSnkrdunkCells(cards);
+        fetchAltPrices(cards);
+        fetchSnkrdunkPrices(cards);
+        window.scrollTo(0, 0);
       }
 
-      allRows = cards;
-      status.textContent = showAll
-        ? `${cards.length.toLocaleString()} listings loaded`
-        : `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
-      updatePagination(showAll ? 1 : pages);
-      await getSolPrice();
-      renderTable(cards);
-      repopulateAltCells(cards);
-      repopulateSnkrdunkCells(cards);
-      fetchAltPrices(cards);
-      fetchSnkrdunkPrices(cards);
-      window.scrollTo(0, 0);
       document.getElementById("refresh-btn").disabled = false;
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
@@ -441,39 +467,39 @@
     }
   }
 
+  function buildRowHtml(c) {
+    const l = c.listing;
+    const cardUrl = `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
+    const price = Number(l.price);
+    const solAmt = `${price % 1 === 0 ? price : price.toFixed(2)} SOL`;
+    const priceStr = l.currency === "SOL"
+      ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="price-sub">(${solAmt})</span>` : solAmt)
+      : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    const certDisplay = c.gradingCompany === "PSA"
+      ? `<a href="https://www.psacard.com/cert/${esc(c.gradingID)}/psa" target="_blank" rel="noopener" style="color:#94a3b8">${esc(c.gradingID)}</a>`
+      : esc(c.gradingID);
+    return `<tr>
+      <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${boldCardName(c.itemName)}</a></td>
+      <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+)$/)?.[1] || c.grade))}</td>
+      <td>${certDisplay}</td>
+      <td class="price">${priceStr}</td>
+      <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
+      <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
+    </tr>`;
+  }
+
   function renderTable(rows) {
     const tbody = document.getElementById("results-body");
     const empty = document.getElementById("empty-msg");
-
     if (!rows.length) {
       tbody.innerHTML = "";
       empty.style.display = "block";
       return;
     }
     empty.style.display = "none";
-
-    tbody.innerHTML = rows.map(c => {
-      const l = c.listing;
-      const cardUrl = `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
-      const price = Number(l.price);
-      const solAmt = `${price % 1 === 0 ? price : price.toFixed(2)} SOL`;
-      const priceStr = l.currency === "SOL"
-        ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="price-sub">(${solAmt})</span>` : solAmt)
-        : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-      const certDisplay = c.gradingCompany === "PSA"
-        ? `<a href="https://www.psacard.com/cert/${esc(c.gradingID)}/psa" target="_blank" rel="noopener" style="color:#94a3b8">${esc(c.gradingID)}</a>`
-        : esc(c.gradingID);
-      return `<tr>
-        <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${boldCardName(c.itemName)}</a></td>
-        <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+)$/)?.[1] || c.grade))}</td>
-        <td>${certDisplay}</td>
-        <td class="price">${priceStr}</td>
-        <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
-        <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
-        <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
-        <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
-      </tr>`;
-    }).join("");
+    tbody.innerHTML = rows.map(buildRowHtml).join("");
   }
 
   function sortBy(col) {
