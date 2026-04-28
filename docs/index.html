@@ -172,6 +172,8 @@
     .alt-loading { color: #333; font-size: 11px; }
     .alt-link { color: #a78bfa; text-decoration: none; }
     .alt-link:hover { text-decoration: underline; }
+    .card-link { color: #e8e8e8; text-decoration: none; }
+    .card-link:hover { text-decoration: underline; }
     .snkrdunk-price a { color: #38bdf8; text-decoration: none; }
     .snkrdunk-price a:hover { text-decoration: underline; }
     .delta-pos { color: #4ade80; font-variant-numeric: tabular-nums; white-space: nowrap; }
@@ -298,7 +300,6 @@
         <th onclick="sortBy('altDelta')">Alt Δ</th>
         <th onclick="sortBy('snkrdunkPrice')">SNKRDUNK</th>
         <th onclick="sortBy('snkrdunkDelta')">SNKRDUNK Δ</th>
-        <th>Link</th>
       </tr>
     </thead>
     <tbody id="results-body"></tbody>
@@ -312,7 +313,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.5</footer>
+<footer>v0.6</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -433,7 +434,7 @@
         ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (${solAmt})` : solAmt)
         : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
       return `<tr>
-        <td title="${esc(c.itemName)}">${boldCardName(c.itemName)}</td>
+        <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${boldCardName(c.itemName)}</a></td>
         <td>${esc(c.grade)}</td>
         <td>${esc(c.gradingID)}</td>
         <td class="price">${priceStr}</td>
@@ -441,7 +442,6 @@
         <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
         <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
         <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
-        <td><a href="${cardUrl}" target="_blank" rel="noopener">View ↗</a></td>
       </tr>`;
     }).join("");
   }
@@ -621,8 +621,17 @@
     return jpyUsd;
   }
 
-  // Extract "CardName num" from CC itemName e.g. "2023 #203 Ceruledge ex SAR PSA 10 Japanese..." → "Ceruledge ex 203"
-  // Also handles "Full Art/Braixen" patterns → "Braixen 069"
+  // Build SNKRDUNK keywords from the CC clean card name field (e.g. "Shining Lugia-Holo" → "Shining Lugia 058")
+  function snkrdunkKeywordsFromClean(cleanName, itemName) {
+    const numMatch = itemName.match(/#(\d+)/);
+    const num = numMatch ? numMatch[1] : "";
+    // Strip PSA/grading company suffixes and holo/rarity suffixes (CC "Card Name" field includes them)
+    const baseName = cleanName.replace(/\s*-.*$/, "").replace(/\s*(PSA|BGS|CGC|SGC).*$/i, "").trim();
+    return `${baseName} ${num}`.trim();
+  }
+
+  // Extract "CardName num" from CC itemName — forward parse, then backward fallback for
+  // non-standard formats like "2017 #58 JAPANESE SUN & MOON ... SHINING LUGIA PSA 10"
   function snkrdunkKeywords(itemName) {
     const m = itemName.match(/#(\d+)\s+(.+)/);
     if (!m) return itemName;
@@ -631,15 +640,28 @@
     // "Full Art/Braixen" → take the part after "/"
     const slashMatch = rest.match(/\b\w+\/(\w+)/);
     if (slashMatch) return `${slashMatch[1]} ${num}`.trim();
-    const stopWords = new Set(["PSA","BGS","CGC","SGC","Japanese","English","Holo","Reverse","SAR","SR","UR","RR","HR","CHR","CSR","Full","Secret"]);
+    const stopWords = new Set(["psa","bgs","cgc","sgc","japanese","english","holo","reverse","sar","sr","ur","rr","hr","chr","csr","full","secret","pokemon","magic"]);
     const words = rest.split(/\s+/);
-    const nameWords = [];
+    // Forward: take 1-2 name words from right after the card number
+    const fwdWords = [];
     for (const w of words) {
-      if (stopWords.has(w)) break;
-      nameWords.push(w);
-      if (nameWords.length >= 2) break;
+      if (stopWords.has(w.toLowerCase())) break;
+      fwdWords.push(w);
+      if (fwdWords.length >= 2) break;
     }
-    return `${nameWords.join(" ")} ${num}`.trim();
+    if (fwdWords.length > 0) return `${fwdWords.join(" ")} ${num}`.trim();
+    // Backward fallback: find grade marker and take 1-2 words that precede it
+    const psaIdx = words.findIndex(w => /^(psa|bgs|cgc|sgc)$/i.test(w));
+    if (psaIdx > 0) {
+      const bwdWords = [];
+      for (let i = psaIdx - 1; i >= 0 && bwdWords.length < 2; i--) {
+        const w = words[i];
+        if (stopWords.has(w.toLowerCase()) || /^[&]$/.test(w)) break;
+        bwdWords.unshift(w);
+      }
+      if (bwdWords.length > 0) return `${bwdWords.join(" ")} ${num}`.trim();
+    }
+    return num;
   }
 
   // Bold the card name + number extracted by snkrdunkKeywords within the full itemName display
@@ -658,14 +680,14 @@
     return result;
   }
 
-  async function fetchSnkrdunkPrice(itemName, grade) {
+  async function fetchSnkrdunkPrice(itemName, grade, cleanName = null) {
     const key = `${itemName}|${grade}`;
     if (snkrdunkCache.has(key)) return snkrdunkCache.get(key);
     try {
       // CC grade is like "GEM-MT10", "MINT9" — extract trailing number → "PSA10", "PSA9"
       const gradeNum = (grade || "").match(/(\d+)$/)?.[1];
       const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
-      const kw = snkrdunkKeywords(itemName);
+      const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, itemName) : snkrdunkKeywords(itemName);
       const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(kw)}&grade=${encodeURIComponent(psaGrade)}`);
       const data = await res.json();
       const result = data.price != null ? { price: data.price, apparelId: data.apparelId } : null;
@@ -711,14 +733,14 @@
     for (const c of cards) {
       if (!c.gradingID) continue;
       const key = `${c.itemName}|${c.grade}`;
-      if (!groups.has(key)) groups.set(key, { name: c.itemName, grade: c.grade, certs: [] });
+      if (!groups.has(key)) groups.set(key, { name: c.itemName, grade: c.grade, certs: [], cleanName: c.name || c.cardName || null });
       groups.get(key).certs.push(c.gradingID);
     }
     const entries = [...groups.values()];
     for (let i = 0; i < entries.length; i += concurrency) {
       await Promise.all(
-        entries.slice(i, i + concurrency).map(async ({ name, grade, certs }) => {
-          const result = await fetchSnkrdunkPrice(name, grade);
+        entries.slice(i, i + concurrency).map(async ({ name, grade, certs, cleanName }) => {
+          const result = await fetchSnkrdunkPrice(name, grade, cleanName);
           certs.forEach(cert => updateSnkrdunkCell(cert, result));
           for (const c of allRows) {
             if (c.itemName === name && c.grade === grade) {
