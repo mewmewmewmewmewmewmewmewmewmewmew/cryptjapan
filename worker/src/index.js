@@ -123,8 +123,9 @@ async function snkrdunkPrice(url) {
 
   // Card number is the last token of keywords (e.g. "Greninja EX 083" → "083")
   const cardNum = keywords.trim().split(/\s+/).pop() || "";
+  const cardNumNorm = parseInt(cardNum, 10); // normalise for leading-zero comparison (58 == 058)
 
-  // Try each apparel ID, find one with recent completed sales at the requested grade
+  // Try each apparel ID, find one with data at the requested grade
   const gradeCondition = grade ? `tradingCardSingleCondition${grade}` : null;
 
   for (const id of ids) {
@@ -137,26 +138,38 @@ async function snkrdunkPrice(url) {
       const data = await listRes.json();
 
       // Verify card number matches the first number in bracket notation [SetCode NUM/TOTAL]
-      // e.g. [SV5a 083/066] ✓  vs  [M4 114/083] ✗ (083 is the total, not the card number)
+      // Normalise for leading zeros: "58" == "058"  ([SM3+ 058/072] vs cardNum "58")
       const apparelName = (data.apparelUsedItems || [])[0]?.apparel?.name ?? "";
       if (cardNum && apparelName) {
         const bracketNum = apparelName.match(/\[\S+ (\d+)\//)?.[1];
-        if (bracketNum !== undefined && bracketNum !== cardNum) continue;
+        if (bracketNum !== undefined && parseInt(bracketNum, 10) !== cardNumNorm) continue;
       }
 
-      // Completed sales only (isDisplaySold), matching grade
-      const sold = (data.apparelUsedItems || []).filter(item =>
+      const items = data.apparelUsedItems || [];
+
+      // Prefer completed sales: avg of last 4 matching grade
+      const sold = items.filter(item =>
         item.isDisplaySold === true && (!gradeCondition || item.wearCount === gradeCondition)
       );
-      if (sold.length === 0) continue;
+      if (sold.length > 0) {
+        sold.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+        const recent = sold.slice(0, 4);
+        const avg = Math.round(recent.reduce((sum, i) => sum + i.price, 0) / recent.length);
+        return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, salesCount: recent.length, priceType: "avg" }), {
+          headers: { ...CORS, "Content-Type": "application/json" },
+        });
+      }
 
-      // Most recent first — sort by createdAt desc, take up to 4, average
-      sold.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-      const recent = sold.slice(0, 4);
-      const avg = Math.round(recent.reduce((sum, i) => sum + i.price, 0) / recent.length);
-      return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, salesCount: recent.length }), {
-        headers: { ...CORS, "Content-Type": "application/json" },
-      });
+      // Fallback: lowest active listing for this grade (no sales history yet)
+      const active = items.filter(item =>
+        item.status === 0 && (!gradeCondition || item.wearCount === gradeCondition)
+      );
+      if (active.length > 0) {
+        const minPrice = Math.min(...active.map(i => i.price));
+        return new Response(JSON.stringify({ price: minPrice, apparelId: Number(id), name: apparelName, priceType: "ask" }), {
+          headers: { ...CORS, "Content-Type": "application/json" },
+        });
+      }
     } catch { continue; }
   }
 
