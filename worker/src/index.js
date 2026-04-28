@@ -95,6 +95,20 @@ async function jpyRate() {
   }
 }
 
+function parseSnkrdunkAge(dateStr) {
+  const m = dateStr?.match(/(\d+)(時間|日|週間|週|ヶ月|か月|年)前/);
+  if (!m) return 0;
+  const n = parseInt(m[1], 10);
+  const table = { '時間': 3600000, '日': 86400000, '週間': 604800000, '週': 604800000, 'ヶ月': 2592000000, 'か月': 2592000000, '年': 31536000000 };
+  return n * (table[m[2]] || 0);
+}
+
+function priceMedian(prices) {
+  const s = [...prices].sort((a, b) => a - b);
+  const mid = Math.floor(s.length / 2);
+  return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
+}
+
 async function snkrdunkPrice(url) {
   const keywords = url.searchParams.get("keywords") || "";
   const grade = (url.searchParams.get("grade") || "").replace(/\s+/g, ""); // "PSA 10" → "PSA10"
@@ -126,28 +140,22 @@ async function snkrdunkPrice(url) {
   const cardNumNorm = parseInt(cardNum, 10); // normalise for leading-zero comparison (58 == 058)
   const hasMasterBall = keywords.toLowerCase().includes("master ball");
 
-  // Try each apparel ID, find one with data at the requested grade
-  const gradeCondition = grade ? `tradingCardSingleCondition${grade}` : null;
-  const now = Date.now();
-  const ONE_WEEK_MS  = 7  * 24 * 60 * 60 * 1000;
+  const ONE_WEEK_MS   = 7  * 24 * 60 * 60 * 1000;
   const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
+  const apiHeaders = { "Accept": "application/json", "User-Agent": SNKRDUNK_HEADERS["User-Agent"] };
 
   for (const id of ids) {
     try {
-      const listRes = await fetch(
-        `${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=100&page=1&sizeId=0&isSaleOnly=false`,
-        { headers: { "Accept": "application/json", "User-Agent": SNKRDUNK_HEADERS["User-Agent"] } }
+      // Stage 1: fetch one used listing just to get the apparel name for validation
+      const usedRes = await fetch(
+        `${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=1&page=1&sizeId=0&isSaleOnly=false`,
+        { headers: apiHeaders }
       );
-      if (!listRes.ok) continue;
-      const data = await listRes.json();
-
-      const items = data.apparelUsedItems || [];
-      if (items.length === 0) continue;
-
-      const apparelName = items[0]?.apparel?.name ?? "";
+      if (!usedRes.ok) continue;
+      const usedData = await usedRes.json();
+      const apparelName = usedData.apparelUsedItems?.[0]?.apparel?.name ?? "";
 
       // Verify card number matches the first number in bracket notation [SetCode NUM/TOTAL]
-      // Normalise for leading zeros: "58" == "058"  ([SM3+ 058/072] vs cardNum "58")
       if (cardNum && apparelName) {
         const bracketNum = apparelName.match(/\[\S+ (\d+)\//)?.[1];
         if (bracketNum !== undefined && parseInt(bracketNum, 10) !== cardNumNorm) continue;
@@ -156,46 +164,46 @@ async function snkrdunkPrice(url) {
       // Skip Master Ball stamp variants unless the search card is also a Master Ball
       if (apparelName.includes("マスターボール") && !hasMasterBall) continue;
 
-      const sold = items.filter(item =>
-        item.isDisplaySold === true && (!gradeCondition || item.wearCount === gradeCondition)
+      // Stage 2: fetch sales history for price data
+      const histRes = await fetch(
+        `${SNKRDUNK_BASE}/v1/apparels/${id}/sales-history?size_id=0&page=1&per_page=100`,
+        { headers: apiHeaders }
       );
-
-      if (sold.length > 0) {
-        sold.sort((a, b) => {
-          const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
-          const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
-          return tb - ta;
+      if (!histRes.ok) {
+        return new Response(JSON.stringify({ price: null, apparelId: Number(id), name: apparelName, priceType: "na" }), {
+          headers: { ...CORS, "Content-Type": "application/json" },
         });
+      }
+      const histData = await histRes.json();
+      const history = histData.history || [];
 
-        const age = i => (i.createdAt ? now - new Date(i.createdAt).getTime() : Infinity);
-        const inWeek       = sold.filter(i => age(i) <= ONE_WEEK_MS);
-        const inThreeWeeks = sold.filter(i => age(i) <= THREE_WEEK_MS);
+      // Filter by grade condition (condition field contains e.g. "PSA10" directly)
+      const gradeHistory = grade ? history.filter(s => s.condition === grade) : history;
 
-        // >= 2 in last week → avg last week
-        // any in last 3 weeks → avg last 3 weeks
-        // otherwise → last single sale
+      if (gradeHistory.length > 0) {
+        const now = Date.now();
+        const withAge = gradeHistory.map(s => ({ price: s.price, age: parseSnkrdunkAge(s.date) }));
+        const inWeekRaw = withAge.filter(s => s.age <= ONE_WEEK_MS);
+        const inThreeWeeks = withAge.filter(s => s.age <= THREE_WEEK_MS);
+
+        // Apply 3× median outlier filter to the 1-week window
+        let inWeek = inWeekRaw;
+        if (inWeekRaw.length >= 2) {
+          const med = priceMedian(inWeekRaw.map(s => s.price));
+          inWeek = inWeekRaw.filter(s => s.price <= med * 3);
+        }
+
         const useItems = inWeek.length >= 2 ? inWeek
                        : inThreeWeeks.length >= 1 ? inThreeWeeks
-                       : [sold[0]];
+                       : [withAge[0]];
 
-        const avg = Math.round(useItems.reduce((sum, i) => sum + i.price, 0) / useItems.length);
+        const avg = Math.round(useItems.reduce((sum, s) => sum + s.price, 0) / useItems.length);
         return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, salesCount: useItems.length, priceType: "avg" }), {
           headers: { ...CORS, "Content-Type": "application/json" },
         });
       }
 
-      // No sold items — try active listings as fallback
-      const active = items.filter(item =>
-        item.status === 0 && (!gradeCondition || item.wearCount === gradeCondition)
-      );
-      if (active.length > 0) {
-        const minPrice = Math.min(...active.map(i => i.price));
-        return new Response(JSON.stringify({ price: minPrice, apparelId: Number(id), name: apparelName, priceType: "ask" }), {
-          headers: { ...CORS, "Content-Type": "application/json" },
-        });
-      }
-
-      // Right card confirmed, no data for this grade — N/A but still link to the page
+      // Right card confirmed, no sales for this grade — N/A but still link to the page
       return new Response(JSON.stringify({ price: null, apparelId: Number(id), name: apparelName, priceType: "na" }), {
         headers: { ...CORS, "Content-Type": "application/json" },
       });
