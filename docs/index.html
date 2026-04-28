@@ -44,6 +44,32 @@
       background: #111;
     }
 
+    .filters-live {
+      padding: 10px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 2px solid #222;
+      background: #0a0a0a;
+    }
+
+    .filters-live input {
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      color: #e8e8e8;
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .filters-live input:hover { border-color: #444; }
+    .filters-live input:focus { border-color: #555; }
+    #live-search { width: 220px; }
+    #price-min, #price-max { width: 88px; }
+    .filter-label { font-size: 12px; color: #555; }
+
     select, button {
       background: #1c1c1c;
       border: 1px solid #2e2e2e;
@@ -308,9 +334,16 @@
     <option value="all">Show all</option>
   </select>
 
+  <button id="fetch-btn" onclick="fetchListings(true)">Fetch listings</button>
+</div>
+
+<div class="filters-live">
+  <input type="text" id="live-search" placeholder="Search card, set or cert…" oninput="applyLiveFilters()" />
+  <span class="filter-label">Price $</span>
+  <input type="number" id="price-min" placeholder="Min" min="0" oninput="applyLiveFilters()" />
+  <input type="number" id="price-max" placeholder="Max" min="0" oninput="applyLiveFilters()" />
   <button id="toggle-alt" class="toggle-btn active" onclick="toggleSource('alt')">Alt</button>
   <button id="toggle-snkrdunk" class="toggle-btn active" onclick="toggleSource('snkrdunk')">SNKRDUNK</button>
-  <button id="fetch-btn" onclick="fetchListings(true)">Fetch listings</button>
 </div>
 
 <div class="status" id="status">Ready.</div>
@@ -342,7 +375,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.24</footer>
+<footer>v0.25</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -434,13 +467,11 @@
           allRows = cached.rows;
           await getSolPrice();
           await getJpyRate();
-          renderTable(allRows);
           updatePagination(1);
           status.textContent = (cached.statusText || `${allRows.length} listings loaded`) + " (cached)";
           document.getElementById("refresh-list-btn").disabled = false;
           document.getElementById("refresh-btn").disabled = false;
-          repopulateAltCells(allRows);
-          repopulateSnkrdunkCells(allRows);
+          applyLiveFilters();
           window.scrollTo(0, 0);
           btn.disabled = false;
           return;
@@ -497,6 +528,7 @@
 
         const msg = `${cards.length.toLocaleString()} listings loaded`;
         status.textContent = msg;
+        applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, 1, msg);
         fetchAltPrices(cards);
         fetchSnkrdunkPrices(cards);
@@ -504,9 +536,7 @@
         allRows = cards;
         const msg = `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
         status.textContent = msg;
-        renderTable(cards);
-        repopulateAltCells(cards);
-        repopulateSnkrdunkCells(cards);
+        applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, pages, msg);
         fetchAltPrices(cards);
         fetchSnkrdunkPrices(cards);
@@ -593,9 +623,41 @@
       if (typeof av === "string") return av.localeCompare(bv) * sortDir;
       return (av - bv) * sortDir;
     });
-    renderTable(sorted);
-    repopulateAltCells(sorted);
-    repopulateSnkrdunkCells(sorted);
+    allRows = sorted;
+    applyLiveFilters();
+  }
+
+  function applyLiveFilters() {
+    const q = (document.getElementById("live-search")?.value || "").toLowerCase();
+    const minVal = parseFloat(document.getElementById("price-min")?.value || "");
+    const maxVal = parseFloat(document.getElementById("price-max")?.value || "");
+
+    let filtered = allRows;
+
+    if (q) {
+      filtered = filtered.filter(c => {
+        const name = (c.itemName || "").toLowerCase();
+        const cert = (c.gradingID || "").toLowerCase();
+        const cardName = (c.name || c.cardName || "").toLowerCase();
+        return name.includes(q) || cert.includes(q) || cardName.includes(q);
+      });
+    }
+
+    if (!isNaN(minVal) || !isNaN(maxVal)) {
+      filtered = filtered.filter(c => {
+        const cur = c.listing?.currency;
+        const raw = Number(c.listing?.price ?? 0);
+        const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+        if (usdc == null) return true;
+        if (!isNaN(minVal) && usdc < minVal) return false;
+        if (!isNaN(maxVal) && usdc > maxVal) return false;
+        return true;
+      });
+    }
+
+    renderTable(filtered);
+    repopulateAltCells(filtered);
+    repopulateSnkrdunkCells(filtered);
   }
 
   function repopulateAltCells(rows) {
@@ -968,13 +1030,11 @@
       await getSolPrice();
       await getJpyRate();
       if (cacheLoadAborted) return; // fetchListings was called while we were awaiting
-      renderTable(allRows);
       updatePagination(totalPages);
       document.getElementById("status").textContent = (cached.statusText || "") + " (cached)";
       document.getElementById("refresh-list-btn").disabled = false;
       document.getElementById("refresh-btn").disabled = false;
-      repopulateAltCells(allRows);
-      repopulateSnkrdunkCells(allRows);
+      applyLiveFilters();
     } catch {}
   }
 
