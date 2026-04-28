@@ -176,6 +176,7 @@
     .card-link:hover { text-decoration: underline; }
     .snkrdunk-price a { color: #38bdf8; text-decoration: none; }
     .snkrdunk-price a:hover { text-decoration: underline; }
+    .price-sub { color: #fff; }
     .delta-pos { color: #4ade80; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .delta-neg { color: #f87171; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -313,7 +314,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.7</footer>
+<footer>v0.8</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -435,7 +436,7 @@
         : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
       return `<tr>
         <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${boldCardName(c.itemName)}</a></td>
-        <td>${esc(c.grade)}</td>
+        <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+)$/)?.[1] || c.grade))}</td>
         <td>${esc(c.gradingID)}</td>
         <td class="price">${priceStr}</td>
         <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
@@ -567,7 +568,8 @@
     if (!result?.price) { priceCell.textContent = "—"; return; }
     const altPrice = Number(result.price);
     const url = `https://alt.xyz/itm/${result.assetId}/research`;
-    priceCell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}</a>`;
+    const altJpy = jpyUsd ? ` <span class="price-sub">(¥${Math.round(altPrice / jpyUsd).toLocaleString()})</span>` : "";
+    priceCell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}${altJpy}</a>`;
     if (deltaCell && ccPriceUsdc != null) {
       const delta = altPrice - ccPriceUsdc;
       const sign = delta >= 0 ? "+" : "";
@@ -577,6 +579,7 @@
 
   async function fetchAltPrices(cards, concurrency = 8) {
     const rate = await getSolPrice();
+    await getJpyRate();
     const certPrices = new Map();
     for (const c of cards) {
       if (!c.gradingID) continue;
@@ -710,7 +713,7 @@
     const url = `https://snkrdunk.com/apparels/${result.apparelId}`;
     const label = result.priceType === "ask" ? " ask" : "";
     const usdPart = usdSnkr != null ? `$${usdSnkr.toFixed(0)}${label} ` : "";
-    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener">${usdPart}(¥${jpy.toLocaleString()})</a>`;
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener">${usdPart}<span class="price-sub">(¥${jpy.toLocaleString()})</span></a>`;
     if (deltaCell && usdSnkr != null) {
       const row = allRows.find(c => c.gradingID === certNumber);
       if (row) {
