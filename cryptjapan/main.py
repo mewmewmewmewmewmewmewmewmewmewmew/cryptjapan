@@ -6,6 +6,7 @@ import sys
 from rich.console import Console
 from rich.table import Table
 
+from . import __version__
 from .collectorcrypt import CollectorCryptClient
 from .snkrdunk import SnkrdunkClient
 from .arbitrage import find_opportunities, ArbitrageOpportunity
@@ -181,6 +182,7 @@ def main() -> None:
 
     args = parser.parse_args()
     args.func(args)
+    console.print(f"\n[dim]v{__version__}[/dim]")
 
 
 if __name__ == "__main__":
