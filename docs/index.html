@@ -314,7 +314,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.11</footer>
+<footer>v0.12</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -626,7 +626,7 @@
   // Build SNKRDUNK keywords from the CC clean card name field (e.g. "Shining Lugia-Holo" → "Shining Lugia 058")
   function snkrdunkKeywordsFromClean(cleanName, itemName) {
     const numMatch = itemName.match(/#(\d+)/);
-    const num = numMatch ? numMatch[1] : "";
+    const num = numMatch ? numMatch[1].padStart(3, "0") : "";
     // Strip PSA/grading company suffixes and holo/rarity suffixes (CC "Card Name" field includes them)
     const baseName = cleanName.replace(/\s*-.*$/, "").replace(/\s*(PSA|BGS|CGC|SGC).*$/i, "").trim();
     return `${baseName} ${num}`.trim();
@@ -637,7 +637,7 @@
   function snkrdunkKeywords(itemName) {
     const m = itemName.match(/#(\d+)\s+(.+)/);
     if (!m) return itemName;
-    const num = m[1];
+    const num = m[1].padStart(3, "0");
     const rest = m[2];
     // "Full Art/Braixen" → take the part after "/"
     const slashMatch = rest.match(/\b\w+\/(\w+)/);
