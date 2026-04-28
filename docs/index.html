@@ -184,6 +184,18 @@
     .delta-pos { color: #4ade80; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .delta-neg { color: #f87171; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+    .toggle-btn.active { background: #1e3a5f; border-color: #2563eb; color: #60a5fa; }
+
+    table.hide-alt .alt-price,
+    table.hide-alt .alt-delta,
+    table.hide-alt .alt-pct,
+    table.hide-alt .th-alt { display: none; }
+
+    table.hide-snkrdunk .snkrdunk-price,
+    table.hide-snkrdunk .snkrdunk-delta,
+    table.hide-snkrdunk .snkr-pct,
+    table.hide-snkrdunk .th-snkrdunk { display: none; }
+
     #lock-screen {
       position: fixed; inset: 0;
       background: #0f0f0f;
@@ -290,6 +302,8 @@
     <option value="all">Show all</option>
   </select>
 
+  <button id="toggle-alt" class="toggle-btn active" onclick="toggleSource('alt')">Alt</button>
+  <button id="toggle-snkrdunk" class="toggle-btn active" onclick="toggleSource('snkrdunk')">SNKRDUNK</button>
   <button id="fetch-btn" onclick="fetchListings(true)">Fetch listings</button>
 </div>
 
@@ -303,10 +317,12 @@
         <th onclick="sortBy('grade')">Grade</th>
         <th onclick="sortBy('gradingID')">PSA Cert</th>
         <th onclick="sortBy('price')">Price</th>
-        <th onclick="sortBy('altPrice')">Alt $</th>
-        <th onclick="sortBy('altDelta')">Alt Δ</th>
-        <th onclick="sortBy('snkrdunkPrice')">SNKRDUNK</th>
-        <th onclick="sortBy('snkrdunkDelta')">SNKRDUNK Δ</th>
+        <th class="th-alt" onclick="sortBy('altPrice')">Alt $</th>
+        <th class="th-alt" onclick="sortBy('altDelta')">Alt Δ</th>
+        <th class="th-alt" onclick="sortBy('altPct')">Alt %</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SNKRDUNK</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkDelta')">SNKRDUNK Δ</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPct')">SNKR %</th>
       </tr>
     </thead>
     <tbody id="results-body"></tbody>
@@ -320,7 +336,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.17</footer>
+<footer>v0.18</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -429,7 +445,7 @@
           document.getElementById("empty-msg").style.display = "none";
           for (let p = 2; p <= pages; p++) {
             status.textContent = `Loading page ${p} of ${pages} — ${cards.length} cards so far…`;
-            await new Promise(r => setTimeout(r, 600));
+            await new Promise(r => setTimeout(r, 1000));
             try {
               const d = await fetchPage(p);
               const newCards = (d.filterNFtCard || []).filter(c => c.listing);
@@ -485,8 +501,10 @@
       <td class="price">${priceStr}</td>
       <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
       <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
+      <td class="alt-pct" data-cert="${esc(c.gradingID)}"></td>
       <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
       <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
+      <td class="snkr-pct" data-cert="${esc(c.gradingID)}"></td>
     </tr>`;
   }
 
@@ -508,7 +526,7 @@
 
     if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
 
-    const colOrder = ["itemName","grade","gradingID","price","altPrice","altDelta","snkrdunkPrice","snkrdunkDelta"];
+    const colOrder = ["itemName","grade","gradingID","price","altPrice","altDelta","altPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
     const thIdx = colOrder.indexOf(col);
     if (thIdx >= 0) {
       ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
@@ -522,10 +540,14 @@
         av = a._altPrice ?? -Infinity; bv = b._altPrice ?? -Infinity;
       } else if (col === "altDelta") {
         av = a._altDelta ?? -Infinity; bv = b._altDelta ?? -Infinity;
+      } else if (col === "altPct") {
+        av = a._altPct ?? -Infinity; bv = b._altPct ?? -Infinity;
       } else if (col === "snkrdunkPrice") {
         av = a._snkrdunkPrice ?? -Infinity; bv = b._snkrdunkPrice ?? -Infinity;
       } else if (col === "snkrdunkDelta") {
         av = a._snkrdunkDelta ?? -Infinity; bv = b._snkrdunkDelta ?? -Infinity;
+      } else if (col === "snkrdunkPct") {
+        av = a._snkrdunkPct ?? -Infinity; bv = b._snkrdunkPct ?? -Infinity;
       } else {
         av = a[col] ?? ""; bv = b[col] ?? "";
       }
@@ -548,10 +570,18 @@
     }
   }
 
+  function snkrdunkKwKey(c) {
+    const gradeNum = (c.grade || "").match(/(\d+)$/)?.[1];
+    const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
+    const cleanName = c.name || c.cardName || null;
+    const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+    return `${kw}|${psaGrade}`;
+  }
+
   function repopulateSnkrdunkCells(rows) {
     for (const c of rows) {
       if (!c.gradingID) continue;
-      const key = `${c.itemName}|${c.grade}`;
+      const key = snkrdunkKwKey(c);
       if (!snkrdunkCache.has(key)) continue;
       updateSnkrdunkCell(c.gradingID, snkrdunkCache.get(key));
     }
@@ -619,15 +649,23 @@
   function updateAltCell(certNumber, result, ccPriceUsdc) {
     const priceCell = document.querySelector(`.alt-price[data-cert="${certNumber}"]`);
     const deltaCell = document.querySelector(`.alt-delta[data-cert="${certNumber}"]`);
+    const pctCell = document.querySelector(`.alt-pct[data-cert="${certNumber}"]`);
     if (!priceCell) return;
-    if (!result?.price) { priceCell.textContent = "—"; return; }
+    if (!result?.price) {
+      priceCell.textContent = "—";
+      if (pctCell) pctCell.textContent = "";
+      return;
+    }
     const altPrice = Number(result.price);
     const url = `https://alt.xyz/itm/${result.assetId}/research`;
     priceCell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}</a>`;
-    if (deltaCell && ccPriceUsdc != null) {
+    if (ccPriceUsdc != null) {
       const delta = altPrice - ccPriceUsdc;
+      const pct = (delta / ccPriceUsdc) * 100;
       const sign = delta >= 0 ? "+" : "";
-      deltaCell.innerHTML = `<span class="${delta >= 0 ? "delta-pos" : "delta-neg"}">${sign}$${Math.abs(delta).toFixed(2)}</span>`;
+      const cls = delta >= 0 ? "delta-pos" : "delta-neg";
+      if (deltaCell) deltaCell.innerHTML = `<span class="${cls}">${sign}$${Math.abs(delta).toFixed(2)}</span>`;
+      if (pctCell) pctCell.innerHTML = `<span class="${cls}">${sign}${Math.abs(pct).toFixed(1)}%</span>`;
     }
   }
 
@@ -655,6 +693,7 @@
               if (c.gradingID === cert) {
                 c._altPrice = altPrice;
                 c._altDelta = usdc != null ? altPrice - usdc : null;
+                c._altPct = usdc != null ? ((altPrice - usdc) / usdc) * 100 : null;
               }
             }
           }
@@ -665,7 +704,7 @@
   // ─────────────────────────────────────────────────────────────────────
 
   // ── SNKRDUNK price fetching ──────────────────────────────────────────
-  const snkrdunkCache = new Map(); // key: `${itemName}|${grade}`
+  const snkrdunkCache = new Map(); // key: `${kw}|${psaGrade}`
   let jpyUsd = null;
 
   async function getJpyRate() {
@@ -742,6 +781,7 @@
   function updateSnkrdunkCell(certNumber, result) {
     const cell = document.querySelector(`.snkrdunk-price[data-cert="${certNumber}"]`);
     const deltaCell = document.querySelector(`.snkrdunk-delta[data-cert="${certNumber}"]`);
+    const pctCell = document.querySelector(`.snkr-pct[data-cert="${certNumber}"]`);
     if (!cell) return;
     if (!result?.price) {
       if (result?.priceType === "na" && result?.apparelId) {
@@ -751,6 +791,7 @@
         cell.textContent = "—";
       }
       if (deltaCell) deltaCell.textContent = "";
+      if (pctCell) pctCell.textContent = "";
       return;
     }
     const jpy = result.price;
@@ -759,7 +800,7 @@
     const label = result.priceType === "ask" ? " ask" : "";
     const usdPart = usdSnkr != null ? `$${usdSnkr.toFixed(0)}${label} ` : "";
     cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener">${usdPart}<span class="price-sub">(¥${jpy.toLocaleString()})</span></a>`;
-    if (deltaCell && usdSnkr != null) {
+    if (usdSnkr != null) {
       const row = allRows.find(c => c.gradingID === certNumber);
       if (row) {
         const cur = row.listing?.currency;
@@ -767,9 +808,13 @@
         const ccUsd = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
         if (ccUsd != null) {
           const delta = usdSnkr - ccUsd;
+          const pct = (delta / ccUsd) * 100;
           row._snkrdunkDelta = delta;
+          row._snkrdunkPct = pct;
           const sign = delta >= 0 ? "+" : "";
-          deltaCell.innerHTML = `<span class="${delta >= 0 ? "delta-pos" : "delta-neg"}">${sign}$${Math.abs(delta).toFixed(0)}</span>`;
+          const cls = delta >= 0 ? "delta-pos" : "delta-neg";
+          if (deltaCell) deltaCell.innerHTML = `<span class="${cls}">${sign}$${Math.abs(delta).toFixed(0)}</span>`;
+          if (pctCell) pctCell.innerHTML = `<span class="${cls}">${sign}${Math.abs(pct).toFixed(1)}%</span>`;
         }
       }
     }
@@ -787,20 +832,18 @@
       const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
       const cleanName = c.name || c.cardName || null;
       const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
-      const kwKey = `${kw}|${psaGrade}`;
-      if (!kwGroups.has(kwKey)) kwGroups.set(kwKey, { kw, psaGrade, grpCards: [] });
+      const kwKey = snkrdunkKwKey(c);
+      if (!kwGroups.has(kwKey)) kwGroups.set(kwKey, { kw, psaGrade, kwKey, grpCards: [] });
       kwGroups.get(kwKey).grpCards.push(c);
     }
 
     const entries = [...kwGroups.values()];
     for (let i = 0; i < entries.length; i += concurrency) {
       await Promise.all(
-        entries.slice(i, i + concurrency).map(async ({ kw, psaGrade, grpCards }) => {
-          // Check cache using first card's itemKey
-          const itemKey = `${grpCards[0].itemName}|${grpCards[0].grade}`;
+        entries.slice(i, i + concurrency).map(async ({ kw, psaGrade, kwKey, grpCards }) => {
           let result;
-          if (snkrdunkCache.has(itemKey)) {
-            result = snkrdunkCache.get(itemKey);
+          if (snkrdunkCache.has(kwKey)) {
+            result = snkrdunkCache.get(kwKey);
           } else {
             try {
               const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(kw)}&grade=${encodeURIComponent(psaGrade)}`);
@@ -809,10 +852,9 @@
                 ? { price: data.price ?? null, apparelId: data.apparelId, priceType: data.priceType }
                 : null;
             } catch { result = null; }
+            snkrdunkCache.set(kwKey, result);
           }
-          // Apply result to every card in the group
           for (const c of grpCards) {
-            snkrdunkCache.set(`${c.itemName}|${c.grade}`, result);
             updateSnkrdunkCell(c.gradingID, result);
             const row = allRows.find(r => r.gradingID === c.gradingID);
             if (row) row._snkrdunkPrice = result?.price ?? null;
@@ -827,23 +869,30 @@
     const btn = document.getElementById("refresh-btn");
     btn.disabled = true;
     // Clear cache only for the cards currently shown (other pages remain cached)
-    for (const c of allRows) {
-      if (c.gradingID) altCache.delete(c.gradingID);
-      snkrdunkCache.delete(`${c.itemName}|${c.grade}`);
-    }
+    const snkrKeys = new Set(allRows.map(c => snkrdunkKwKey(c)));
+    for (const c of allRows) { if (c.gradingID) altCache.delete(c.gradingID); }
+    for (const k of snkrKeys) snkrdunkCache.delete(k);
     // Reset visible cells to loading state
     for (const c of allRows) {
-      const altCell = document.querySelector(`.alt-price[data-cert="${c.gradingID}"]`);
+      const cert = c.gradingID;
+      const altCell = document.querySelector(`.alt-price[data-cert="${cert}"]`);
       if (altCell) altCell.innerHTML = '<span class="alt-loading">···</span>';
-      const altDelta = document.querySelector(`.alt-delta[data-cert="${c.gradingID}"]`);
-      if (altDelta) altDelta.textContent = "";
-      const snkrCell = document.querySelector(`.snkrdunk-price[data-cert="${c.gradingID}"]`);
+      for (const cls of ["alt-delta","alt-pct","snkrdunk-delta","snkr-pct"]) {
+        const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
+        if (el) el.textContent = "";
+      }
+      const snkrCell = document.querySelector(`.snkrdunk-price[data-cert="${cert}"]`);
       if (snkrCell) snkrCell.innerHTML = '<span class="alt-loading">···</span>';
-      const snkrDelta = document.querySelector(`.snkrdunk-delta[data-cert="${c.gradingID}"]`);
-      if (snkrDelta) snkrDelta.textContent = "";
     }
     await Promise.all([fetchAltPrices(allRows), fetchSnkrdunkPrices(allRows)]);
     btn.disabled = false;
+  }
+
+  function toggleSource(source) {
+    const btn = document.getElementById(`toggle-${source}`);
+    const table = document.getElementById("results-table");
+    btn.classList.toggle("active");
+    table.classList.toggle(`hide-${source}`, !btn.classList.contains("active"));
   }
 
   function esc(s) {
