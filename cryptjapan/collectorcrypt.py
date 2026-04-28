@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 BASE_URL = "https://api.collectorcrypt.com"
 
-CARD_URL = "https://collectorcrypt.com/card/{card_id}"
+CARD_URL = "https://collectorcrypt.com/assets/solana/{nft_address}"
 
 
 @dataclass
@@ -97,7 +97,7 @@ class CollectorCryptClient:
                     seller_id=listing_data.get("sellerId", ""),
                     nft_address=item.get("nftAddress", ""),
                     marketplace=listing_data.get("marketplace", ""),
-                    url=CARD_URL.format(card_id=item.get("id", "")),
+                    url=CARD_URL.format(nft_address=item.get("nftAddress", "")),
                 )
             )
 

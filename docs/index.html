@@ -278,7 +278,7 @@
 
     tbody.innerHTML = rows.map(c => {
       const l = c.listing;
-      const cardUrl = `https://collectorcrypt.com/card/${c.id}`;
+      const cardUrl = `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
       const price = Number(l.price);
       const priceStr = l.currency === "SOL"
         ? `${price % 1 === 0 ? price : price.toFixed(2)} SOL`
