@@ -68,6 +68,10 @@
     button#fetch-btn:hover { background: #1d4ed8; }
     button#fetch-btn:disabled { background: #1a3a7a; border-color: #1a3a7a; cursor: not-allowed; }
 
+    button#refresh-btn { margin-left: auto; }
+    button#refresh-btn:hover:not(:disabled) { border-color: #555; }
+    button#refresh-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
     .status {
       padding: 10px 24px;
       font-size: 13px;
@@ -240,6 +244,7 @@
 <header>
   <h1>CC &lt;&gt; JP</h1>
   <span>CollectorCrypt Marketplace</span>
+  <button id="refresh-btn" onclick="refreshPrices()" disabled>↻ Refresh prices</button>
 </header>
 
 <div class="filters">
@@ -279,6 +284,7 @@
   </select>
 
   <select id="step">
+    <option value="all">Show all</option>
     <option value="96">96 per page</option>
     <option value="48" selected>48 per page</option>
     <option value="24">24 per page</option>
@@ -314,7 +320,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.13</footer>
+<footer>v0.14</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -377,37 +383,59 @@
     const status = document.getElementById("status");
     btn.disabled = true;
 
-    const params = new URLSearchParams({
-      page: currentPage,
-      step: document.getElementById("step").value,
+    const stepSel = document.getElementById("step").value;
+    const showAll = stepSel === "all";
+    const stepVal = showAll ? "96" : stepSel;
+
+    const baseParams = {
       cardType: "Card",
       categories: document.getElementById("categories").value,
       gradingCompany: document.getElementById("gradingCompany").value,
       grade: document.getElementById("grade").value,
       language: document.getElementById("language").value,
       orderBy: document.getElementById("orderBy").value,
-    });
+      step: stepVal,
+    };
 
-    for (const [k, v] of [...params]) { if (!v) params.delete(k); }
+    async function fetchPage(page) {
+      const params = new URLSearchParams({ ...baseParams, page });
+      for (const [k, v] of [...params]) { if (!v) params.delete(k); }
+      const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return res.json();
+    }
 
     status.textContent = "Fetching…";
 
     try {
-      const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json();
+      const firstData = await fetchPage(showAll ? 1 : currentPage);
+      let cards = (firstData.filterNFtCard || []).filter(c => c.listing);
+      const total = firstData.findTotal ?? cards.length;
+      const pages = firstData.totalPages ?? 1;
 
-      const cards = (data.filterNFtCard || []).filter(c => c.listing);
+      if (showAll && pages > 1) {
+        for (let p = 2; p <= pages; p += 4) {
+          status.textContent = `Fetching page ${p} of ${pages}…`;
+          const chunk = [];
+          for (let q = p; q < p + 4 && q <= pages; q++) chunk.push(q);
+          const results = await Promise.all(chunk.map(fetchPage));
+          for (const d of results) cards = cards.concat((d.filterNFtCard || []).filter(c => c.listing));
+        }
+      }
+
       allRows = cards;
-      status.textContent = `${data.findTotal?.toLocaleString() ?? cards.length} total listings — page ${currentPage}`;
-      updatePagination(data.totalPages ?? 1);
+      status.textContent = showAll
+        ? `${cards.length.toLocaleString()} listings loaded`
+        : `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
+      updatePagination(showAll ? 1 : pages);
       await getSolPrice();
-      altCache.clear();
-      snkrdunkCache.clear();
       renderTable(cards);
+      repopulateAltCells(cards);
+      repopulateSnkrdunkCells(cards);
       fetchAltPrices(cards);
       fetchSnkrdunkPrices(cards);
       window.scrollTo(0, 0);
+      document.getElementById("refresh-btn").disabled = false;
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
     } finally {
@@ -434,10 +462,13 @@
       const priceStr = l.currency === "SOL"
         ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="price-sub">(${solAmt})</span>` : solAmt)
         : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+      const certDisplay = c.gradingCompany === "PSA"
+        ? `<a href="https://www.psacard.com/cert/${esc(c.gradingID)}/psa" target="_blank" rel="noopener" style="color:#94a3b8">${esc(c.gradingID)}</a>`
+        : esc(c.gradingID);
       return `<tr>
         <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${boldCardName(c.itemName)}</a></td>
         <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+)$/)?.[1] || c.grade))}</td>
-        <td>${esc(c.gradingID)}</td>
+        <td>${certDisplay}</td>
         <td class="price">${priceStr}</td>
         <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
         <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
@@ -767,6 +798,29 @@
     }
   }
   // ─────────────────────────────────────────────────────────────────────
+
+  async function refreshPrices() {
+    const btn = document.getElementById("refresh-btn");
+    btn.disabled = true;
+    // Clear cache only for the cards currently shown (other pages remain cached)
+    for (const c of allRows) {
+      if (c.gradingID) altCache.delete(c.gradingID);
+      snkrdunkCache.delete(`${c.itemName}|${c.grade}`);
+    }
+    // Reset visible cells to loading state
+    for (const c of allRows) {
+      const altCell = document.querySelector(`.alt-price[data-cert="${c.gradingID}"]`);
+      if (altCell) altCell.innerHTML = '<span class="alt-loading">···</span>';
+      const altDelta = document.querySelector(`.alt-delta[data-cert="${c.gradingID}"]`);
+      if (altDelta) altDelta.textContent = "";
+      const snkrCell = document.querySelector(`.snkrdunk-price[data-cert="${c.gradingID}"]`);
+      if (snkrCell) snkrCell.innerHTML = '<span class="alt-loading">···</span>';
+      const snkrDelta = document.querySelector(`.snkrdunk-delta[data-cert="${c.gradingID}"]`);
+      if (snkrDelta) snkrDelta.textContent = "";
+    }
+    await Promise.all([fetchAltPrices(allRows), fetchSnkrdunkPrices(allRows)]);
+    btn.disabled = false;
+  }
 
   function esc(s) {
     return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
