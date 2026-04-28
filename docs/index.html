@@ -172,9 +172,8 @@
     .alt-loading { color: #333; font-size: 11px; }
     .alt-link { color: #a78bfa; text-decoration: none; }
     .alt-link:hover { text-decoration: underline; }
-    .alt-tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
-    .alt-tag.alt-above { border: 1px solid rgba(248, 113, 113, 0.55); }
-    .alt-tag.alt-below { border: 1px solid rgba(74, 222, 128, 0.55); }
+    .delta-pos { color: #4ade80; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .delta-neg { color: #f87171; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
     #lock-screen {
       position: fixed; inset: 0;
@@ -294,6 +293,7 @@
         <th onclick="sortBy('gradingID')">PSA Cert</th>
         <th onclick="sortBy('price')">Price</th>
         <th>Alt $</th>
+        <th>Alt Δ</th>
         <th>Link</th>
       </tr>
     </thead>
@@ -432,6 +432,7 @@
         <td>${esc(c.gradingID)}</td>
         <td class="price">${priceStr}</td>
         <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+        <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
         <td><a href="${cardUrl}" target="_blank" rel="noopener">View ↗</a></td>
       </tr>`;
     }).join("");
@@ -517,14 +518,18 @@
   }
 
   function updateAltCell(certNumber, result, ccPriceUsdc) {
-    const cell = document.querySelector(`.alt-price[data-cert="${certNumber}"]`);
-    if (!cell) return;
-    if (!result?.price) { cell.textContent = "—"; return; }
+    const priceCell = document.querySelector(`.alt-price[data-cert="${certNumber}"]`);
+    const deltaCell = document.querySelector(`.alt-delta[data-cert="${certNumber}"]`);
+    if (!priceCell) return;
+    if (!result?.price) { priceCell.textContent = "—"; return; }
     const altPrice = Number(result.price);
     const url = `https://alt.xyz/itm/${result.assetId}/research`;
-    let tag = "alt-tag";
-    if (ccPriceUsdc != null) tag += altPrice > ccPriceUsdc ? " alt-above" : " alt-below";
-    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link"><span class="${tag}">$${altPrice.toFixed(2)}</span></a>`;
+    priceCell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}</a>`;
+    if (deltaCell && ccPriceUsdc != null) {
+      const delta = altPrice - ccPriceUsdc;
+      const sign = delta >= 0 ? "+" : "";
+      deltaCell.innerHTML = `<span class="${delta >= 0 ? "delta-pos" : "delta-neg"}">${sign}$${Math.abs(delta).toFixed(2)}</span>`;
+    }
   }
 
   async function fetchAltPrices(cards, concurrency = 8) {
