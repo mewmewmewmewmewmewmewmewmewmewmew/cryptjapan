@@ -20,6 +20,10 @@ export default {
       return proxyAlt(request, path, env);
     }
 
+    if (path === "/sol-price") {
+      return solPrice();
+    }
+
     if (path.startsWith("/marketplace") || path.startsWith("/cart")) {
       return proxyCC(path, url);
     }
@@ -42,6 +46,18 @@ async function proxyAlt(request, path, env) {
   const data = await upstream.text();
   return new Response(data, {
     status: upstream.status,
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
+}
+
+async function solPrice() {
+  const res = await fetch(
+    "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
+    { headers: { "Accept": "application/json" } }
+  );
+  const data = await res.json();
+  const price = data?.solana?.usd ?? null;
+  return new Response(JSON.stringify({ usd: price }), {
     headers: { ...CORS, "Content-Type": "application/json" },
   });
 }

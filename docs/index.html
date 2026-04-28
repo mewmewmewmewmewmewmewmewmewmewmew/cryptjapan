@@ -150,8 +150,9 @@
     .alt-loading { color: #333; font-size: 11px; }
     .alt-link { color: #a78bfa; text-decoration: none; }
     .alt-link:hover { text-decoration: underline; }
-    td.alt-above { outline: 1px solid rgba(74, 222, 128, 0.5); }
-    td.alt-below { outline: 1px solid rgba(248, 113, 113, 0.5); }
+    .alt-tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
+    .alt-tag.alt-above { border: 1px solid rgba(74, 222, 128, 0.55); }
+    .alt-tag.alt-below { border: 1px solid rgba(248, 113, 113, 0.55); }
 
     #lock-screen {
       position: fixed; inset: 0;
@@ -453,24 +454,38 @@
     } catch { return null; }
   }
 
-  function updateAltCell(certNumber, result, ccPrice) {
+  let solUsd = null;
+
+  async function getSolPrice() {
+    if (solUsd !== null) return solUsd;
+    try {
+      const res = await fetch(`${WORKER_URL}/sol-price`);
+      const data = await res.json();
+      solUsd = data.usd ?? null;
+    } catch { solUsd = null; }
+    return solUsd;
+  }
+
+  function updateAltCell(certNumber, result, ccPriceUsdc) {
     const cell = document.querySelector(`.alt-price[data-cert="${certNumber}"]`);
     if (!cell) return;
     if (!result?.price) { cell.textContent = "—"; return; }
     const altPrice = Number(result.price);
     const url = `https://alt.xyz/assets/${result.assetId}`;
-    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}</a>`;
-    if (ccPrice != null) {
-      cell.classList.add(altPrice > ccPrice ? "alt-above" : "alt-below");
-    }
+    let tag = "alt-tag";
+    if (ccPriceUsdc != null) tag += altPrice > ccPriceUsdc ? " alt-above" : " alt-below";
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link"><span class="${tag}">$${altPrice.toFixed(2)}</span></a>`;
   }
 
   async function fetchAltPrices(cards, concurrency = 8) {
+    const rate = await getSolPrice();
     const certPrices = new Map();
     for (const c of cards) {
-      if (c.gradingID && c.listing?.currency === "USDC") {
-        certPrices.set(c.gradingID, Number(c.listing.price));
-      }
+      if (!c.gradingID) continue;
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && rate ? raw * rate : null;
+      if (usdc !== null) certPrices.set(c.gradingID, usdc);
     }
     const certs = [...new Set(cards.map(c => c.gradingID).filter(Boolean))];
     for (let i = 0; i < certs.length; i += concurrency) {
