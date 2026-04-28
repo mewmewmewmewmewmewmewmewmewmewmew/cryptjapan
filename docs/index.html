@@ -147,9 +147,63 @@
     }
 
     .empty { text-align: center; padding: 60px; color: #444; }
+
+    #lock-screen {
+      position: fixed; inset: 0;
+      background: #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+
+    #lock-screen form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 280px;
+    }
+
+    #lock-screen h2 { font-size: 16px; font-weight: 600; text-align: center; }
+
+    #lock-screen input {
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      color: #e8e8e8;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 14px;
+      outline: none;
+      width: 100%;
+    }
+
+    #lock-screen input:focus { border-color: #444; }
+
+    #lock-screen button {
+      background: #2563eb;
+      border: none;
+      color: #fff;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    #lock-screen button:hover { background: #1d4ed8; }
+    #lock-error { color: #f87171; font-size: 13px; text-align: center; min-height: 18px; }
   </style>
 </head>
 <body>
+
+<div id="lock-screen">
+  <form onsubmit="unlock(event)">
+    <h2>CC &lt;&gt; JP</h2>
+    <input type="password" id="pw-input" placeholder="Password" autofocus />
+    <div id="lock-error"></div>
+    <button type="submit">Enter</button>
+  </form>
+</div>
 
 <header>
   <h1>CC &lt;&gt; JP</h1>
@@ -222,6 +276,29 @@
 <footer>v0.2</footer>
 
 <script>
+  const PASSWORD_HASH = "__PASSWORD_HASH__";
+
+  async function sha256(str) {
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function unlock(e) {
+    e.preventDefault();
+    const input = document.getElementById("pw-input").value;
+    const hash = await sha256(input);
+    if (hash === PASSWORD_HASH) {
+      sessionStorage.setItem("auth", "1");
+      document.getElementById("lock-screen").remove();
+    } else {
+      document.getElementById("lock-error").textContent = "Incorrect password.";
+    }
+  }
+
+  if (sessionStorage.getItem("auth") === "1") {
+    document.getElementById("lock-screen").remove();
+  }
+
   const WORKER_URL = "https://cryptjapan-proxy.mew-860.workers.dev";
 
   let allRows = [];
