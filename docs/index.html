@@ -109,7 +109,10 @@
     thead th.sort-desc::after { content: " ↓"; color: #2563eb; }
 
     tbody tr { border-bottom: 1px solid #181818; transition: background 0.1s; }
-    tbody tr:hover { background: #161616; }
+    tbody tr:nth-child(even) { background: #141414; }
+    tbody tr:hover { background: #1c1c1c; }
+    tbody tr.selected { background: #1c2e44; }
+    tbody tr.selected:hover { background: #1f3349; }
 
     td {
       padding: 10px 12px;
@@ -339,7 +342,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.22</footer>
+<footer>v0.23</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -984,6 +987,14 @@
   }
 
   window.addEventListener("beforeunload", savePriceCache);
+
+  document.getElementById("results-body").addEventListener("click", e => {
+    const tr = e.target.closest("tr");
+    if (!tr) return;
+    const already = tr.classList.contains("selected");
+    document.querySelectorAll("#results-body tr.selected").forEach(r => r.classList.remove("selected"));
+    if (!already) tr.classList.add("selected");
+  });
 
   // Restore from cache on page refresh — must run after all const/let declarations
   // are initialized (calling earlier causes TDZ ReferenceErrors that are silently swallowed)
