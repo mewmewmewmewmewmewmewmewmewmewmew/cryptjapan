@@ -118,8 +118,11 @@ async function snkrdunkPrice(url) {
 
   // Extract unique apparel IDs from href="/apparels/{id}" links
   const matches = [...html.matchAll(/\/apparels\/(\d+)/g)];
-  const ids = [...new Set(matches.map(m => m[1]))].slice(0, 5);
+  const ids = [...new Set(matches.map(m => m[1]))].slice(0, 10);
   if (ids.length === 0) return none;
+
+  // Card number is the last token of keywords (e.g. "Greninja EX 083" → "083")
+  const cardNum = keywords.trim().split(/\s+/).pop() || "";
 
   // Try each apparel ID, find one with recent completed sales at the requested grade
   const gradeCondition = grade ? `tradingCardSingleCondition${grade}` : null;
@@ -133,6 +136,14 @@ async function snkrdunkPrice(url) {
       if (!listRes.ok) continue;
       const data = await listRes.json();
 
+      // Verify card number matches the first number in bracket notation [SetCode NUM/TOTAL]
+      // e.g. [SV5a 083/066] ✓  vs  [M4 114/083] ✗ (083 is the total, not the card number)
+      const apparelName = (data.apparelUsedItems || [])[0]?.apparel?.name ?? "";
+      if (cardNum && apparelName) {
+        const bracketNum = apparelName.match(/\[\S+ (\d+)\//)?.[1];
+        if (bracketNum !== undefined && bracketNum !== cardNum) continue;
+      }
+
       // Completed sales only (isDisplaySold), matching grade
       const sold = (data.apparelUsedItems || []).filter(item =>
         item.isDisplaySold === true && (!gradeCondition || item.wearCount === gradeCondition)
@@ -143,8 +154,7 @@ async function snkrdunkPrice(url) {
       sold.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
       const recent = sold.slice(0, 4);
       const avg = Math.round(recent.reduce((sum, i) => sum + i.price, 0) / recent.length);
-      const appName = data.apparelUsedItems[0]?.apparel?.name ?? null;
-      return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: appName, salesCount: recent.length }), {
+      return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, salesCount: recent.length }), {
         headers: { ...CORS, "Content-Type": "application/json" },
       });
     } catch { continue; }
