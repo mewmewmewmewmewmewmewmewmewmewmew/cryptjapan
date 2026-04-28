@@ -279,19 +279,26 @@
   const PASSWORD_HASH = "__PASSWORD_HASH__";
 
   async function sha256(str) {
+    if (!window.isSecureContext || !crypto.subtle) {
+      throw new Error("HTTPS required — please access via https://");
+    }
     const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
     return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
   }
 
   async function unlock(e) {
     e.preventDefault();
-    const input = document.getElementById("pw-input").value;
-    const hash = await sha256(input);
-    if (hash === PASSWORD_HASH) {
-      sessionStorage.setItem("auth", "1");
-      document.getElementById("lock-screen").remove();
-    } else {
-      document.getElementById("lock-error").textContent = "Incorrect password.";
+    try {
+      const input = document.getElementById("pw-input").value;
+      const hash = await sha256(input);
+      if (hash === PASSWORD_HASH) {
+        sessionStorage.setItem("auth", "1");
+        document.getElementById("lock-screen").remove();
+      } else {
+        document.getElementById("lock-error").textContent = "Incorrect password.";
+      }
+    } catch (err) {
+      document.getElementById("lock-error").textContent = err.message;
     }
   }
 
