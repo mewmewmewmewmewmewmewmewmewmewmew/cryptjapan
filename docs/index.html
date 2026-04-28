@@ -395,6 +395,7 @@
       allRows = cards;
       status.textContent = `${data.findTotal?.toLocaleString() ?? cards.length} total listings — page ${currentPage}`;
       updatePagination(data.totalPages ?? 1);
+      await getSolPrice();
       renderTable(cards);
       fetchAltPrices(cards);
       window.scrollTo(0, 0);
@@ -421,8 +422,9 @@
       const l = c.listing;
       const cardUrl = `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
       const price = Number(l.price);
+      const solAmt = `${price % 1 === 0 ? price : price.toFixed(2)} SOL`;
       const priceStr = l.currency === "SOL"
-        ? `${price % 1 === 0 ? price : price.toFixed(2)} SOL`
+        ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (${solAmt})` : solAmt)
         : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
       return `<tr>
         <td title="${esc(c.itemName)}">${esc(c.itemName)}</td>
@@ -519,7 +521,7 @@
     if (!cell) return;
     if (!result?.price) { cell.textContent = "—"; return; }
     const altPrice = Number(result.price);
-    const url = `https://alt.xyz/assets/${result.assetId}`;
+    const url = `https://alt.xyz/itm/${result.assetId}/research`;
     let tag = "alt-tag";
     if (ccPriceUsdc != null) tag += altPrice > ccPriceUsdc ? " alt-above" : " alt-below";
     cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link"><span class="${tag}">$${altPrice.toFixed(2)}</span></a>`;
