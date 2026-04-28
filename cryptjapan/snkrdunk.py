@@ -8,13 +8,13 @@ from dataclasses import dataclass
 
 @dataclass
 class SnkrdunkListing:
-    card_id: str        # normalized ID for cross-platform matching
     card_name: str
     set_name: str
-    price_jpy: float
+    grade: str              # e.g. "GEM-MT 10"
+    grading_id: str         # PSA cert number — primary match key against CollectorCrypt
+    price_jpy: float        # Snkrdunk lists prices in JPY
     seller: str
     listing_id: str
-    condition: str | None
     url: str
 
 
