@@ -292,8 +292,8 @@
         <th onclick="sortBy('grade')">Grade</th>
         <th onclick="sortBy('gradingID')">PSA Cert</th>
         <th onclick="sortBy('price')">Price</th>
-        <th>Alt $</th>
-        <th>Alt Δ</th>
+        <th onclick="sortBy('altPrice')">Alt $</th>
+        <th onclick="sortBy('altDelta')">Alt Δ</th>
         <th>Link</th>
       </tr>
     </thead>
@@ -396,6 +396,7 @@
       status.textContent = `${data.findTotal?.toLocaleString() ?? cards.length} total listings — page ${currentPage}`;
       updatePagination(data.totalPages ?? 1);
       await getSolPrice();
+      altCache.clear();
       renderTable(cards);
       fetchAltPrices(cards);
       window.scrollTo(0, 0);
@@ -416,7 +417,6 @@
       return;
     }
     empty.style.display = "none";
-    altCache.clear();
 
     tbody.innerHTML = rows.map(c => {
       const l = c.listing;
@@ -444,18 +444,39 @@
 
     if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
 
-    const thIdx = ["itemName","grade","gradingID","price"].indexOf(col);
+    const colOrder = ["itemName","grade","gradingID","price","altPrice","altDelta"];
+    const thIdx = colOrder.indexOf(col);
     if (thIdx >= 0) {
       ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
     }
 
     const sorted = [...allRows].sort((a, b) => {
-      let av = col === "price" ? Number(a.listing?.price ?? 0) : (a[col] ?? "");
-      let bv = col === "price" ? Number(b.listing?.price ?? 0) : (b[col] ?? "");
+      let av, bv;
+      if (col === "price") {
+        av = Number(a.listing?.price ?? 0); bv = Number(b.listing?.price ?? 0);
+      } else if (col === "altPrice") {
+        av = a._altPrice ?? -Infinity; bv = b._altPrice ?? -Infinity;
+      } else if (col === "altDelta") {
+        av = a._altDelta ?? -Infinity; bv = b._altDelta ?? -Infinity;
+      } else {
+        av = a[col] ?? ""; bv = b[col] ?? "";
+      }
       if (typeof av === "string") return av.localeCompare(bv) * sortDir;
       return (av - bv) * sortDir;
     });
     renderTable(sorted);
+    repopulateAltCells(sorted);
+  }
+
+  function repopulateAltCells(rows) {
+    for (const c of rows) {
+      if (!c.gradingID || !altCache.has(c.gradingID)) continue;
+      const result = altCache.get(c.gradingID);
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+      updateAltCell(c.gradingID, result, usdc);
+    }
   }
 
   // ── Alt.xyz price fetching ───────────────────────────────────────────
@@ -547,7 +568,17 @@
       await Promise.all(
         certs.slice(i, i + concurrency).map(async cert => {
           const result = await fetchAltPrice(cert);
-          updateAltCell(cert, result, certPrices.get(cert));
+          const usdc = certPrices.get(cert);
+          updateAltCell(cert, result, usdc);
+          if (result?.price != null) {
+            const altPrice = Number(result.price);
+            for (const c of allRows) {
+              if (c.gradingID === cert) {
+                c._altPrice = altPrice;
+                c._altDelta = usdc != null ? altPrice - usdc : null;
+              }
+            }
+          }
         })
       );
     }
