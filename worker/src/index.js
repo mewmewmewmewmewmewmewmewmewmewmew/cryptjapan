@@ -52,12 +52,12 @@ async function proxyAlt(request, path, env) {
 
 async function solPrice() {
   const res = await fetch(
-    "https://api.coingecko.com/api/v3/simple/price?ids=solana&vs_currencies=usd",
+    "https://api.coinbase.com/v2/prices/SOL-USD/spot",
     { headers: { "Accept": "application/json" } }
   );
   const data = await res.json();
-  const price = data?.solana?.usd ?? null;
-  return new Response(JSON.stringify({ usd: price }), {
+  const price = parseFloat(data?.data?.amount ?? null);
+  return new Response(JSON.stringify({ usd: isNaN(price) ? null : price }), {
     headers: { ...CORS, "Content-Type": "application/json" },
   });
 }
