@@ -339,7 +339,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.21</footer>
+<footer>v0.22</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -371,7 +371,6 @@
 
   if (sessionStorage.getItem("auth") === "1") {
     document.getElementById("lock-screen").remove();
-    loadCardCache();
   }
 
   const WORKER_URL = "https://cryptjapan-proxy.mew-860.workers.dev";
@@ -985,6 +984,10 @@
   }
 
   window.addEventListener("beforeunload", savePriceCache);
+
+  // Restore from cache on page refresh — must run after all const/let declarations
+  // are initialized (calling earlier causes TDZ ReferenceErrors that are silently swallowed)
+  if (sessionStorage.getItem("auth") === "1") loadCardCache();
 
   function esc(s) {
     return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
