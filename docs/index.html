@@ -314,7 +314,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.8</footer>
+<footer>v0.9</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -432,7 +432,7 @@
       const price = Number(l.price);
       const solAmt = `${price % 1 === 0 ? price : price.toFixed(2)} SOL`;
       const priceStr = l.currency === "SOL"
-        ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (${solAmt})` : solAmt)
+        ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="price-sub">(${solAmt})</span>` : solAmt)
         : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
       return `<tr>
         <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${boldCardName(c.itemName)}</a></td>
@@ -568,8 +568,7 @@
     if (!result?.price) { priceCell.textContent = "—"; return; }
     const altPrice = Number(result.price);
     const url = `https://alt.xyz/itm/${result.assetId}/research`;
-    const altJpy = jpyUsd ? ` <span class="price-sub">(¥${Math.round(altPrice / jpyUsd).toLocaleString()})</span>` : "";
-    priceCell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}${altJpy}</a>`;
+    priceCell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}</a>`;
     if (deltaCell && ccPriceUsdc != null) {
       const delta = altPrice - ccPriceUsdc;
       const sign = delta >= 0 ? "+" : "";
