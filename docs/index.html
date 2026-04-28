@@ -339,7 +339,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.19</footer>
+<footer>v0.20</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -710,6 +710,7 @@
         })
       );
     }
+    savePriceCache();
   }
   // ─────────────────────────────────────────────────────────────────────
 
@@ -872,6 +873,7 @@
         })
       );
     }
+    savePriceCache();
   }
   // ─────────────────────────────────────────────────────────────────────
 
@@ -904,6 +906,13 @@
     } catch {} // quota exceeded — skip silently
   }
 
+  function savePriceCache() {
+    try {
+      sessionStorage.setItem("altCacheData", JSON.stringify([...altCache.entries()]));
+      sessionStorage.setItem("snkrdunkCacheData", JSON.stringify([...snkrdunkCache.entries()]));
+    } catch {}
+  }
+
   async function loadCardCache() {
     try {
       const raw = sessionStorage.getItem("cardListCache");
@@ -917,6 +926,13 @@
         const el = document.getElementById(id);
         if (el && f[param] != null) el.value = f[param];
       }
+      // Restore price caches before repopulating cells
+      try {
+        const altEntries = JSON.parse(sessionStorage.getItem("altCacheData") || "[]");
+        for (const [k, v] of altEntries) altCache.set(k, v);
+        const snkrEntries = JSON.parse(sessionStorage.getItem("snkrdunkCacheData") || "[]");
+        for (const [k, v] of snkrEntries) snkrdunkCache.set(k, v);
+      } catch {}
       allRows = cached.rows;
       currentPage = cached.page ?? 1;
       totalPages = cached.pages ?? 1;
@@ -942,6 +958,8 @@
     btn.classList.toggle("active");
     table.classList.toggle(`hide-${source}`, !btn.classList.contains("active"));
   }
+
+  window.addEventListener("beforeunload", savePriceCache);
 
   function esc(s) {
     return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
