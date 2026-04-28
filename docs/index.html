@@ -67,7 +67,9 @@
     .filters-live input:hover { border-color: #444; }
     .filters-live input:focus { border-color: #555; }
     #live-search { width: 220px; }
-    #price-min, #price-max { width: 88px; }
+    #price-min, #price-max { width: 88px; -moz-appearance: textfield; }
+    #price-min::-webkit-outer-spin-button, #price-min::-webkit-inner-spin-button,
+    #price-max::-webkit-outer-spin-button, #price-max::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
     .filter-label { font-size: 12px; color: #555; }
 
     select, button {
@@ -375,7 +377,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.25</footer>
+<footer>v0.26</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -656,8 +658,8 @@
     }
 
     renderTable(filtered);
-    repopulateAltCells(filtered);
-    repopulateSnkrdunkCells(filtered);
+    repopulateAltCells(allRows);
+    repopulateSnkrdunkCells(allRows);
   }
 
   function repopulateAltCells(rows) {
@@ -668,6 +670,12 @@
       const raw = Number(c.listing?.price ?? 0);
       const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
       updateAltCell(c.gradingID, result, usdc);
+      if (result?.price != null) {
+        const altPrice = Number(result.price);
+        c._altPrice = altPrice;
+        c._altDelta = usdc != null ? altPrice - usdc : null;
+        c._altPct = usdc != null ? ((altPrice - usdc) / usdc) * 100 : null;
+      }
     }
   }
 
@@ -684,7 +692,9 @@
       if (!c.gradingID) continue;
       const key = snkrdunkKwKey(c);
       if (!snkrdunkCache.has(key)) continue;
-      updateSnkrdunkCell(c.gradingID, snkrdunkCache.get(key));
+      const result = snkrdunkCache.get(key);
+      updateSnkrdunkCell(c.gradingID, result);
+      if (result?.price != null) c._snkrdunkPrice = result.price;
     }
   }
 
