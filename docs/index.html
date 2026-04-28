@@ -68,8 +68,10 @@
     button#fetch-btn:hover { background: #1d4ed8; }
     button#fetch-btn:disabled { background: #1a3a7a; border-color: #1a3a7a; cursor: not-allowed; }
 
-    button#refresh-btn { margin-left: auto; }
+    button#refresh-list-btn { margin-left: auto; }
+    button#refresh-list-btn:hover:not(:disabled),
     button#refresh-btn:hover:not(:disabled) { border-color: #555; }
+    button#refresh-list-btn:disabled,
     button#refresh-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
     .status {
@@ -256,6 +258,7 @@
 <header>
   <h1>CC &lt;&gt; JP</h1>
   <span>CollectorCrypt Marketplace</span>
+  <button id="refresh-list-btn" onclick="refreshCardList()" disabled>↻ Refresh cards</button>
   <button id="refresh-btn" onclick="refreshPrices()" disabled>↻ Refresh prices</button>
 </header>
 
@@ -336,7 +339,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.18</footer>
+<footer>v0.19</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -357,6 +360,7 @@
       if (hash === PASSWORD_HASH) {
         sessionStorage.setItem("auth", "1");
         document.getElementById("lock-screen").remove();
+        loadCardCache();
       } else {
         document.getElementById("lock-error").textContent = "Incorrect password.";
       }
@@ -367,6 +371,7 @@
 
   if (sessionStorage.getItem("auth") === "1") {
     document.getElementById("lock-screen").remove();
+    loadCardCache();
   }
 
   const WORKER_URL = "https://cryptjapan-proxy.mew-860.workers.dev";
@@ -461,20 +466,25 @@
           }
         }
 
-        status.textContent = `${cards.length.toLocaleString()} listings loaded`;
+        const msg = `${cards.length.toLocaleString()} listings loaded`;
+        status.textContent = msg;
+        saveCardCache(cards, baseParams, currentPage, 1, msg);
         fetchAltPrices(cards);
         fetchSnkrdunkPrices(cards);
       } else {
         allRows = cards;
-        status.textContent = `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
+        const msg = `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
+        status.textContent = msg;
         renderTable(cards);
         repopulateAltCells(cards);
         repopulateSnkrdunkCells(cards);
+        saveCardCache(cards, baseParams, currentPage, pages, msg);
         fetchAltPrices(cards);
         fetchSnkrdunkPrices(cards);
         window.scrollTo(0, 0);
       }
 
+      document.getElementById("refresh-list-btn").disabled = false;
       document.getElementById("refresh-btn").disabled = false;
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
@@ -886,6 +896,44 @@
     }
     await Promise.all([fetchAltPrices(allRows), fetchSnkrdunkPrices(allRows)]);
     btn.disabled = false;
+  }
+
+  function saveCardCache(rows, filters, page, pages, statusText) {
+    try {
+      sessionStorage.setItem("cardListCache", JSON.stringify({ rows, filters, page, pages, statusText }));
+    } catch {} // quota exceeded — skip silently
+  }
+
+  async function loadCardCache() {
+    try {
+      const raw = sessionStorage.getItem("cardListCache");
+      if (!raw) return;
+      const cached = JSON.parse(raw);
+      if (!cached?.rows?.length) return;
+      // Restore filter selects
+      const f = cached.filters || {};
+      const filterMap = { categories: "categories", gradingCompany: "gradingCompany", grade: "grade", language: "language", orderBy: "orderBy", step: "step" };
+      for (const [param, id] of Object.entries(filterMap)) {
+        const el = document.getElementById(id);
+        if (el && f[param] != null) el.value = f[param];
+      }
+      allRows = cached.rows;
+      currentPage = cached.page ?? 1;
+      totalPages = cached.pages ?? 1;
+      await getSolPrice();
+      await getJpyRate();
+      renderTable(allRows);
+      updatePagination(totalPages);
+      document.getElementById("status").textContent = (cached.statusText || "") + " (cached)";
+      document.getElementById("refresh-list-btn").disabled = false;
+      document.getElementById("refresh-btn").disabled = false;
+      repopulateAltCells(allRows);
+      repopulateSnkrdunkCells(allRows);
+    } catch {}
+  }
+
+  async function refreshCardList() {
+    await fetchListings(true);
   }
 
   function toggleSource(source) {
