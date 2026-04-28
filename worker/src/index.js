@@ -124,9 +124,13 @@ async function snkrdunkPrice(url) {
   // Card number is the last token of keywords (e.g. "Greninja EX 083" → "083")
   const cardNum = keywords.trim().split(/\s+/).pop() || "";
   const cardNumNorm = parseInt(cardNum, 10); // normalise for leading-zero comparison (58 == 058)
+  const hasMasterBall = keywords.toLowerCase().includes("master ball");
 
   // Try each apparel ID, find one with data at the requested grade
   const gradeCondition = grade ? `tradingCardSingleCondition${grade}` : null;
+  const now = Date.now();
+  const ONE_WEEK_MS  = 7  * 24 * 60 * 60 * 1000;
+  const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
 
   for (const id of ids) {
     try {
@@ -137,30 +141,50 @@ async function snkrdunkPrice(url) {
       if (!listRes.ok) continue;
       const data = await listRes.json();
 
+      const items = data.apparelUsedItems || [];
+      if (items.length === 0) continue;
+
+      const apparelName = items[0]?.apparel?.name ?? "";
+
       // Verify card number matches the first number in bracket notation [SetCode NUM/TOTAL]
       // Normalise for leading zeros: "58" == "058"  ([SM3+ 058/072] vs cardNum "58")
-      const apparelName = (data.apparelUsedItems || [])[0]?.apparel?.name ?? "";
       if (cardNum && apparelName) {
         const bracketNum = apparelName.match(/\[\S+ (\d+)\//)?.[1];
         if (bracketNum !== undefined && parseInt(bracketNum, 10) !== cardNumNorm) continue;
       }
 
-      const items = data.apparelUsedItems || [];
+      // Skip Master Ball stamp variants unless the search card is also a Master Ball
+      if (apparelName.includes("マスターボール") && !hasMasterBall) continue;
 
-      // Prefer completed sales: avg of last 4 matching grade
       const sold = items.filter(item =>
         item.isDisplaySold === true && (!gradeCondition || item.wearCount === gradeCondition)
       );
+
       if (sold.length > 0) {
-        sold.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
-        const recent = sold.slice(0, 4);
-        const avg = Math.round(recent.reduce((sum, i) => sum + i.price, 0) / recent.length);
-        return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, salesCount: recent.length, priceType: "avg" }), {
+        sold.sort((a, b) => {
+          const ta = a.createdAt ? new Date(a.createdAt).getTime() : 0;
+          const tb = b.createdAt ? new Date(b.createdAt).getTime() : 0;
+          return tb - ta;
+        });
+
+        const age = i => (i.createdAt ? now - new Date(i.createdAt).getTime() : Infinity);
+        const inWeek       = sold.filter(i => age(i) <= ONE_WEEK_MS);
+        const inThreeWeeks = sold.filter(i => age(i) <= THREE_WEEK_MS);
+
+        // >= 2 in last week → avg last week
+        // any in last 3 weeks → avg last 3 weeks
+        // otherwise → last single sale
+        const useItems = inWeek.length >= 2 ? inWeek
+                       : inThreeWeeks.length >= 1 ? inThreeWeeks
+                       : [sold[0]];
+
+        const avg = Math.round(useItems.reduce((sum, i) => sum + i.price, 0) / useItems.length);
+        return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, salesCount: useItems.length, priceType: "avg" }), {
           headers: { ...CORS, "Content-Type": "application/json" },
         });
       }
 
-      // Fallback: lowest active listing for this grade (no sales history yet)
+      // No sold items — try active listings as fallback
       const active = items.filter(item =>
         item.status === 0 && (!gradeCondition || item.wearCount === gradeCondition)
       );
@@ -170,6 +194,11 @@ async function snkrdunkPrice(url) {
           headers: { ...CORS, "Content-Type": "application/json" },
         });
       }
+
+      // Right card confirmed, no data for this grade — N/A but still link to the page
+      return new Response(JSON.stringify({ price: null, apparelId: Number(id), name: apparelName, priceType: "na" }), {
+        headers: { ...CORS, "Content-Type": "application/json" },
+      });
     } catch { continue; }
   }
 
