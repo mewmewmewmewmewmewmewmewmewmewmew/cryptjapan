@@ -150,6 +150,8 @@
     .alt-loading { color: #333; font-size: 11px; }
     .alt-link { color: #a78bfa; text-decoration: none; }
     .alt-link:hover { text-decoration: underline; }
+    td.alt-above { outline: 1px solid rgba(74, 222, 128, 0.5); }
+    td.alt-below { outline: 1px solid rgba(248, 113, 113, 0.5); }
 
     #lock-screen {
       position: fixed; inset: 0;
@@ -451,21 +453,31 @@
     } catch { return null; }
   }
 
-  function updateAltCell(certNumber, result) {
+  function updateAltCell(certNumber, result, ccPrice) {
     const cell = document.querySelector(`.alt-price[data-cert="${certNumber}"]`);
     if (!cell) return;
     if (!result?.price) { cell.textContent = "—"; return; }
+    const altPrice = Number(result.price);
     const url = `https://alt.xyz/assets/${result.assetId}`;
-    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${Number(result.price).toFixed(2)}</a>`;
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}</a>`;
+    if (ccPrice != null) {
+      cell.classList.add(altPrice > ccPrice ? "alt-above" : "alt-below");
+    }
   }
 
   async function fetchAltPrices(cards, concurrency = 8) {
+    const certPrices = new Map();
+    for (const c of cards) {
+      if (c.gradingID && c.listing?.currency === "USDC") {
+        certPrices.set(c.gradingID, Number(c.listing.price));
+      }
+    }
     const certs = [...new Set(cards.map(c => c.gradingID).filter(Boolean))];
     for (let i = 0; i < certs.length; i += concurrency) {
       await Promise.all(
         certs.slice(i, i + concurrency).map(async cert => {
           const result = await fetchAltPrice(cert);
-          updateAltCell(cert, result);
+          updateAltCell(cert, result, certPrices.get(cert));
         })
       );
     }
