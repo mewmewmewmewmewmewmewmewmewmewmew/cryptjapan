@@ -615,6 +615,23 @@
     return jpyUsd;
   }
 
+  // Extract "CardName num" from CC itemName e.g. "2023 #203 Ceruledge ex SAR PSA 10 Japanese..." → "Ceruledge ex 203"
+  function snkrdunkKeywords(itemName) {
+    const m = itemName.match(/#(\d+)\s+(.+)/);
+    if (!m) return itemName;
+    const num = m[1];
+    const rest = m[2];
+    const stopWords = new Set(["PSA","BGS","CGC","SGC","Japanese","English","Holo","Reverse","SAR","SR","UR","RR","HR","CHR","CSR","Full","Secret"]);
+    const words = rest.split(/\s+/);
+    const nameWords = [];
+    for (const w of words) {
+      if (stopWords.has(w)) break;
+      nameWords.push(w);
+      if (nameWords.length >= 2) break;
+    }
+    return `${nameWords.join(" ")} ${num}`.trim();
+  }
+
   async function fetchSnkrdunkPrice(itemName, grade) {
     const key = `${itemName}|${grade}`;
     if (snkrdunkCache.has(key)) return snkrdunkCache.get(key);
@@ -622,7 +639,8 @@
       // CC grade is like "GEM-MT10", "MINT9" — extract trailing number → "PSA10", "PSA9"
       const gradeNum = (grade || "").match(/(\d+)$/)?.[1];
       const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
-      const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(itemName)}&grade=${encodeURIComponent(psaGrade)}`);
+      const kw = snkrdunkKeywords(itemName);
+      const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(kw)}&grade=${encodeURIComponent(psaGrade)}`);
       const data = await res.json();
       const result = data.price != null ? { price: data.price, apparelId: data.apparelId } : null;
       snkrdunkCache.set(key, result);
@@ -637,7 +655,7 @@
     const jpy = result.price;
     const url = `https://snkrdunk.com/apparels/${result.apparelId}`;
     const usdStr = jpyUsd ? ` ($${(jpy * jpyUsd).toFixed(0)})` : "";
-    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">¥${jpy.toLocaleString()}${usdStr}</a>`;
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">¥${jpy.toLocaleString()} avg${usdStr}</a>`;
   }
 
   async function fetchSnkrdunkPrices(cards, concurrency = 4) {
