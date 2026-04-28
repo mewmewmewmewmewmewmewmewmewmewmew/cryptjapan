@@ -208,12 +208,9 @@
     <thead>
       <tr>
         <th onclick="sortBy('itemName')">Card</th>
-        <th onclick="sortBy('set')">Set</th>
         <th onclick="sortBy('grade')">Grade</th>
         <th onclick="sortBy('gradingID')">PSA Cert</th>
         <th onclick="sortBy('price')">Price</th>
-        <th>Currency</th>
-        <th>Platform</th>
         <th>Link</th>
       </tr>
     </thead>
@@ -282,15 +279,15 @@
     tbody.innerHTML = rows.map(c => {
       const l = c.listing;
       const cardUrl = `https://collectorcrypt.com/card/${c.id}`;
-      const mp = l.marketplace || "";
+      const price = Number(l.price);
+      const priceStr = l.currency === "SOL"
+        ? `${price % 1 === 0 ? price : price.toFixed(2)} SOL`
+        : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
       return `<tr>
         <td title="${esc(c.itemName)}">${esc(c.itemName)}</td>
-        <td title="${esc(c.set)}">${esc(c.set)}</td>
         <td>${esc(c.grade)}</td>
         <td>${esc(c.gradingID)}</td>
-        <td class="price">${Number(l.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
-        <td class="currency">${esc(l.currency)}</td>
-        <td><span class="badge ${mp === 'ME' ? 'me' : ''}">${esc(mp || '—')}</span></td>
+        <td class="price">${priceStr}</td>
         <td><a href="${cardUrl}" target="_blank" rel="noopener">View ↗</a></td>
       </tr>`;
     }).join("");
@@ -302,20 +299,14 @@
 
     if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
 
-    const thIdx = ["itemName","set","grade","gradingID","price","currency","marketplace"].indexOf(col);
+    const thIdx = ["itemName","grade","gradingID","price"].indexOf(col);
     if (thIdx >= 0) {
       ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
     }
 
     const sorted = [...allRows].sort((a, b) => {
-      let av = col === "price" ? Number(a.listing?.price ?? 0)
-             : col === "currency" ? (a.listing?.currency ?? "")
-             : col === "marketplace" ? (a.listing?.marketplace ?? "")
-             : (a[col] ?? "");
-      let bv = col === "price" ? Number(b.listing?.price ?? 0)
-             : col === "currency" ? (b.listing?.currency ?? "")
-             : col === "marketplace" ? (b.listing?.marketplace ?? "")
-             : (b[col] ?? "");
+      let av = col === "price" ? Number(a.listing?.price ?? 0) : (a[col] ?? "");
+      let bv = col === "price" ? Number(b.listing?.price ?? 0) : (b[col] ?? "");
       if (typeof av === "string") return av.localeCompare(bv) * sortDir;
       return (av - bv) * sortDir;
     });
