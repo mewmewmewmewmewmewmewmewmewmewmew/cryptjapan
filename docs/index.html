@@ -339,7 +339,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.20</footer>
+<footer>v0.21</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -398,7 +398,7 @@
     document.getElementById("next-btn").disabled = currentPage >= totalPages;
   }
 
-  async function fetchListings(resetPage = false) {
+  async function fetchListings(resetPage = false, forceRefresh = false) {
     if (resetPage) currentPage = 1;
     const btn = document.getElementById("fetch-btn");
     const status = document.getElementById("status");
@@ -417,6 +417,32 @@
       orderBy: document.getElementById("orderBy").value,
       step: stepVal,
     };
+    // filterState stores "all" as step so the cache key is meaningful
+    const filterState = { ...baseParams, step: stepSel };
+
+    // For show-all, use cached card list if filters match and not force-refreshing
+    if (showAll && !forceRefresh) {
+      try {
+        const cached = JSON.parse(sessionStorage.getItem("cardListCache") || "null");
+        const filterKeys = ["categories","gradingCompany","grade","language","orderBy"];
+        if (cached?.rows?.length && cached.filters?.step === "all" &&
+            filterKeys.every(k => cached.filters[k] === filterState[k])) {
+          allRows = cached.rows;
+          await getSolPrice();
+          await getJpyRate();
+          renderTable(allRows);
+          updatePagination(1);
+          status.textContent = (cached.statusText || `${allRows.length} listings loaded`) + " (cached)";
+          document.getElementById("refresh-list-btn").disabled = false;
+          document.getElementById("refresh-btn").disabled = false;
+          repopulateAltCells(allRows);
+          repopulateSnkrdunkCells(allRows);
+          window.scrollTo(0, 0);
+          btn.disabled = false;
+          return;
+        }
+      } catch {}
+    }
 
     async function fetchPage(page) {
       const params = new URLSearchParams({ ...baseParams, page });
@@ -438,7 +464,6 @@
       updatePagination(showAll ? 1 : pages);
 
       if (showAll) {
-        // Render first page immediately so user sees results while rest loads
         allRows = cards;
         renderTable(cards);
         repopulateAltCells(cards);
@@ -468,7 +493,7 @@
 
         const msg = `${cards.length.toLocaleString()} listings loaded`;
         status.textContent = msg;
-        saveCardCache(cards, baseParams, currentPage, 1, msg);
+        saveCardCache(cards, filterState, currentPage, 1, msg);
         fetchAltPrices(cards);
         fetchSnkrdunkPrices(cards);
       } else {
@@ -478,7 +503,7 @@
         renderTable(cards);
         repopulateAltCells(cards);
         repopulateSnkrdunkCells(cards);
-        saveCardCache(cards, baseParams, currentPage, pages, msg);
+        saveCardCache(cards, filterState, currentPage, pages, msg);
         fetchAltPrices(cards);
         fetchSnkrdunkPrices(cards);
         window.scrollTo(0, 0);
@@ -949,7 +974,7 @@
   }
 
   async function refreshCardList() {
-    await fetchListings(true);
+    await fetchListings(true, true);
   }
 
   function toggleSource(source) {
