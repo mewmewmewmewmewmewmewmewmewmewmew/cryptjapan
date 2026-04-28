@@ -342,7 +342,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.23</footer>
+<footer>v0.24</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -380,6 +380,7 @@
 
   let allRows = [];
   let sortCol = null;
+  let cacheLoadAborted = false;
   let sortDir = 1;
   let currentPage = 1;
   let totalPages = 1;
@@ -401,6 +402,7 @@
   }
 
   async function fetchListings(resetPage = false, forceRefresh = false) {
+    cacheLoadAborted = true; // prevent any in-flight loadCardCache from overwriting
     if (resetPage) currentPage = 1;
     const btn = document.getElementById("fetch-btn");
     const status = document.getElementById("status");
@@ -965,6 +967,7 @@
       totalPages = cached.pages ?? 1;
       await getSolPrice();
       await getJpyRate();
+      if (cacheLoadAborted) return; // fetchListings was called while we were awaiting
       renderTable(allRows);
       updatePagination(totalPages);
       document.getElementById("status").textContent = (cached.statusText || "") + " (cached)";
