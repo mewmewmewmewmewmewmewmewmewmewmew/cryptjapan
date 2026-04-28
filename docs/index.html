@@ -137,6 +137,28 @@
 
     .badge.me { background: #1c1a2e; color: #a78bfa; }
 
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 24px 72px;
+      font-size: 13px;
+      color: #666;
+    }
+
+    .pagination button {
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      color: #e8e8e8;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .pagination button:hover:not(:disabled) { border-color: #444; }
+    .pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+
     footer {
       position: fixed;
       bottom: 0;
@@ -151,8 +173,8 @@
     .alt-link { color: #a78bfa; text-decoration: none; }
     .alt-link:hover { text-decoration: underline; }
     .alt-tag { display: inline-block; padding: 1px 6px; border-radius: 4px; font-size: 12px; }
-    .alt-tag.alt-above { border: 1px solid rgba(74, 222, 128, 0.55); }
-    .alt-tag.alt-below { border: 1px solid rgba(248, 113, 113, 0.55); }
+    .alt-tag.alt-above { border: 1px solid rgba(248, 113, 113, 0.55); }
+    .alt-tag.alt-below { border: 1px solid rgba(74, 222, 128, 0.55); }
 
     #lock-screen {
       position: fixed; inset: 0;
@@ -258,7 +280,7 @@
     <option value="24">24 per page</option>
   </select>
 
-  <button id="fetch-btn" onclick="fetchListings()">Fetch listings</button>
+  <button id="fetch-btn" onclick="fetchListings(true)">Fetch listings</button>
 </div>
 
 <div class="status" id="status">Ready.</div>
@@ -278,6 +300,12 @@
     <tbody id="results-body"></tbody>
   </table>
   <div class="empty" id="empty-msg">Hit "Fetch listings" to load cards.</div>
+</div>
+
+<div class="pagination" id="pagination" style="display:none">
+  <button id="prev-btn" onclick="goPage(-1)">← Prev</button>
+  <span id="page-info"></span>
+  <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
 <footer>v0.3</footer>
@@ -318,14 +346,33 @@
   let allRows = [];
   let sortCol = null;
   let sortDir = 1;
+  let currentPage = 1;
+  let totalPages = 1;
 
-  async function fetchListings() {
+  function goPage(delta) {
+    const next = currentPage + delta;
+    if (next < 1 || next > totalPages) return;
+    currentPage = next;
+    fetchListings();
+  }
+
+  function updatePagination(total) {
+    totalPages = total;
+    const pag = document.getElementById("pagination");
+    pag.style.display = totalPages > 1 ? "flex" : "none";
+    document.getElementById("page-info").textContent = `Page ${currentPage} of ${totalPages}`;
+    document.getElementById("prev-btn").disabled = currentPage <= 1;
+    document.getElementById("next-btn").disabled = currentPage >= totalPages;
+  }
+
+  async function fetchListings(resetPage = false) {
+    if (resetPage) currentPage = 1;
     const btn = document.getElementById("fetch-btn");
     const status = document.getElementById("status");
     btn.disabled = true;
 
     const params = new URLSearchParams({
-      page: 1,
+      page: currentPage,
       step: document.getElementById("step").value,
       cardType: "Card",
       categories: document.getElementById("categories").value,
@@ -335,7 +382,6 @@
       orderBy: document.getElementById("orderBy").value,
     });
 
-    // Remove empty params
     for (const [k, v] of [...params]) { if (!v) params.delete(k); }
 
     status.textContent = "Fetching…";
@@ -347,9 +393,11 @@
 
       const cards = (data.filterNFtCard || []).filter(c => c.listing);
       allRows = cards;
-      status.textContent = `${data.findTotal?.toLocaleString() ?? cards.length} total listings — showing ${cards.length}`;
+      status.textContent = `${data.findTotal?.toLocaleString() ?? cards.length} total listings — page ${currentPage}`;
+      updatePagination(data.totalPages ?? 1);
       renderTable(cards);
       fetchAltPrices(cards);
+      window.scrollTo(0, 0);
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
     } finally {
