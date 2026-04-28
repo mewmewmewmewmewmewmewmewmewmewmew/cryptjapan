@@ -2,7 +2,7 @@ name: Deploy Cloudflare Worker
 
 on:
   push:
-    branches: [claude/card-arbitrage-tool-lM6rb, main]
+    branches: [main]
     paths:
       - worker/**
   workflow_dispatch:
