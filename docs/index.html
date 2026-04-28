@@ -147,6 +147,9 @@
     }
 
     .empty { text-align: center; padding: 60px; color: #444; }
+    .alt-loading { color: #333; font-size: 11px; }
+    .alt-link { color: #a78bfa; text-decoration: none; }
+    .alt-link:hover { text-decoration: underline; }
 
     #lock-screen {
       position: fixed; inset: 0;
@@ -265,6 +268,7 @@
         <th onclick="sortBy('grade')">Grade</th>
         <th onclick="sortBy('gradingID')">PSA Cert</th>
         <th onclick="sortBy('price')">Price</th>
+        <th>Alt $</th>
         <th>Link</th>
       </tr>
     </thead>
@@ -273,7 +277,7 @@
   <div class="empty" id="empty-msg">Hit "Fetch listings" to load cards.</div>
 </div>
 
-<footer>v0.2</footer>
+<footer>v0.3</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -342,6 +346,7 @@
       allRows = cards;
       status.textContent = `${data.findTotal?.toLocaleString() ?? cards.length} total listings — showing ${cards.length}`;
       renderTable(cards);
+      fetchAltPrices(cards);
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
     } finally {
@@ -359,6 +364,7 @@
       return;
     }
     empty.style.display = "none";
+    altCache.clear();
 
     tbody.innerHTML = rows.map(c => {
       const l = c.listing;
@@ -372,6 +378,7 @@
         <td>${esc(c.grade)}</td>
         <td>${esc(c.gradingID)}</td>
         <td class="price">${priceStr}</td>
+        <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
         <td><a href="${cardUrl}" target="_blank" rel="noopener">View ↗</a></td>
       </tr>`;
     }).join("");
@@ -396,6 +403,74 @@
     });
     renderTable(sorted);
   }
+
+  // ── Alt.xyz price fetching ───────────────────────────────────────────
+  const altCache = new Map();
+
+  const CERT_QUERY = `query Cert($certNumber: String!) {
+    cert(certNumber: $certNumber) {
+      certNumber gradeNumber gradingCompany
+      asset { id __typename }
+      __typename
+    }
+  }`;
+
+  const ASSET_QUERY = `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
+    asset(id: $id) {
+      id
+      predictedPrice(tsFilter: $tsFilter)
+      __typename
+    }
+  }`;
+
+  async function altPost(operation, variables) {
+    const res = await fetch(`${WORKER_URL}/alt/${operation}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operationName: operation, query: operation === "Cert" ? CERT_QUERY : ASSET_QUERY, variables }),
+    });
+    return res.json();
+  }
+
+  async function fetchAltPrice(certNumber) {
+    if (altCache.has(certNumber)) return altCache.get(certNumber);
+    try {
+      const certData = await altPost("Cert", { certNumber });
+      const cert = certData.data?.cert;
+      if (!cert?.asset?.id) return null;
+      const assetData = await altPost("AssetDetails", {
+        id: cert.asset.id,
+        tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany },
+      });
+      const result = {
+        price: assetData.data?.asset?.predictedPrice ?? null,
+        assetId: cert.asset.id,
+      };
+      altCache.set(certNumber, result);
+      return result;
+    } catch { return null; }
+  }
+
+  function updateAltCell(certNumber, result) {
+    const cell = document.querySelector(`.alt-price[data-cert="${certNumber}"]`);
+    if (!cell) return;
+    if (!result?.price) { cell.textContent = "—"; return; }
+    const url = `https://alt.xyz/assets/${result.assetId}`;
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${Number(result.price).toFixed(2)}</a>`;
+  }
+
+  async function fetchAltPrices(cards, concurrency = 8) {
+    const certs = [...new Set(cards.map(c => c.gradingID).filter(Boolean))];
+    for (let i = 0; i < certs.length; i += concurrency) {
+      await Promise.all(
+        certs.slice(i, i + concurrency).map(async cert => {
+          const result = await fetchAltPrice(cert);
+          updateAltCell(cert, result);
+        })
+      );
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
 
   function esc(s) {
     return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
