@@ -616,11 +616,15 @@
   }
 
   // Extract "CardName num" from CC itemName e.g. "2023 #203 Ceruledge ex SAR PSA 10 Japanese..." → "Ceruledge ex 203"
+  // Also handles "Full Art/Braixen" patterns → "Braixen 069"
   function snkrdunkKeywords(itemName) {
     const m = itemName.match(/#(\d+)\s+(.+)/);
     if (!m) return itemName;
     const num = m[1];
     const rest = m[2];
+    // "Full Art/Braixen" → take the part after "/"
+    const slashMatch = rest.match(/\b\w+\/(\w+)/);
+    if (slashMatch) return `${slashMatch[1]} ${num}`.trim();
     const stopWords = new Set(["PSA","BGS","CGC","SGC","Japanese","English","Holo","Reverse","SAR","SR","UR","RR","HR","CHR","CSR","Full","Secret"]);
     const words = rest.split(/\s+/);
     const nameWords = [];
