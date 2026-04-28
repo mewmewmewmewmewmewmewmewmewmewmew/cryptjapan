@@ -320,7 +320,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.14</footer>
+<footer>v0.15</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -414,12 +414,10 @@
       const pages = firstData.totalPages ?? 1;
 
       if (showAll && pages > 1) {
-        for (let p = 2; p <= pages; p += 4) {
+        for (let p = 2; p <= pages; p++) {
           status.textContent = `Fetching page ${p} of ${pages}…`;
-          const chunk = [];
-          for (let q = p; q < p + 4 && q <= pages; q++) chunk.push(q);
-          const results = await Promise.all(chunk.map(fetchPage));
-          for (const d of results) cards = cards.concat((d.filterNFtCard || []).filter(c => c.listing));
+          const d = await fetchPage(p);
+          cards = cards.concat((d.filterNFtCard || []).filter(c => c.listing));
         }
       }
 
