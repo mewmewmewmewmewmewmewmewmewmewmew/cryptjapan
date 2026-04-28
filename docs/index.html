@@ -172,6 +172,8 @@
     .alt-loading { color: #333; font-size: 11px; }
     .alt-link { color: #a78bfa; text-decoration: none; }
     .alt-link:hover { text-decoration: underline; }
+    .snkrdunk-price a { color: #38bdf8; text-decoration: none; }
+    .snkrdunk-price a:hover { text-decoration: underline; }
     .delta-pos { color: #4ade80; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .delta-neg { color: #f87171; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
@@ -295,6 +297,7 @@
         <th onclick="sortBy('altPrice')">Alt $</th>
         <th onclick="sortBy('altDelta')">Alt Δ</th>
         <th onclick="sortBy('snkrdunkPrice')">SNKRDUNK</th>
+        <th onclick="sortBy('snkrdunkDelta')">SNKRDUNK Δ</th>
         <th>Link</th>
       </tr>
     </thead>
@@ -309,7 +312,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.4</footer>
+<footer>v0.5</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -430,13 +433,14 @@
         ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} (${solAmt})` : solAmt)
         : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
       return `<tr>
-        <td title="${esc(c.itemName)}">${esc(c.itemName)}</td>
+        <td title="${esc(c.itemName)}">${boldCardName(c.itemName)}</td>
         <td>${esc(c.grade)}</td>
         <td>${esc(c.gradingID)}</td>
         <td class="price">${priceStr}</td>
         <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
         <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
         <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+        <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
         <td><a href="${cardUrl}" target="_blank" rel="noopener">View ↗</a></td>
       </tr>`;
     }).join("");
@@ -448,7 +452,7 @@
 
     if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
 
-    const colOrder = ["itemName","grade","gradingID","price","altPrice","altDelta","snkrdunkPrice"];
+    const colOrder = ["itemName","grade","gradingID","price","altPrice","altDelta","snkrdunkPrice","snkrdunkDelta"];
     const thIdx = colOrder.indexOf(col);
     if (thIdx >= 0) {
       ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
@@ -464,6 +468,8 @@
         av = a._altDelta ?? -Infinity; bv = b._altDelta ?? -Infinity;
       } else if (col === "snkrdunkPrice") {
         av = a._snkrdunkPrice ?? -Infinity; bv = b._snkrdunkPrice ?? -Infinity;
+      } else if (col === "snkrdunkDelta") {
+        av = a._snkrdunkDelta ?? -Infinity; bv = b._snkrdunkDelta ?? -Infinity;
       } else {
         av = a[col] ?? ""; bv = b[col] ?? "";
       }
@@ -636,6 +642,22 @@
     return `${nameWords.join(" ")} ${num}`.trim();
   }
 
+  // Bold the card name + number extracted by snkrdunkKeywords within the full itemName display
+  function boldCardName(itemName) {
+    const kw = snkrdunkKeywords(itemName);
+    const numMatch = kw.match(/(\d+)$/);
+    if (!numMatch) return esc(itemName);
+    const num = numMatch[1];
+    const nameOnly = kw.slice(0, -num.length).trim();
+    let result = esc(itemName);
+    result = result.replace(`#${num}`, `<b>#${num}</b>`);
+    if (nameOnly) {
+      const pat = nameOnly.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      result = result.replace(new RegExp(pat), `<b>${esc(nameOnly)}</b>`);
+    }
+    return result;
+  }
+
   async function fetchSnkrdunkPrice(itemName, grade) {
     const key = `${itemName}|${grade}`;
     if (snkrdunkCache.has(key)) return snkrdunkCache.get(key);
@@ -654,12 +676,32 @@
 
   function updateSnkrdunkCell(certNumber, result) {
     const cell = document.querySelector(`.snkrdunk-price[data-cert="${certNumber}"]`);
+    const deltaCell = document.querySelector(`.snkrdunk-delta[data-cert="${certNumber}"]`);
     if (!cell) return;
-    if (!result?.price) { cell.textContent = "—"; return; }
+    if (!result?.price) {
+      cell.textContent = "—";
+      if (deltaCell) deltaCell.textContent = "";
+      return;
+    }
     const jpy = result.price;
+    const usdSnkr = jpyUsd ? jpy * jpyUsd : null;
     const url = `https://snkrdunk.com/apparels/${result.apparelId}`;
-    const usdStr = jpyUsd ? ` ($${(jpy * jpyUsd).toFixed(0)})` : "";
-    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">¥${jpy.toLocaleString()} avg${usdStr}</a>`;
+    const usdPart = usdSnkr != null ? `$${usdSnkr.toFixed(0)} ` : "";
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener">${usdPart}(¥${jpy.toLocaleString()})</a>`;
+    if (deltaCell && usdSnkr != null) {
+      const row = allRows.find(c => c.gradingID === certNumber);
+      if (row) {
+        const cur = row.listing?.currency;
+        const raw = Number(row.listing?.price ?? 0);
+        const ccUsd = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+        if (ccUsd != null) {
+          const delta = usdSnkr - ccUsd;
+          row._snkrdunkDelta = delta;
+          const sign = delta >= 0 ? "+" : "";
+          deltaCell.innerHTML = `<span class="${delta >= 0 ? "delta-pos" : "delta-neg"}">${sign}$${Math.abs(delta).toFixed(0)}</span>`;
+        }
+      }
+    }
   }
 
   async function fetchSnkrdunkPrices(cards, concurrency = 4) {
