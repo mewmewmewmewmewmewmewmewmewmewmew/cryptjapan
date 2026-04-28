@@ -619,8 +619,10 @@
     const key = `${itemName}|${grade}`;
     if (snkrdunkCache.has(key)) return snkrdunkCache.get(key);
     try {
-      const g = grade.replace(/\s+/g, ""); // "PSA 10" → "PSA10"
-      const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(itemName)}&grade=${encodeURIComponent(g)}`);
+      // CC grade is like "GEM-MT10", "MINT9" — extract trailing number → "PSA10", "PSA9"
+      const gradeNum = (grade || "").match(/(\d+)$/)?.[1];
+      const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
+      const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(itemName)}&grade=${encodeURIComponent(psaGrade)}`);
       const data = await res.json();
       const result = data.price != null ? { price: data.price, apparelId: data.apparelId } : null;
       snkrdunkCache.set(key, result);
