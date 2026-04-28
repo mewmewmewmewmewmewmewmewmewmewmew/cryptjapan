@@ -121,26 +121,30 @@ async function snkrdunkPrice(url) {
   const ids = [...new Set(matches.map(m => m[1]))].slice(0, 5);
   if (ids.length === 0) return none;
 
-  // Try each apparel ID, find one with active listings at the requested grade
+  // Try each apparel ID, find one with recent completed sales at the requested grade
   const gradeCondition = grade ? `tradingCardSingleCondition${grade}` : null;
 
   for (const id of ids) {
     try {
       const listRes = await fetch(
-        `${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=50&page=1&sizeId=0&isSaleOnly=false`,
+        `${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=100&page=1&sizeId=0&isSaleOnly=false`,
         { headers: { "Accept": "application/json", "User-Agent": SNKRDUNK_HEADERS["User-Agent"] } }
       );
       if (!listRes.ok) continue;
       const data = await listRes.json();
 
-      const active = (data.apparelUsedItems || []).filter(item =>
-        item.status === 0 && (!gradeCondition || item.wearCount === gradeCondition)
+      // Completed sales only (isDisplaySold), matching grade
+      const sold = (data.apparelUsedItems || []).filter(item =>
+        item.isDisplaySold === true && (!gradeCondition || item.wearCount === gradeCondition)
       );
-      if (active.length === 0) continue;
+      if (sold.length === 0) continue;
 
-      const minPrice = Math.min(...active.map(i => i.price));
+      // Most recent first — sort by createdAt desc, take up to 4, average
+      sold.sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""));
+      const recent = sold.slice(0, 4);
+      const avg = Math.round(recent.reduce((sum, i) => sum + i.price, 0) / recent.length);
       const appName = data.apparelUsedItems[0]?.apparel?.name ?? null;
-      return new Response(JSON.stringify({ price: minPrice, apparelId: Number(id), name: appName }), {
+      return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: appName, salesCount: recent.length }), {
         headers: { ...CORS, "Content-Type": "application/json" },
       });
     } catch { continue; }
