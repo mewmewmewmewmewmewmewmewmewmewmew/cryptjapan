@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CryptJapan — Card Arbitrage</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f0f;
+      color: #e8e8e8;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 20px 24px;
+      border-bottom: 1px solid #222;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+    }
+
+    header span {
+      font-size: 13px;
+      color: #555;
+    }
+
+    .filters {
+      padding: 16px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      border-bottom: 1px solid #1a1a1a;
+      background: #111;
+    }
+
+    select, button {
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      color: #e8e8e8;
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    select:hover, button:hover { border-color: #444; }
+
+    button#fetch-btn {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+      font-weight: 500;
+      padding: 7px 18px;
+    }
+
+    button#fetch-btn:hover { background: #1d4ed8; }
+    button#fetch-btn:disabled { background: #1a3a7a; border-color: #1a3a7a; cursor: not-allowed; }
+
+    .status {
+      padding: 10px 24px;
+      font-size: 13px;
+      color: #666;
+      min-height: 36px;
+    }
+
+    .table-wrap {
+      flex: 1;
+      overflow-x: auto;
+      padding: 0 24px 80px;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead th {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid #222;
+      color: #777;
+      font-weight: 500;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    thead th:hover { color: #aaa; }
+    thead th.sort-asc::after { content: " ↑"; color: #2563eb; }
+    thead th.sort-desc::after { content: " ↓"; color: #2563eb; }
+
+    tbody tr { border-bottom: 1px solid #181818; transition: background 0.1s; }
+    tbody tr:hover { background: #161616; }
+
+    td {
+      padding: 10px 12px;
+      vertical-align: middle;
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    td.price {
+      font-variant-numeric: tabular-nums;
+      color: #4ade80;
+      white-space: nowrap;
+    }
+
+    td.currency { color: #555; font-size: 11px; }
+
+    td a { color: #60a5fa; text-decoration: none; }
+    td a:hover { text-decoration: underline; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      background: #1e293b;
+      color: #94a3b8;
+    }
+
+    .badge.me { background: #1c1a2e; color: #a78bfa; }
+
+    footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      padding: 8px 16px;
+      font-size: 11px;
+      color: #333;
+    }
+
+    .empty { text-align: center; padding: 60px; color: #444; }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>CryptJapan</h1>
+  <span>CollectorCrypt Marketplace</span>
+</header>
+
+<div class="filters">
+  <select id="categories">
+    <option value="Pokemon,One Piece">Pokemon + One Piece</option>
+    <option value="Pokemon">Pokemon</option>
+    <option value="One Piece">One Piece</option>
+    <option value="Yu-Gi-Oh!">Yu-Gi-Oh!</option>
+    <option value="Magic The Gathering">Magic The Gathering</option>
+  </select>
+
+  <select id="gradingCompany">
+    <option value="PSA">PSA</option>
+    <option value="BGS">BGS</option>
+    <option value="CGC">CGC</option>
+    <option value="">Any grader</option>
+  </select>
+
+  <select id="grade">
+    <option value="GEM-MT 10">GEM-MT 10</option>
+    <option value="MINT 9">MINT 9</option>
+    <option value="NM-MT 8">NM-MT 8</option>
+    <option value="NM 7">NM 7</option>
+    <option value="">Any grade</option>
+  </select>
+
+  <select id="language">
+    <option value="Japanese">Japanese</option>
+    <option value="">Any language</option>
+  </select>
+
+  <select id="orderBy">
+    <option value="listedDateDesc">Newest first</option>
+    <option value="listedDateAsc">Oldest first</option>
+    <option value="priceAsc">Price: low to high</option>
+    <option value="priceDesc">Price: high to low</option>
+  </select>
+
+  <select id="step">
+    <option value="96">96 per page</option>
+    <option value="48">48 per page</option>
+    <option value="24">24 per page</option>
+  </select>
+
+  <button id="fetch-btn" onclick="fetchListings()">Fetch listings</button>
+</div>
+
+<div class="status" id="status">Ready.</div>
+
+<div class="table-wrap">
+  <table id="results-table">
+    <thead>
+      <tr>
+        <th onclick="sortBy('itemName')">Card</th>
+        <th onclick="sortBy('set')">Set</th>
+        <th onclick="sortBy('grade')">Grade</th>
+        <th onclick="sortBy('gradingID')">PSA Cert</th>
+        <th onclick="sortBy('price')">Price</th>
+        <th>Currency</th>
+        <th>Platform</th>
+        <th>Link</th>
+      </tr>
+    </thead>
+    <tbody id="results-body"></tbody>
+  </table>
+  <div class="empty" id="empty-msg">Hit "Fetch listings" to load cards.</div>
+</div>
+
+<footer>v0.1</footer>
+
+<script>
+  const WORKER_URL = "REPLACE_WITH_WORKER_URL";
+
+  let allRows = [];
+  let sortCol = null;
+  let sortDir = 1;
+
+  async function fetchListings() {
+    const btn = document.getElementById("fetch-btn");
+    const status = document.getElementById("status");
+    btn.disabled = true;
+
+    const params = new URLSearchParams({
+      page: 1,
+      step: document.getElementById("step").value,
+      cardType: "Card",
+      categories: document.getElementById("categories").value,
+      gradingCompany: document.getElementById("gradingCompany").value,
+      grade: document.getElementById("grade").value,
+      language: document.getElementById("language").value,
+      orderBy: document.getElementById("orderBy").value,
+    });
+
+    // Remove empty params
+    for (const [k, v] of [...params]) { if (!v) params.delete(k); }
+
+    status.textContent = "Fetching…";
+
+    try {
+      const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
+
+      const cards = (data.filterNFtCard || []).filter(c => c.listing);
+      allRows = cards;
+      status.textContent = `${data.findTotal?.toLocaleString() ?? cards.length} total listings — showing ${cards.length}`;
+      renderTable(cards);
+    } catch (e) {
+      status.textContent = `Error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderTable(rows) {
+    const tbody = document.getElementById("results-body");
+    const empty = document.getElementById("empty-msg");
+
+    if (!rows.length) {
+      tbody.innerHTML = "";
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+
+    tbody.innerHTML = rows.map(c => {
+      const l = c.listing;
+      const cardUrl = `https://collectorcrypt.com/card/${c.id}`;
+      const mp = l.marketplace || "";
+      return `<tr>
+        <td title="${esc(c.itemName)}">${esc(c.itemName)}</td>
+        <td title="${esc(c.set)}">${esc(c.set)}</td>
+        <td>${esc(c.grade)}</td>
+        <td>${esc(c.gradingID)}</td>
+        <td class="price">${Number(l.price).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}</td>
+        <td class="currency">${esc(l.currency)}</td>
+        <td><span class="badge ${mp === 'ME' ? 'me' : ''}">${esc(mp || '—')}</span></td>
+        <td><a href="${cardUrl}" target="_blank" rel="noopener">View ↗</a></td>
+      </tr>`;
+    }).join("");
+  }
+
+  function sortBy(col) {
+    const ths = document.querySelectorAll("thead th");
+    ths.forEach(th => th.classList.remove("sort-asc", "sort-desc"));
+
+    if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
+
+    const thIdx = ["itemName","set","grade","gradingID","price","currency","marketplace"].indexOf(col);
+    if (thIdx >= 0) {
+      ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
+    }
+
+    const sorted = [...allRows].sort((a, b) => {
+      let av = col === "price" ? Number(a.listing?.price ?? 0)
+             : col === "currency" ? (a.listing?.currency ?? "")
+             : col === "marketplace" ? (a.listing?.marketplace ?? "")
+             : (a[col] ?? "");
+      let bv = col === "price" ? Number(b.listing?.price ?? 0)
+             : col === "currency" ? (b.listing?.currency ?? "")
+             : col === "marketplace" ? (b.listing?.marketplace ?? "")
+             : (b[col] ?? "");
+      if (typeof av === "string") return av.localeCompare(bv) * sortDir;
+      return (av - bv) * sortDir;
+    });
+    renderTable(sorted);
+  }
+
+  function esc(s) {
+    return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+</script>
+</body>
+</html>
