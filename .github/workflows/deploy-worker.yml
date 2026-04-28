@@ -5,6 +5,7 @@ on:
     branches: [claude/card-arbitrage-tool-lM6rb, main]
     paths:
       - worker/**
+  workflow_dispatch:
 
 jobs:
   deploy:
