@@ -294,6 +294,7 @@
         <th onclick="sortBy('price')">Price</th>
         <th onclick="sortBy('altPrice')">Alt $</th>
         <th onclick="sortBy('altDelta')">Alt Δ</th>
+        <th onclick="sortBy('snkrdunkPrice')">SNKRDUNK</th>
         <th>Link</th>
       </tr>
     </thead>
@@ -397,8 +398,10 @@
       updatePagination(data.totalPages ?? 1);
       await getSolPrice();
       altCache.clear();
+      snkrdunkCache.clear();
       renderTable(cards);
       fetchAltPrices(cards);
+      fetchSnkrdunkPrices(cards);
       window.scrollTo(0, 0);
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
@@ -433,6 +436,7 @@
         <td class="price">${priceStr}</td>
         <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
         <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
+        <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
         <td><a href="${cardUrl}" target="_blank" rel="noopener">View ↗</a></td>
       </tr>`;
     }).join("");
@@ -444,7 +448,7 @@
 
     if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
 
-    const colOrder = ["itemName","grade","gradingID","price","altPrice","altDelta"];
+    const colOrder = ["itemName","grade","gradingID","price","altPrice","altDelta","snkrdunkPrice"];
     const thIdx = colOrder.indexOf(col);
     if (thIdx >= 0) {
       ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
@@ -458,6 +462,8 @@
         av = a._altPrice ?? -Infinity; bv = b._altPrice ?? -Infinity;
       } else if (col === "altDelta") {
         av = a._altDelta ?? -Infinity; bv = b._altDelta ?? -Infinity;
+      } else if (col === "snkrdunkPrice") {
+        av = a._snkrdunkPrice ?? -Infinity; bv = b._snkrdunkPrice ?? -Infinity;
       } else {
         av = a[col] ?? ""; bv = b[col] ?? "";
       }
@@ -466,6 +472,7 @@
     });
     renderTable(sorted);
     repopulateAltCells(sorted);
+    repopulateSnkrdunkCells(sorted);
   }
 
   function repopulateAltCells(rows) {
@@ -476,6 +483,15 @@
       const raw = Number(c.listing?.price ?? 0);
       const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
       updateAltCell(c.gradingID, result, usdc);
+    }
+  }
+
+  function repopulateSnkrdunkCells(rows) {
+    for (const c of rows) {
+      if (!c.gradingID) continue;
+      const key = `${c.itemName}|${c.grade}`;
+      if (!snkrdunkCache.has(key)) continue;
+      updateSnkrdunkCell(c.gradingID, snkrdunkCache.get(key));
     }
   }
 
@@ -577,6 +593,70 @@
                 c._altPrice = altPrice;
                 c._altDelta = usdc != null ? altPrice - usdc : null;
               }
+            }
+          }
+        })
+      );
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── SNKRDUNK price fetching ──────────────────────────────────────────
+  const snkrdunkCache = new Map(); // key: `${itemName}|${grade}`
+  let jpyUsd = null;
+
+  async function getJpyRate() {
+    if (jpyUsd !== null) return jpyUsd;
+    try {
+      const res = await fetch(`${WORKER_URL}/jpy-rate`);
+      const data = await res.json();
+      jpyUsd = data.usdPerJpy ?? null;
+    } catch { jpyUsd = null; }
+    return jpyUsd;
+  }
+
+  async function fetchSnkrdunkPrice(itemName, grade) {
+    const key = `${itemName}|${grade}`;
+    if (snkrdunkCache.has(key)) return snkrdunkCache.get(key);
+    try {
+      const g = grade.replace(/\s+/g, ""); // "PSA 10" → "PSA10"
+      const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(itemName)}&grade=${encodeURIComponent(g)}`);
+      const data = await res.json();
+      const result = data.price != null ? { price: data.price, apparelId: data.apparelId } : null;
+      snkrdunkCache.set(key, result);
+      return result;
+    } catch { return null; }
+  }
+
+  function updateSnkrdunkCell(certNumber, result) {
+    const cell = document.querySelector(`.snkrdunk-price[data-cert="${certNumber}"]`);
+    if (!cell) return;
+    if (!result?.price) { cell.textContent = "—"; return; }
+    const jpy = result.price;
+    const url = `https://snkrdunk.com/apparels/${result.apparelId}`;
+    const usdStr = jpyUsd ? ` ($${(jpy * jpyUsd).toFixed(0)})` : "";
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">¥${jpy.toLocaleString()}${usdStr}</a>`;
+  }
+
+  async function fetchSnkrdunkPrices(cards, concurrency = 4) {
+    await getJpyRate();
+    // Deduplicate by name+grade — same card type shares one lookup
+    const groups = new Map();
+    for (const c of cards) {
+      if (!c.gradingID) continue;
+      const key = `${c.itemName}|${c.grade}`;
+      if (!groups.has(key)) groups.set(key, { name: c.itemName, grade: c.grade, certs: [] });
+      groups.get(key).certs.push(c.gradingID);
+    }
+    const entries = [...groups.values()];
+    for (let i = 0; i < entries.length; i += concurrency) {
+      await Promise.all(
+        entries.slice(i, i + concurrency).map(async ({ name, grade, certs }) => {
+          const result = await fetchSnkrdunkPrice(name, grade);
+          certs.forEach(cert => updateSnkrdunkCell(cert, result));
+          for (const c of allRows) {
+            if (c.itemName === name && c.grade === grade) {
+              c._snkrdunkPrice = result?.price ?? null;
             }
           }
         })
