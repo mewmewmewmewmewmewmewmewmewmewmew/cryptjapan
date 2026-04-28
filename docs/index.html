@@ -314,7 +314,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.10</footer>
+<footer>v0.11</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -684,24 +684,6 @@
     return result;
   }
 
-  async function fetchSnkrdunkPrice(itemName, grade, cleanName = null) {
-    const key = `${itemName}|${grade}`;
-    if (snkrdunkCache.has(key)) return snkrdunkCache.get(key);
-    try {
-      // CC grade is like "GEM-MT10", "MINT9" — extract trailing number → "PSA10", "PSA9"
-      const gradeNum = (grade || "").match(/(\d+)$/)?.[1];
-      const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
-      const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, itemName) : snkrdunkKeywords(itemName);
-      const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(kw)}&grade=${encodeURIComponent(psaGrade)}`);
-      const data = await res.json();
-      const result = (data.price != null || data.apparelId != null)
-        ? { price: data.price ?? null, apparelId: data.apparelId, priceType: data.priceType }
-        : null;
-      snkrdunkCache.set(key, result);
-      return result;
-    } catch { return null; }
-  }
-
   function updateSnkrdunkCell(certNumber, result) {
     const cell = document.querySelector(`.snkrdunk-price[data-cert="${certNumber}"]`);
     const deltaCell = document.querySelector(`.snkrdunk-delta[data-cert="${certNumber}"]`);
@@ -740,24 +722,45 @@
 
   async function fetchSnkrdunkPrices(cards, concurrency = 4) {
     await getJpyRate();
-    // Deduplicate by name+grade — same card type shares one lookup
-    const groups = new Map();
+
+    // Deduplicate by computed keywords+grade — multiple CC listings of the same card
+    // often have slightly different itemName strings but resolve to identical searches
+    const kwGroups = new Map();
     for (const c of cards) {
       if (!c.gradingID) continue;
-      const key = `${c.itemName}|${c.grade}`;
-      if (!groups.has(key)) groups.set(key, { name: c.itemName, grade: c.grade, certs: [], cleanName: c.name || c.cardName || null });
-      groups.get(key).certs.push(c.gradingID);
+      const gradeNum = (c.grade || "").match(/(\d+)$/)?.[1];
+      const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
+      const cleanName = c.name || c.cardName || null;
+      const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+      const kwKey = `${kw}|${psaGrade}`;
+      if (!kwGroups.has(kwKey)) kwGroups.set(kwKey, { kw, psaGrade, grpCards: [] });
+      kwGroups.get(kwKey).grpCards.push(c);
     }
-    const entries = [...groups.values()];
+
+    const entries = [...kwGroups.values()];
     for (let i = 0; i < entries.length; i += concurrency) {
       await Promise.all(
-        entries.slice(i, i + concurrency).map(async ({ name, grade, certs, cleanName }) => {
-          const result = await fetchSnkrdunkPrice(name, grade, cleanName);
-          certs.forEach(cert => updateSnkrdunkCell(cert, result));
-          for (const c of allRows) {
-            if (c.itemName === name && c.grade === grade) {
-              c._snkrdunkPrice = result?.price ?? null;
-            }
+        entries.slice(i, i + concurrency).map(async ({ kw, psaGrade, grpCards }) => {
+          // Check cache using first card's itemKey
+          const itemKey = `${grpCards[0].itemName}|${grpCards[0].grade}`;
+          let result;
+          if (snkrdunkCache.has(itemKey)) {
+            result = snkrdunkCache.get(itemKey);
+          } else {
+            try {
+              const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(kw)}&grade=${encodeURIComponent(psaGrade)}`);
+              const data = await res.json();
+              result = (data.price != null || data.apparelId != null)
+                ? { price: data.price ?? null, apparelId: data.apparelId, priceType: data.priceType }
+                : null;
+            } catch { result = null; }
+          }
+          // Apply result to every card in the group
+          for (const c of grpCards) {
+            snkrdunkCache.set(`${c.itemName}|${c.grade}`, result);
+            updateSnkrdunkCell(c.gradingID, result);
+            const row = allRows.find(r => r.gradingID === c.gradingID);
+            if (row) row._snkrdunkPrice = result?.price ?? null;
           }
         })
       );
