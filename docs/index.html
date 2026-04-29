@@ -229,6 +229,33 @@
     table.hide-snkrdunk .snkr-pct,
     table.hide-snkrdunk .th-snkrdunk { display: none; }
 
+    .grade-select { position: relative; display: inline-block; }
+    .grade-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      border-radius: 6px;
+      padding: 4px 0;
+      z-index: 100;
+      min-width: 180px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .grade-menu label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #e8e8e8;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .grade-menu label:hover { background: #252525; }
+    .grade-menu input[type="checkbox"] { accent-color: #2563eb; cursor: pointer; }
+
     #lock-screen {
       position: fixed; inset: 0;
       background: #0f0f0f;
@@ -302,20 +329,19 @@
     <option value="Magic The Gathering">Magic The Gathering</option>
   </select>
 
-  <select id="gradingCompany">
+  <select id="gradingCompany" onchange="updateGradeOptions()">
     <option value="PSA">PSA</option>
     <option value="BGS">BGS</option>
     <option value="CGC">CGC</option>
     <option value="">Any grader</option>
   </select>
 
-  <select id="grade">
-    <option value="GEM-MT 10">GEM-MT 10</option>
-    <option value="MINT 9">MINT 9</option>
-    <option value="NM-MT 8">NM-MT 8</option>
-    <option value="NM 7">NM 7</option>
-    <option value="">Any grade</option>
-  </select>
+  <div class="grade-select" id="grade-wrap">
+    <button type="button" id="grade-btn" onclick="toggleGradeMenu()">
+      <span id="grade-label">GEM-MT 10</span> <span style="font-size:10px;opacity:.5">▾</span>
+    </button>
+    <div class="grade-menu" id="grade-menu" style="display:none"></div>
+  </div>
 
   <select id="language">
     <option value="Japanese">Japanese</option>
@@ -378,7 +404,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.27</footer>
+<footer>v0.28</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -448,17 +474,17 @@
     const showAll = stepSel === "all";
     const stepVal = showAll ? "96" : stepSel;
 
+    const selectedGrades = getSelectedGrades();
     const baseParams = {
       cardType: "Card",
       categories: document.getElementById("categories").value,
       gradingCompany: document.getElementById("gradingCompany").value,
-      grade: document.getElementById("grade").value,
       language: document.getElementById("language").value,
       orderBy: document.getElementById("orderBy").value,
       step: stepVal,
     };
     // filterState stores "all" as step so the cache key is meaningful
-    const filterState = { ...baseParams, step: stepSel };
+    const filterState = { ...baseParams, step: stepSel, grade: selectedGrades.join(",") || "" };
 
     // For show-all, use cached card list if filters match and not force-refreshing
     if (showAll && !forceRefresh) {
@@ -483,11 +509,34 @@
     }
 
     async function fetchPage(page) {
-      const params = new URLSearchParams({ ...baseParams, page });
-      for (const [k, v] of [...params]) { if (!v) params.delete(k); }
-      const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return res.json();
+      const grades = selectedGrades.length > 0 ? selectedGrades : [""];
+      if (grades.length === 1) {
+        const params = new URLSearchParams({ ...baseParams, grade: grades[0], page });
+        for (const [k, v] of [...params]) { if (!v) params.delete(k); }
+        const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }
+      const fetches = await Promise.all(grades.map(async g => {
+        try {
+          const params = new URLSearchParams({ ...baseParams, grade: g, page });
+          for (const [k, v] of [...params]) { if (!v) params.delete(k); }
+          const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
+          if (!res.ok) return null;
+          return res.json();
+        } catch { return null; }
+      }));
+      const seen = new Set();
+      const cards = [];
+      let total = 0, pages = 1;
+      for (const data of fetches.filter(Boolean)) {
+        total += data.findTotal ?? 0;
+        pages = Math.max(pages, data.totalPages ?? 1);
+        for (const c of (data.filterNFtCard || []).filter(c => c.listing)) {
+          if (!seen.has(c.nftAddress)) { seen.add(c.nftAddress); cards.push(c); }
+        }
+      }
+      return { filterNFtCard: cards, findTotal: total, totalPages: pages };
     }
 
     status.textContent = "Fetching…";
@@ -1023,10 +1072,23 @@
       if (!cached?.rows?.length) return;
       // Restore filter selects
       const f = cached.filters || {};
-      const filterMap = { categories: "categories", gradingCompany: "gradingCompany", grade: "grade", language: "language", orderBy: "orderBy", step: "step" };
+      const filterMap = { categories: "categories", gradingCompany: "gradingCompany", language: "language", orderBy: "orderBy", step: "step" };
       for (const [param, id] of Object.entries(filterMap)) {
         const el = document.getElementById(id);
         if (el && f[param] != null) el.value = f[param];
+      }
+      // Rebuild grade options for the restored company, then restore selections
+      updateGradeOptions();
+      if (f.grade != null) {
+        const gradeValues = f.grade ? f.grade.split(",") : [];
+        document.querySelectorAll('#grade-menu input[type="checkbox"]').forEach(cb => {
+          cb.checked = gradeValues.length === 0 ? cb.value === "" : gradeValues.includes(cb.value);
+        });
+        if (!document.querySelector('#grade-menu input[type="checkbox"]:checked')) {
+          const anyBox = document.querySelector('#grade-menu input[value=""]');
+          if (anyBox) anyBox.checked = true;
+        }
+        updateGradeLabel();
       }
       // Restore price caches before repopulating cells
       try {
@@ -1070,8 +1132,93 @@
     if (!already) tr.classList.add("selected");
   });
 
+  // ── Grade multi-select ───────────────────────────────────────────────
+  const GRADE_OPTIONS = {
+    PSA: [
+      { label: "GEM-MT 10", value: "GEM-MT 10" },
+      { label: "MINT 9",    value: "MINT 9"    },
+      { label: "NM-MT 8",   value: "NM-MT 8"   },
+      { label: "NM 7",      value: "NM 7"      },
+    ],
+    BGS: [
+      { label: "Black Label 10", value: "BLACK LABEL 10" },
+      { label: "Pristine 10",    value: "PRISTINE 10"    },
+      { label: "Gem Mint 9.5",   value: "GEM MINT 9.5"  },
+      { label: "Mint 9",         value: "MINT 9"         },
+      { label: "NM-MT+ 8.5",     value: "NM-MT+ 8.5"    },
+      { label: "NM-MT 8",        value: "NM-MT 8"       },
+    ],
+    CGC: [
+      { label: "Pristine 10",  value: "PRISTINE 10"   },
+      { label: "Gem Mint 10",  value: "GEM MINT 10"   },
+      { label: "Mint+ 9.5",    value: "MINT+ 9.5"    },
+      { label: "Mint 9",       value: "MINT 9"        },
+      { label: "NM/Mint+ 8.5", value: "NM/MINT+ 8.5" },
+      { label: "NM/Mint 8",    value: "NM/MINT 8"    },
+    ],
+  };
+
+  function updateGradeOptions() {
+    const company = document.getElementById("gradingCompany").value;
+    const options = GRADE_OPTIONS[company] || GRADE_OPTIONS.PSA;
+    const menu = document.getElementById("grade-menu");
+    const rows = options.map(opt =>
+      `<label><input type="checkbox" value="${esc(opt.value)}" onchange="onGradeCheck(this)" />${opt.label}</label>`
+    );
+    rows.push(`<label><input type="checkbox" value="" onchange="onGradeCheck(this)" />Any grade</label>`);
+    menu.innerHTML = rows.join("");
+    const first = menu.querySelector('input[type="checkbox"]');
+    if (first) { first.checked = true; updateGradeLabel(); }
+  }
+
+  function onGradeCheck(cb) {
+    const allBoxes = [...document.querySelectorAll('#grade-menu input[type="checkbox"]')];
+    const anyBox = document.querySelector('#grade-menu input[value=""]');
+    if (cb.value === "") {
+      if (cb.checked) allBoxes.filter(c => c !== cb).forEach(c => c.checked = false);
+    } else {
+      if (cb.checked && anyBox) anyBox.checked = false;
+    }
+    if (!allBoxes.some(c => c.checked) && anyBox) anyBox.checked = true;
+    updateGradeLabel();
+  }
+
+  function getSelectedGrades() {
+    return [...document.querySelectorAll('#grade-menu input[type="checkbox"]:checked')]
+      .map(cb => cb.value).filter(v => v !== "");
+  }
+
+  function updateGradeLabel() {
+    const grades = getSelectedGrades();
+    const anyBox = document.querySelector('#grade-menu input[value=""]:checked');
+    const label = document.getElementById("grade-label");
+    if (!label) return;
+    if (anyBox || grades.length === 0) {
+      label.textContent = "Any grade";
+    } else if (grades.length === 1) {
+      const cb = document.querySelector(`#grade-menu input[value="${CSS.escape(grades[0])}"]`);
+      label.textContent = cb?.closest('label')?.textContent.trim() ?? grades[0];
+    } else {
+      label.textContent = `${grades.length} grades`;
+    }
+  }
+
+  function toggleGradeMenu() {
+    const menu = document.getElementById("grade-menu");
+    menu.style.display = menu.style.display === "none" ? "block" : "none";
+  }
+
+  document.addEventListener("click", e => {
+    const wrap = document.getElementById("grade-wrap");
+    if (wrap && !wrap.contains(e.target)) {
+      document.getElementById("grade-menu").style.display = "none";
+    }
+  });
+  // ─────────────────────────────────────────────────────────────────────
+
   // Restore from cache on page refresh — must run after all const/let declarations
   // are initialized (calling earlier causes TDZ ReferenceErrors that are silently swallowed)
+  updateGradeOptions();
   if (sessionStorage.getItem("auth") === "1") loadCardCache();
 
   function esc(s) {
