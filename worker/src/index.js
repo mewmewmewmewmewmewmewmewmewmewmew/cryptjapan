@@ -147,23 +147,20 @@ async function snkrdunkPrice(url) {
 
   for (const id of ids) {
     try {
-      // Stage 1: fetch one used listing just to get the apparel name for validation
+      // Stage 1: fetch one used listing to get the apparel name for validation
       const usedRes = await fetch(
         `${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=1&page=1&sizeId=0&isSaleOnly=false`,
         { headers: apiHeaders }
       );
       if (!usedRes.ok) continue;
       const usedData = await usedRes.json();
-      const apparelName = usedData.apparelUsedItems?.[0]?.apparel?.name ?? "";
+      let apparelName = usedData.apparelUsedItems?.[0]?.apparel?.name ?? "";
 
       // Verify card number matches the first number in bracket notation [SetCode NUM/TOTAL]
       if (cardNum && apparelName) {
         const bracketNum = apparelName.match(/\[\S+ (\d+)\//)?.[1];
         if (bracketNum !== undefined && parseInt(bracketNum, 10) !== cardNumNorm) continue;
       }
-
-      // Skip Master Ball stamp variants unless the search card is also a Master Ball
-      if (apparelName.includes("マスターボール") && !hasMasterBall) continue;
 
       // Stage 2: fetch sales history for price data
       const histRes = await fetch(
@@ -176,6 +173,19 @@ async function snkrdunkPrice(url) {
         });
       }
       const histData = await histRes.json();
+
+      // Fallback: if Stage 1 returned no listings, try to get the apparel name from the
+      // sales-history response (avoids mis-matching Master Ball variants with no active listings)
+      if (!apparelName) {
+        apparelName = histData.apparel?.name ?? "";
+      }
+
+      // Skip Master Ball stamp variants unless the search card is also a Master Ball.
+      // If we still have no name at all, skip conservatively to avoid linking a non-MB
+      // search to an unknown apparel that could be a Master Ball variant.
+      if (apparelName.includes("マスターボール") && !hasMasterBall) continue;
+      if (!apparelName && !hasMasterBall) continue;
+
       const history = histData.history || [];
 
       // Filter by grade condition (condition field contains e.g. "PSA10" directly)
