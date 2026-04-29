@@ -404,7 +404,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.31</footer>
+<footer>v0.32</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -615,6 +615,7 @@
     const certDisplay = c.gradingCompany === "PSA"
       ? `<a href="https://www.psacard.com/cert/${esc(c.gradingID)}/psa" target="_blank" rel="noopener" style="color:#94a3b8">${esc(c.gradingID)}</a>`
       : esc(c.gradingID);
+    const isJpn = (c.language || "").toLowerCase() === "japanese";
     return `<tr>
       <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${boldCardName(c.itemName)}</a></td>
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+)$/)?.[1] || c.grade))}</td>
@@ -623,7 +624,7 @@
       <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
       <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="alt-pct" data-cert="${esc(c.gradingID)}"></td>
-      <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}">${isJpn ? '<span class="alt-loading">···</span>' : '—'}</td>
       <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="snkr-pct" data-cert="${esc(c.gradingID)}"></td>
     </tr>`;
@@ -748,6 +749,7 @@
   function repopulateSnkrdunkCells(rows) {
     for (const c of rows) {
       if (!c.gradingID) continue;
+      if ((c.language || "").toLowerCase() !== "japanese") continue;
       const key = snkrdunkKwKey(c);
       if (!snkrdunkCache.has(key)) continue;
       const result = snkrdunkCache.get(key);
@@ -998,6 +1000,7 @@
     const kwGroups = new Map();
     for (const c of cards) {
       if (!c.gradingID) continue;
+      if ((c.language || "").toLowerCase() !== "japanese") continue;
       const psaGrade = cardToPsaGrade(c);
       const cleanName = c.name || c.cardName || null;
       const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
