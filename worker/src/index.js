@@ -136,6 +136,15 @@ async function snkrdunkPrice(url) {
   const ids = [...new Set(matches.map(m => m[1]))].slice(0, 10);
   if (ids.length === 0) return none;
 
+  // For each apparel ID, check whether マスターボール appears in the surrounding
+  // search-result HTML (±600 chars). This is more reliable than checking the API
+  // name field, which may omit the stamp label.
+  const masterBallIds = new Set();
+  for (const m of matches) {
+    const ctx = html.slice(Math.max(0, m.index - 600), m.index + 600);
+    if (ctx.includes("マスターボール")) masterBallIds.add(m[1]);
+  }
+
   // Card number is the last token of keywords (e.g. "Greninja EX 083" → "083")
   const cardNum = keywords.trim().split(/\s+/).pop() || "";
   const cardNumNorm = parseInt(cardNum, 10); // normalise for leading-zero comparison (58 == 058)
@@ -181,10 +190,9 @@ async function snkrdunkPrice(url) {
       }
 
       // Skip Master Ball stamp variants unless the search card is also a Master Ball.
-      // If we still have no name at all, skip conservatively to avoid linking a non-MB
-      // search to an unknown apparel that could be a Master Ball variant.
-      if (apparelName.includes("マスターボール") && !hasMasterBall) continue;
-      if (!apparelName && !hasMasterBall) continue;
+      // Use the search-HTML context set as primary signal; fall back to the API name.
+      const isMasterBallApparel = masterBallIds.has(id) || apparelName.includes("マスターボール");
+      if (isMasterBallApparel && !hasMasterBall) continue;
 
       const history = histData.history || [];
 
