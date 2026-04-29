@@ -154,6 +154,8 @@ async function snkrdunkPrice(url) {
   const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
   const apiHeaders = { "Accept": "application/json", "User-Agent": SNKRDUNK_HEADERS["User-Agent"] };
 
+  let naCandidate = null;
+
   for (const id of ids) {
     try {
       // Stage 1: fetch one used listing to get the apparel name for validation
@@ -176,21 +178,14 @@ async function snkrdunkPrice(url) {
         `${SNKRDUNK_BASE}/v1/apparels/${id}/sales-history?size_id=0&page=1&per_page=100`,
         { headers: apiHeaders }
       );
-      if (!histRes.ok) {
-        return new Response(JSON.stringify({ price: null, apparelId: Number(id), name: apparelName, priceType: "na" }), {
-          headers: { ...CORS, "Content-Type": "application/json" },
-        });
-      }
+      if (!histRes.ok) continue;
       const histData = await histRes.json();
 
-      // Fallback: if Stage 1 returned no listings, try to get the apparel name from the
-      // sales-history response (avoids mis-matching Master Ball variants with no active listings)
-      if (!apparelName) {
-        apparelName = histData.apparel?.name ?? "";
-      }
+      // Fallback: get apparel name from sales-history response if Stage 1 returned nothing
+      if (!apparelName) apparelName = histData.apparel?.name ?? "";
 
       // Skip Master Ball stamp variants unless the search card is also a Master Ball.
-      // Use the search-HTML context set as primary signal; fall back to the API name.
+      // Primary signal: search-HTML context; fallback: API name field.
       const isMasterBallApparel = masterBallIds.has(id) || apparelName.includes("マスターボール");
       if (isMasterBallApparel && !hasMasterBall) continue;
 
@@ -200,7 +195,6 @@ async function snkrdunkPrice(url) {
       const gradeHistory = grade ? history.filter(s => s.condition === grade) : history;
 
       if (gradeHistory.length > 0) {
-        const now = Date.now();
         const withAge = gradeHistory.map(s => ({ price: s.price, age: parseSnkrdunkAge(s.date) }));
         const inWeekRaw = withAge.filter(s => s.age <= ONE_WEEK_MS);
         const inThreeWeeks = withAge.filter(s => s.age <= THREE_WEEK_MS);
@@ -222,11 +216,16 @@ async function snkrdunkPrice(url) {
         });
       }
 
-      // Right card confirmed, no sales for this grade — N/A but still link to the page
-      return new Response(JSON.stringify({ price: null, apparelId: Number(id), name: apparelName, priceType: "na" }), {
-        headers: { ...CORS, "Content-Type": "application/json" },
-      });
+      // Right card found but no grade-matching sales — keep as N/A candidate and try next
+      if (!naCandidate) naCandidate = { apparelId: Number(id), name: apparelName };
+
     } catch { continue; }
+  }
+
+  if (naCandidate) {
+    return new Response(JSON.stringify({ price: null, apparelId: naCandidate.apparelId, name: naCandidate.name, priceType: "na" }), {
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
   }
 
   return none;
