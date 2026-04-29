@@ -388,7 +388,7 @@
         <th class="th-alt" onclick="sortBy('altPrice')">Alt $</th>
         <th class="th-alt" onclick="sortBy('altDelta')">Alt Δ</th>
         <th class="th-alt" onclick="sortBy('altPct')">Alt %</th>
-        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SNKRDUNK</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SNKRDUNK (PSA)</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkDelta')">SNKRDUNK Δ</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkPct')">SNKR %</th>
       </tr>
@@ -404,7 +404,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.30</footer>
+<footer>v0.31</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -729,9 +729,17 @@
     }
   }
 
+  function cardToPsaGrade(c) {
+    const m = (c.grade || "").match(/(\d+(?:\.\d+)?)/);
+    if (!m) return "";
+    const n = (c.gradingCompany || "").toUpperCase() === "PSA"
+      ? m[1]
+      : String(Math.floor(parseFloat(m[1])));
+    return `PSA${n}`;
+  }
+
   function snkrdunkKwKey(c) {
-    const gradeNum = (c.grade || "").match(/(\d+(?:\.\d+)?)/)?.[1];
-    const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
+    const psaGrade = cardToPsaGrade(c);
     const cleanName = c.name || c.cardName || null;
     const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
     return `${kw}|${psaGrade}`;
@@ -990,8 +998,7 @@
     const kwGroups = new Map();
     for (const c of cards) {
       if (!c.gradingID) continue;
-      const gradeNum = (c.grade || "").match(/(\d+(?:\.\d+)?)/)?.[1];
-      const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
+      const psaGrade = cardToPsaGrade(c);
       const cleanName = c.name || c.cardName || null;
       const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
       const kwKey = snkrdunkKwKey(c);
