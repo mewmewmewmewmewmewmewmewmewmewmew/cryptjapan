@@ -331,7 +331,7 @@
 
   <select id="gradingCompany" onchange="updateGradeOptions()">
     <option value="PSA">PSA</option>
-    <option value="BGS">BGS</option>
+    <option value="Beckett">BGS</option>
     <option value="CGC">CGC</option>
     <option value="">Any grader</option>
   </select>
@@ -404,7 +404,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.28</footer>
+<footer>v0.29</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -730,7 +730,7 @@
   }
 
   function snkrdunkKwKey(c) {
-    const gradeNum = (c.grade || "").match(/(\d+)$/)?.[1];
+    const gradeNum = (c.grade || "").match(/(\d+(?:\.\d+)?)/)?.[1];
     const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
     const cleanName = c.name || c.cardName || null;
     const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
@@ -990,7 +990,7 @@
     const kwGroups = new Map();
     for (const c of cards) {
       if (!c.gradingID) continue;
-      const gradeNum = (c.grade || "").match(/(\d+)$/)?.[1];
+      const gradeNum = (c.grade || "").match(/(\d+(?:\.\d+)?)/)?.[1];
       const psaGrade = gradeNum ? `PSA${gradeNum}` : "";
       const cleanName = c.name || c.cardName || null;
       const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
@@ -1140,13 +1140,13 @@
       { label: "NM-MT 8",   value: "NM-MT 8"   },
       { label: "NM 7",      value: "NM 7"      },
     ],
-    BGS: [
-      { label: "Black Label 10", value: "BLACK LABEL 10" },
-      { label: "Pristine 10",    value: "PRISTINE 10"    },
-      { label: "Gem Mint 9.5",   value: "GEM MINT 9.5"  },
-      { label: "Mint 9",         value: "MINT 9"         },
-      { label: "NM-MT+ 8.5",     value: "NM-MT+ 8.5"    },
-      { label: "NM-MT 8",        value: "NM-MT 8"       },
+    Beckett: [
+      { label: "Black Label 10", value: "10-Black Label"       },
+      { label: "Pristine 10",    value: "10-Pristine"          },
+      { label: "Gem Mint 9.5",   value: "9.5-Gem Mint"        },
+      { label: "Mint 9",         value: "9-Mint"               },
+      { label: "NM-MT+ 8.5",     value: "8.5-Near Mint-Mint+" },
+      { label: "NM-MT 8",        value: "8-Near Mint-Mint"    },
     ],
     CGC: [
       { label: "Pristine 10",  value: "PRISTINE 10"   },
