@@ -112,6 +112,7 @@ function priceMedian(prices) {
 async function snkrdunkPrice(url) {
   const keywords = url.searchParams.get("keywords") || "";
   const grade = (url.searchParams.get("grade") || "").replace(/\s+/g, ""); // "PSA 10" → "PSA10"
+  const hasMasterBallParam = url.searchParams.get("masterball") === "1";
 
   const none = new Response(JSON.stringify({ price: null }), {
     headers: { ...CORS, "Content-Type": "application/json" },
@@ -138,7 +139,7 @@ async function snkrdunkPrice(url) {
   // Card number is the last token of keywords (e.g. "Greninja EX 083" → "083")
   const cardNum = keywords.trim().split(/\s+/).pop() || "";
   const cardNumNorm = parseInt(cardNum, 10); // normalise for leading-zero comparison (58 == 058)
-  const hasMasterBall = keywords.toLowerCase().includes("master ball");
+  const hasMasterBall = hasMasterBallParam || keywords.toLowerCase().includes("master ball");
 
   const ONE_WEEK_MS   = 7  * 24 * 60 * 60 * 1000;
   const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
