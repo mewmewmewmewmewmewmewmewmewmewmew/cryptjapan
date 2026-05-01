@@ -281,22 +281,32 @@ async function altPriceByCert(url, env) {
       });
     }
 
-    const assetData = await altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id name number predictedPrice(tsFilter: $tsFilter) } }`, {
+    // Step 1: get predictedPrice with known-working fields only
+    const assetData = await altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id predictedPrice(tsFilter: $tsFilter) } }`, {
       id: certObj.asset.id,
       tsFilter: { gradeNumber: certObj.gradeNumber, gradingCompany: certObj.gradingCompany },
     });
-    const asset = assetData.data?.asset ?? {};
-    const altPrice = asset.predictedPrice ?? null;
+    const altPrice = assetData.data?.asset?.predictedPrice ?? null;
 
-    // Build SNKRDUNK keywords from alt asset name + number
-    const cardName = asset.name ?? null;
-    const cardNumber = asset.number ? String(asset.number).padStart(3, "0") : null;
+    // Step 2: probe for card name/number fields — try common names, fail silently
+    let cardName = null, cardNumber = null, rawAsset = null;
+    try {
+      const nameData = await altGql("AssetMeta", `query AssetMeta($id: ID!) { asset(id: $id) { name number title subtitle cardName cardNumber slug identifier } }`, { id: certObj.asset.id });
+      rawAsset = nameData.data?.asset ?? null;
+      if (rawAsset) {
+        cardName = rawAsset.name ?? rawAsset.title ?? rawAsset.cardName ?? rawAsset.subtitle ?? null;
+        const rawNum = rawAsset.number ?? rawAsset.cardNumber ?? rawAsset.identifier ?? null;
+        cardNumber = rawNum != null ? String(rawNum).padStart(3, "0") : null;
+      }
+    } catch { /* unknown fields — rawAsset stays null */ }
+
+    // gradeNumber comes back as "10.0" — normalise to integer string for PSA grade
+    const psaGrade = `PSA${Math.floor(parseFloat(certObj.gradeNumber))}`;
+
     let snkrdunk = null;
     if (cardName && cardNumber) {
-      const psaGrade = `PSA${certObj.gradeNumber}`;
-      const keywords = `${cardName} ${cardNumber}`;
       const snkrUrl = new URL("http://internal/snkrdunk/price");
-      snkrUrl.searchParams.set("keywords", keywords);
+      snkrUrl.searchParams.set("keywords", `${cardName} ${cardNumber}`);
       snkrUrl.searchParams.set("grade", psaGrade);
       const snkrRes = await snkrdunkPrice(snkrUrl);
       snkrdunk = await snkrRes.json();
@@ -304,12 +314,14 @@ async function altPriceByCert(url, env) {
 
     return new Response(JSON.stringify({
       altPrice,
-      assetId: asset.id,
+      assetId: certObj.asset.id,
       certNumber: certObj.certNumber,
       gradeNumber: certObj.gradeNumber,
       gradingCompany: certObj.gradingCompany,
+      psaGrade,
       cardName,
       cardNumber,
+      rawAsset,
       snkrdunk,
     }), { headers: { ...CORS, "Content-Type": "application/json" } });
   } catch (e) {
