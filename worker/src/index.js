@@ -168,7 +168,9 @@ async function snkrdunkPrice(url) {
       );
       if (!usedRes.ok) continue;
       const usedData = await usedRes.json();
-      let apparelName = usedData.apparelUsedItems?.[0]?.apparel?.name ?? "";
+      const apparelObj = usedData.apparelUsedItems?.[0]?.apparel ?? {};
+      let apparelName = apparelObj.name ?? "";
+      let apparelImage = apparelObj.image ?? apparelObj.imageUrl ?? apparelObj.thumbnail ?? null;
 
       // Verify card number (and total if setnum provided) against bracket notation [SetCode NUM/TOTAL]
       if (cardNum && apparelName) {
@@ -217,19 +219,19 @@ async function snkrdunkPrice(url) {
                        : [withAge[0]];
 
         const avg = Math.round(useItems.reduce((sum, s) => sum + s.price, 0) / useItems.length);
-        return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, salesCount: useItems.length, priceType: "avg" }), {
+        return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, image: apparelImage, salesCount: useItems.length, priceType: "avg" }), {
           headers: { ...CORS, "Content-Type": "application/json" },
         });
       }
 
       // Right card found but no grade-matching sales — keep as N/A candidate and try next
-      if (!naCandidate) naCandidate = { apparelId: Number(id), name: apparelName };
+      if (!naCandidate) naCandidate = { apparelId: Number(id), name: apparelName, image: apparelImage };
 
     } catch { continue; }
   }
 
   if (naCandidate) {
-    return new Response(JSON.stringify({ price: null, apparelId: naCandidate.apparelId, name: naCandidate.name, priceType: "na" }), {
+    return new Response(JSON.stringify({ price: null, apparelId: naCandidate.apparelId, name: naCandidate.name, image: naCandidate.image, priceType: "na" }), {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
