@@ -98,9 +98,11 @@
 
     button#refresh-list-btn { margin-left: auto; }
     button#refresh-list-btn:hover:not(:disabled),
-    button#refresh-btn:hover:not(:disabled) { border-color: #555; }
+    button#refresh-alt-btn:hover:not(:disabled),
+    button#refresh-snkr-btn:hover:not(:disabled) { border-color: #555; }
     button#refresh-list-btn:disabled,
-    button#refresh-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+    button#refresh-alt-btn:disabled,
+    button#refresh-snkr-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
     .status {
       padding: 10px 24px;
@@ -218,7 +220,7 @@
     .delta-neg { color: #f87171; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
     td.hide-cell { padding: 0; }
-    .hide-toggle { display: block; width: 100%; height: 100%; min-width: 36px; min-height: 28px; background: #1e293b; border: 1px solid #334155; border-radius: 4px; color: #94a3b8; cursor: pointer; font-size: 14px; font-weight: bold; line-height: 1; }
+    .hide-toggle { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-width: 36px; min-height: 28px; background: #1e293b; border: 1px solid #334155; border-radius: 4px; color: #94a3b8; cursor: pointer; font-size: 14px; line-height: 1; }
     .hide-toggle:hover { background: #334155; color: #e2e8f0; }
     tr.row-hidden td:not(.hide-cell) { filter: grayscale(1); opacity: 0.3; }
     tr.row-hidden .hide-toggle { background: #3b1a1a; border-color: #7f1d1d; color: #f87171; }
@@ -324,7 +326,8 @@
   <h1>CC &lt;&gt; JP</h1>
   <span>CollectorCrypt Marketplace</span>
   <button id="refresh-list-btn" onclick="refreshCardList()" disabled>↻ Refresh cards</button>
-  <button id="refresh-btn" onclick="refreshPrices()" disabled>↻ Refresh prices</button>
+  <button id="refresh-alt-btn" onclick="refreshAlt()" disabled>↻ Refresh ALT</button>
+  <button id="refresh-snkr-btn" onclick="refreshSnkr()" disabled>↻ Refresh SNKR</button>
 </header>
 
 <div class="filters">
@@ -413,7 +416,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.38</footer>
+<footer>v0.39</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -508,7 +511,8 @@
           updatePagination(1);
           status.textContent = (cached.statusText || `${allRows.length} listings loaded`) + " (cached)";
           document.getElementById("refresh-list-btn").disabled = false;
-          document.getElementById("refresh-btn").disabled = false;
+          document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-snkr-btn").disabled = false;
           applyLiveFilters();
           window.scrollTo(0, 0);
           btn.disabled = false;
@@ -604,7 +608,8 @@
       }
 
       document.getElementById("refresh-list-btn").disabled = false;
-      document.getElementById("refresh-btn").disabled = false;
+      document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-snkr-btn").disabled = false;
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
     } finally {
@@ -636,9 +641,12 @@
       <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}">${isJpn ? '<span class="alt-loading">···</span>' : '—'}</td>
       <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="snkr-pct" data-cert="${esc(c.gradingID)}"></td>
-      <td class="hide-cell"><button class="hide-toggle" onclick="toggleRowHide('${esc(c.nftAddress)}')" title="Hide row">–</button></td>
+      <td class="hide-cell"><button class="hide-toggle" onclick="toggleRowHide('${esc(c.nftAddress)}')" title="Hide row">${EYE_OPEN}</button></td>
     </tr>`;
   }
+
+  const EYE_OPEN = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  const EYE_CLOSED = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
 
   const hiddenRows = new Set(JSON.parse(localStorage.getItem("hiddenRows") || "[]"));
 
@@ -657,7 +665,7 @@
       const isHidden = hiddenRows.has(tr.dataset.nft);
       tr.classList.toggle("row-hidden", isHidden);
       const btn = tr.querySelector(".hide-toggle");
-      if (btn) btn.textContent = isHidden ? "✕" : "–";
+      if (btn) btn.innerHTML = isHidden ? EYE_CLOSED : EYE_OPEN;
     });
   }
 
@@ -1125,26 +1133,37 @@
   }
   // ─────────────────────────────────────────────────────────────────────
 
-  async function refreshPrices() {
-    const btn = document.getElementById("refresh-btn");
+  async function refreshAlt() {
+    const btn = document.getElementById("refresh-alt-btn");
     btn.disabled = true;
-    // Clear cache only for the cards currently shown (other pages remain cached)
-    const snkrKeys = new Set(allRows.map(c => snkrdunkKwKey(c)));
     for (const c of allRows) { if (c.gradingID) altCache.delete(c.gradingID); }
-    for (const k of snkrKeys) snkrdunkCache.delete(k);
-    // Reset visible cells to loading state
     for (const c of allRows) {
       const cert = c.gradingID;
       const altCell = document.querySelector(`.alt-price[data-cert="${cert}"]`);
       if (altCell) altCell.innerHTML = '<span class="alt-loading">···</span>';
-      for (const cls of ["alt-delta","alt-pct","snkrdunk-delta","snkr-pct"]) {
+      for (const cls of ["alt-delta","alt-pct"]) {
+        const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
+        if (el) el.textContent = "";
+      }
+    }
+    await fetchAltPrices(allRows);
+    btn.disabled = false;
+  }
+
+  async function refreshSnkr() {
+    const btn = document.getElementById("refresh-snkr-btn");
+    btn.disabled = true;
+    const snkrKeys = new Set(allRows.map(c => snkrdunkKwKey(c)));
+    for (const k of snkrKeys) snkrdunkCache.delete(k);
+    for (const c of allRows) {
+      const cert = c.gradingID;
+      for (const cls of ["snkrdunk-delta","snkr-pct"]) {
         const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
         if (el) el.textContent = "";
       }
       const snkrCell = document.querySelector(`.snkrdunk-price[data-cert="${cert}"]`);
       if (snkrCell) snkrCell.innerHTML = '<span class="alt-loading">···</span>';
     }
-    await fetchAltPrices(allRows);
     await fetchSnkrdunkPrices(allRows);
     btn.disabled = false;
   }
@@ -1204,7 +1223,8 @@
       updatePagination(totalPages);
       document.getElementById("status").textContent = (cached.statusText || "") + " (cached)";
       document.getElementById("refresh-list-btn").disabled = false;
-      document.getElementById("refresh-btn").disabled = false;
+      document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-snkr-btn").disabled = false;
       applyLiveFilters();
     } catch {}
   }
