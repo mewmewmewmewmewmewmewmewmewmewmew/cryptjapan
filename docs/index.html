@@ -217,6 +217,11 @@
     .delta-pos { color: #4ade80; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .delta-neg { color: #f87171; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
+    .hide-toggle { background: none; border: none; color: #444; cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1; }
+    .hide-toggle:hover { color: #888; }
+    tr.row-hidden td:not(.hide-cell) { filter: grayscale(1); opacity: 0.3; }
+    tr.row-hidden .hide-toggle { color: #f87171; }
+
     .toggle-btn.active { background: #1e3a5f; border-color: #2563eb; color: #60a5fa; }
 
     table.hide-alt .alt-price,
@@ -392,6 +397,7 @@
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SNKRDUNK (PSA)</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkDelta')">SNKRDUNK Δ</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkPct')">SNKR %</th>
+        <th></th>
       </tr>
     </thead>
     <tbody id="results-body"></tbody>
@@ -405,7 +411,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.36</footer>
+<footer>v0.37</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -570,6 +576,7 @@
               cards = cards.concat(newCards);
               allRows = cards;
               tbody.insertAdjacentHTML("beforeend", newCards.map(buildRowHtml).join(""));
+              applyHiddenRows();
               repopulateAltCells(newCards);
               repopulateSnkrdunkCells(newCards);
             } catch (e) {
@@ -615,7 +622,7 @@
       ? `<a href="https://www.psacard.com/cert/${esc(c.gradingID)}/psa" target="_blank" rel="noopener" style="color:#94a3b8">${esc(c.gradingID)}</a>`
       : esc(c.gradingID);
     const isJpn = !c.language || c.language.toLowerCase() === "japanese";
-    return `<tr>
+    return `<tr data-nft="${esc(c.nftAddress)}">
       <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${boldCardName(c.itemName)}</a></td>
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+)$/)?.[1] || c.grade))}</td>
       <td>${certDisplay}</td>
@@ -627,7 +634,29 @@
       <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}">${isJpn ? '<span class="alt-loading">···</span>' : '—'}</td>
       <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="snkr-pct" data-cert="${esc(c.gradingID)}"></td>
+      <td class="hide-cell"><button class="hide-toggle" onclick="toggleRowHide('${esc(c.nftAddress)}')" title="Hide row">·</button></td>
     </tr>`;
+  }
+
+  const hiddenRows = new Set(JSON.parse(localStorage.getItem("hiddenRows") || "[]"));
+
+  function toggleRowHide(nft) {
+    if (hiddenRows.has(nft)) {
+      hiddenRows.delete(nft);
+    } else {
+      hiddenRows.add(nft);
+    }
+    localStorage.setItem("hiddenRows", JSON.stringify([...hiddenRows]));
+    applyHiddenRows();
+  }
+
+  function applyHiddenRows() {
+    document.querySelectorAll("tr[data-nft]").forEach(tr => {
+      const isHidden = hiddenRows.has(tr.dataset.nft);
+      tr.classList.toggle("row-hidden", isHidden);
+      const btn = tr.querySelector(".hide-toggle");
+      if (btn) btn.textContent = isHidden ? "×" : "·";
+    });
   }
 
   function renderTable(rows) {
@@ -640,6 +669,7 @@
     }
     empty.style.display = "none";
     tbody.innerHTML = rows.map(buildRowHtml).join("");
+    applyHiddenRows();
   }
 
   function sortBy(col) {
