@@ -122,11 +122,19 @@ async function snkrdunkPrice(url) {
 
   if (!keywords) return none;
 
+  // Pad bare card number token in keywords so SNKRDUNK finds the right card
+  // e.g. "Umbreon 69" → "Umbreon 069", "Umbreon 069" unchanged
+  const kwTokens = keywords.trim().split(/\s+/);
+  const lastTok = kwTokens[kwTokens.length - 1];
+  const searchKeywords = /^\d{1,2}$/.test(lastTok)
+    ? [...kwTokens.slice(0, -1), lastTok.padStart(3, '0')].join(' ')
+    : keywords;
+
   // Fetch search page HTML to extract apparel IDs
   let html;
   try {
     const searchRes = await fetch(
-      `${SNKRDUNK_BASE}/search?keywords=${encodeURIComponent(keywords)}`,
+      `${SNKRDUNK_BASE}/search?keywords=${encodeURIComponent(searchKeywords)}`,
       { headers: SNKRDUNK_HEADERS }
     );
     if (!searchRes.ok) return none;
