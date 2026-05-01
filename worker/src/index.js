@@ -108,14 +108,15 @@ function parseSnkrdunkAge(dateStr) {
   return n * (table[m[2]] || 0);
 }
 
-// "069" → "069", "120/SV-P" → "SV-P 120", "RC32" → "RC32"
+// "069"→"069", "120/SV-P"→"SV-P 120", "294XYP"→"XYP 294", "RC32"→"RC32"
 function normalizeCardNum(raw) {
   if (!raw) return null;
   if (/^\d+$/.test(raw)) return String(parseInt(raw, 10)).padStart(3, "0");
   const parts = raw.split("/");
-  if (parts.length === 2 && /^\d+$/.test(parts[0]) && !/^\d+$/.test(parts[1])) {
+  if (parts.length === 2 && /^\d+$/.test(parts[0]) && !/^\d+$/.test(parts[1]))
     return `${parts[1]} ${parts[0].padStart(3, "0")}`;
-  }
+  const m = raw.match(/^(\d+)([A-Za-z].*)$/);
+  if (m) return `${m[2]} ${m[1].padStart(3, "0")}`;
   return raw;
 }
 
