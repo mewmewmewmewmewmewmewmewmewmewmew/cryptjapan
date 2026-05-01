@@ -146,9 +146,10 @@ async function snkrdunkPrice(url) {
     if (ctx.includes("マスターボール")) masterBallIds.add(m[1]);
   }
 
-  // Card number — prefer setnum numerator if provided, else fall back to last keyword token
-  const cardNum = setNum ? setNum.split("/")[0] : (keywords.trim().split(/\s+/).pop() || "");
-  const cardTotal = setNum ? setNum.split("/")[1] : "";
+  // Card number — if setnum contains "/" use numerator, else treat the whole value as denominator only
+  const hasSlash = setNum.includes("/");
+  const cardNum = (setNum && hasSlash) ? setNum.split("/")[0] : (keywords.trim().split(/\s+/).pop() || "");
+  const cardTotal = setNum ? (hasSlash ? setNum.split("/")[1] : setNum) : "";
   const cardNumNorm = parseInt(cardNum, 10);   // normalise: 58 == 058
   const cardTotalNorm = cardTotal ? parseInt(cardTotal, 10) : null;
   const hasMasterBall = hasMasterBallParam || keywords.toLowerCase().includes("master ball");
@@ -170,7 +171,8 @@ async function snkrdunkPrice(url) {
       const usedData = await usedRes.json();
       const apparelObj = usedData.apparelUsedItems?.[0]?.apparel ?? {};
       let apparelName = apparelObj.name ?? "";
-      let apparelImage = apparelObj.image ?? apparelObj.imageUrl ?? apparelObj.thumbnail ?? null;
+      const pickImage = o => o?.image ?? o?.imageUrl ?? o?.image_url ?? o?.thumbnail ?? o?.thumbnailUrl ?? o?.thumbnail_url ?? (Array.isArray(o?.images) ? o.images[0] : null) ?? null;
+      let apparelImage = pickImage(apparelObj);
 
       // Verify card number (and total if setnum provided) against bracket notation [SetCode NUM/TOTAL]
       if (cardNum && apparelName) {
@@ -189,8 +191,9 @@ async function snkrdunkPrice(url) {
       if (!histRes.ok) continue;
       const histData = await histRes.json();
 
-      // Fallback: get apparel name from sales-history response if Stage 1 returned nothing
+      // Fallback: get apparel name/image from sales-history response if Stage 1 returned nothing
       if (!apparelName) apparelName = histData.apparel?.name ?? "";
+      if (!apparelImage) apparelImage = pickImage(histData.apparel);
 
       // Skip Master Ball stamp variants unless the search card is also a Master Ball.
       // Primary signal: search-HTML context; fallback: API name field.
