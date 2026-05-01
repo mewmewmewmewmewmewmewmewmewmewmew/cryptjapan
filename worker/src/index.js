@@ -171,7 +171,7 @@ async function snkrdunkPrice(url) {
       const usedData = await usedRes.json();
       const apparelObj = usedData.apparelUsedItems?.[0]?.apparel ?? {};
       let apparelName = apparelObj.name ?? "";
-      const pickImage = o => o?.image ?? o?.imageUrl ?? o?.image_url ?? o?.thumbnail ?? o?.thumbnailUrl ?? o?.thumbnail_url ?? (Array.isArray(o?.images) ? o.images[0] : null) ?? null;
+      const pickImage = o => o?.primaryMedia?.imageUrl ?? o?.image ?? o?.imageUrl ?? o?.image_url ?? o?.thumbnail ?? o?.thumbnailUrl ?? o?.thumbnail_url ?? (Array.isArray(o?.images) ? o.images[0] : null) ?? null;
       let apparelImage = pickImage(apparelObj);
 
       // Verify card number (and total if setnum provided) against bracket notation [SetCode NUM/TOTAL]
