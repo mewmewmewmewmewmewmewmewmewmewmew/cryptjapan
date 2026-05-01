@@ -416,7 +416,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.39</footer>
+<footer>v0.40</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -501,9 +501,10 @@
     // For show-all, use cached card list if filters match and not force-refreshing
     if (showAll && !forceRefresh) {
       try {
-        const cached = JSON.parse(sessionStorage.getItem("cardListCache") || "null");
+        const cached = JSON.parse(localStorage.getItem("cardListCache") || "null");
         const filterKeys = ["categories","gradingCompany","grade","language","orderBy"];
-        if (cached?.rows?.length && cached.filters?.step === "all" &&
+        const fresh = !cached?.savedAt || Date.now() - cached.savedAt <= 3600_000;
+        if (fresh && cached?.rows?.length && cached.filters?.step === "all" &&
             filterKeys.every(k => cached.filters[k] === filterState[k])) {
           allRows = cached.rows;
           await getSolPrice();
@@ -573,22 +574,19 @@
         if (pages > 1) {
           const tbody = document.getElementById("results-body");
           document.getElementById("empty-msg").style.display = "none";
-          for (let p = 2; p <= pages; p++) {
-            status.textContent = `Loading page ${p} of ${pages} — ${cards.length} cards so far…`;
-            await new Promise(r => setTimeout(r, 1000));
-            try {
-              const d = await fetchPage(p);
-              const newCards = (d.filterNFtCard || []).filter(c => c.listing);
-              cards = cards.concat(newCards);
-              allRows = cards;
-              tbody.insertAdjacentHTML("beforeend", newCards.map(buildRowHtml).join(""));
-              applyHiddenRows();
-              repopulateAltCells(newCards);
-              repopulateSnkrdunkCells(newCards);
-            } catch (e) {
-              status.textContent = `Stopped at page ${p} (${e.message}) — showing ${cards.length} cards`;
-              break;
-            }
+          status.textContent = `Loading ${pages} pages…`;
+          const remaining = await Promise.all(
+            Array.from({ length: pages - 1 }, (_, i) => fetchPage(i + 2).catch(() => null))
+          );
+          for (const d of remaining) {
+            if (!d) continue;
+            const newCards = (d.filterNFtCard || []).filter(c => c.listing);
+            cards = cards.concat(newCards);
+            allRows = cards;
+            tbody.insertAdjacentHTML("beforeend", newCards.map(buildRowHtml).join(""));
+            applyHiddenRows();
+            repopulateAltCells(newCards);
+            repopulateSnkrdunkCells(newCards);
           }
         }
 
@@ -1170,7 +1168,7 @@
 
   function saveCardCache(rows, filters, page, pages, statusText) {
     try {
-      sessionStorage.setItem("cardListCache", JSON.stringify({ rows, filters, page, pages, statusText }));
+      localStorage.setItem("cardListCache", JSON.stringify({ rows, filters, page, pages, statusText, savedAt: Date.now() }));
     } catch {} // quota exceeded — skip silently
   }
 
@@ -1183,10 +1181,11 @@
 
   async function loadCardCache() {
     try {
-      const raw = sessionStorage.getItem("cardListCache");
+      const raw = localStorage.getItem("cardListCache");
       if (!raw) return;
       const cached = JSON.parse(raw);
       if (!cached?.rows?.length) return;
+      if (cached.savedAt && Date.now() - cached.savedAt > 3600_000) return; // 1-hour TTL
       // Restore filter selects
       const f = cached.filters || {};
       const filterMap = { categories: "categories", gradingCompany: "gradingCompany", language: "language", orderBy: "orderBy", step: "step" };
