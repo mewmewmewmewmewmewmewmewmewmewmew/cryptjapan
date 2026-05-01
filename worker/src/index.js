@@ -113,6 +113,7 @@ async function snkrdunkPrice(url) {
   const keywords = url.searchParams.get("keywords") || "";
   const grade = (url.searchParams.get("grade") || "").replace(/\s+/g, ""); // "PSA 10" → "PSA10"
   const hasMasterBallParam = url.searchParams.get("masterball") === "1";
+  const setNum = url.searchParams.get("setnum") || ""; // e.g. "069/086"
 
   const none = new Response(JSON.stringify({ price: null }), {
     headers: { ...CORS, "Content-Type": "application/json" },
@@ -145,9 +146,11 @@ async function snkrdunkPrice(url) {
     if (ctx.includes("マスターボール")) masterBallIds.add(m[1]);
   }
 
-  // Card number is the last token of keywords (e.g. "Greninja EX 083" → "083")
-  const cardNum = keywords.trim().split(/\s+/).pop() || "";
-  const cardNumNorm = parseInt(cardNum, 10); // normalise for leading-zero comparison (58 == 058)
+  // Card number — prefer setnum numerator if provided, else fall back to last keyword token
+  const cardNum = setNum ? setNum.split("/")[0] : (keywords.trim().split(/\s+/).pop() || "");
+  const cardTotal = setNum ? setNum.split("/")[1] : "";
+  const cardNumNorm = parseInt(cardNum, 10);   // normalise: 58 == 058
+  const cardTotalNorm = cardTotal ? parseInt(cardTotal, 10) : null;
   const hasMasterBall = hasMasterBallParam || keywords.toLowerCase().includes("master ball");
 
   const ONE_WEEK_MS   = 7  * 24 * 60 * 60 * 1000;
@@ -167,10 +170,13 @@ async function snkrdunkPrice(url) {
       const usedData = await usedRes.json();
       let apparelName = usedData.apparelUsedItems?.[0]?.apparel?.name ?? "";
 
-      // Verify card number matches the first number in bracket notation [SetCode NUM/TOTAL]
+      // Verify card number (and total if setnum provided) against bracket notation [SetCode NUM/TOTAL]
       if (cardNum && apparelName) {
-        const bracketNum = apparelName.match(/\[\S+ (\d+)\//)?.[1];
-        if (bracketNum !== undefined && parseInt(bracketNum, 10) !== cardNumNorm) continue;
+        const bm = apparelName.match(/\[\S+ (\d+)\/(\d+)\]/);
+        if (bm) {
+          if (parseInt(bm[1], 10) !== cardNumNorm) continue;
+          if (cardTotalNorm !== null && parseInt(bm[2], 10) !== cardTotalNorm) continue;
+        }
       }
 
       // Stage 2: fetch sales history for price data
