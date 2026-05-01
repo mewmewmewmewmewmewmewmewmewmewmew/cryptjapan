@@ -48,7 +48,41 @@ Returns the average recent sale price for a graded card on SNKRDUNK (Japanese ma
 - Falls back to the single most recent sale if nothing in 21 days
 - Always averages at most the **5 most recent** sales from whichever window is used
 
-#### Examples
+---
+
+### `GET /alt-price`
+
+Returns the alt.xyz predicted price for a graded card by cert number.
+
+#### Parameters
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `cert` | yes | Grading cert number, e.g. `12345678` |
+
+#### Response
+
+```json
+{
+  "price": 1.45,
+  "assetId": "abc123",
+  "certNumber": "12345678",
+  "gradeNumber": 10,
+  "gradingCompany": "PSA"
+}
+```
+
+`price` is in USDC. `null` if the cert is not found on alt.xyz.
+
+#### Example
+
+```bash
+curl "https://cryptjapan-proxy.mew-860.workers.dev/alt-price?cert=12345678"
+```
+
+---
+
+### `/snkrdunk/price` Examples
 
 ```bash
 # PSA 10 Umbreon from the 086-card set
