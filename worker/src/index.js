@@ -226,9 +226,9 @@ async function snkrdunkPrice(url) {
           inWeek = inWeekRaw.filter(s => s.price <= med * 3);
         }
 
-        const useItems = inWeek.length >= 2 ? inWeek
+        const useItems = (inWeek.length >= 2 ? inWeek
                        : inThreeWeeks.length >= 1 ? inThreeWeeks
-                       : [withAge[0]];
+                       : [withAge[0]]).slice(0, 5);
 
         const avg = Math.round(useItems.reduce((sum, s) => sum + s.price, 0) / useItems.length);
         return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, image: apparelImage, salesCount: useItems.length, priceType: "avg" }), {
