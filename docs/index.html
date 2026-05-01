@@ -217,10 +217,12 @@
     .delta-pos { color: #4ade80; font-variant-numeric: tabular-nums; white-space: nowrap; }
     .delta-neg { color: #f87171; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
-    .hide-toggle { background: none; border: none; color: #444; cursor: pointer; font-size: 16px; padding: 0 4px; line-height: 1; }
-    .hide-toggle:hover { color: #888; }
+    td.hide-cell { padding: 0; }
+    .hide-toggle { display: block; width: 100%; height: 100%; min-width: 36px; min-height: 28px; background: #1e293b; border: 1px solid #334155; border-radius: 4px; color: #94a3b8; cursor: pointer; font-size: 14px; font-weight: bold; line-height: 1; }
+    .hide-toggle:hover { background: #334155; color: #e2e8f0; }
     tr.row-hidden td:not(.hide-cell) { filter: grayscale(1); opacity: 0.3; }
-    tr.row-hidden .hide-toggle { color: #f87171; }
+    tr.row-hidden .hide-toggle { background: #3b1a1a; border-color: #7f1d1d; color: #f87171; }
+    tr.row-hidden .hide-toggle:hover { background: #5c2020; }
 
     .toggle-btn.active { background: #1e3a5f; border-color: #2563eb; color: #60a5fa; }
 
@@ -397,7 +399,7 @@
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SNKRDUNK (PSA)</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkDelta')">SNKRDUNK Δ</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkPct')">SNKR %</th>
-        <th></th>
+        <th style="width:40px"></th>
       </tr>
     </thead>
     <tbody id="results-body"></tbody>
@@ -411,7 +413,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.37</footer>
+<footer>v0.38</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -634,7 +636,7 @@
       <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}">${isJpn ? '<span class="alt-loading">···</span>' : '—'}</td>
       <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="snkr-pct" data-cert="${esc(c.gradingID)}"></td>
-      <td class="hide-cell"><button class="hide-toggle" onclick="toggleRowHide('${esc(c.nftAddress)}')" title="Hide row">·</button></td>
+      <td class="hide-cell"><button class="hide-toggle" onclick="toggleRowHide('${esc(c.nftAddress)}')" title="Hide row">–</button></td>
     </tr>`;
   }
 
@@ -655,7 +657,7 @@
       const isHidden = hiddenRows.has(tr.dataset.nft);
       tr.classList.toggle("row-hidden", isHidden);
       const btn = tr.querySelector(".hide-toggle");
-      if (btn) btn.textContent = isHidden ? "×" : "·";
+      if (btn) btn.textContent = isHidden ? "✕" : "–";
     });
   }
 
