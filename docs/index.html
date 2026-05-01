@@ -404,7 +404,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.34</footer>
+<footer>v0.35</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1014,8 +1014,13 @@
       if (!c.gradingID) continue;
       if (c.language && c.language.toLowerCase() !== "japanese") continue;
       const psaGrade = cardToPsaGrade(c);
-      const cleanName = c.name || c.cardName || null;
-      const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+      let kw;
+      if (c._altCardName && c._altCardNumber) {
+        kw = `${c._altCardName} ${c._altCardNumber}`;
+      } else {
+        const cleanName = c.name || c.cardName || null;
+        kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+      }
       const mb = isMasterBall(c);
       const kwKey = snkrdunkKwKey(c);
       if (!kwGroups.has(kwKey)) kwGroups.set(kwKey, { kw, psaGrade, mb, kwKey, grpCards: [] });
