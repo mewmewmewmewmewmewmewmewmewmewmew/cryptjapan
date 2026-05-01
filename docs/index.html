@@ -582,16 +582,14 @@
         status.textContent = msg;
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, 1, msg);
-        fetchAltPrices(cards);
-        fetchSnkrdunkPrices(cards);
+        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
       } else {
         allRows = cards;
         const msg = `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
         status.textContent = msg;
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, pages, msg);
-        fetchAltPrices(cards);
-        fetchSnkrdunkPrices(cards);
+        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
         window.scrollTo(0, 0);
       }
 
@@ -746,8 +744,13 @@
 
   function snkrdunkKwKey(c) {
     const psaGrade = cardToPsaGrade(c);
-    const cleanName = c.name || c.cardName || null;
-    const kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+    let kw;
+    if (c._altCardName && c._altCardNumber) {
+      kw = `${c._altCardName} ${c._altCardNumber}`;
+    } else {
+      const cleanName = c.name || c.cardName || null;
+      kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+    }
     return `${kw}|${psaGrade}${isMasterBall(c) ? "|mb" : ""}`;
   }
 
@@ -769,7 +772,7 @@
   const CERT_QUERY = `query Cert($certNumber: String!) {
     cert(certNumber: $certNumber) {
       certNumber gradeNumber gradingCompany
-      asset { id __typename }
+      asset { id subject attributes { cardNumber } __typename }
       __typename
     }
   }`;
@@ -801,9 +804,12 @@
         id: cert.asset.id,
         tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany },
       });
+      const rawNum = cert.asset.attributes?.cardNumber ?? null;
       const result = {
         price: assetData.data?.asset?.predictedPrice ?? null,
         assetId: cert.asset.id,
+        cardName: cert.asset.subject ?? null,
+        cardNumber: rawNum ? (/^\d+$/.test(rawNum) ? String(parseInt(rawNum, 10)).padStart(3, "0") : rawNum) : null,
       };
       altCache.set(certNumber, result);
       return result;
@@ -863,14 +869,15 @@
           const result = await fetchAltPrice(cert);
           const usdc = certPrices.get(cert);
           updateAltCell(cert, result, usdc);
-          if (result?.price != null) {
-            const altPrice = Number(result.price);
-            for (const c of allRows) {
-              if (c.gradingID === cert) {
-                c._altPrice = altPrice;
-                c._altDelta = usdc != null ? altPrice - usdc : null;
-                c._altPct = usdc != null ? ((altPrice - usdc) / usdc) * 100 : null;
-              }
+          for (const c of allRows) {
+            if (c.gradingID !== cert) continue;
+            if (result?.cardName)   c._altCardName   = result.cardName;
+            if (result?.cardNumber) c._altCardNumber = result.cardNumber;
+            if (result?.price != null) {
+              const altPrice = Number(result.price);
+              c._altPrice = altPrice;
+              c._altDelta = usdc != null ? altPrice - usdc : null;
+              c._altPct   = usdc != null ? ((altPrice - usdc) / usdc) * 100 : null;
             }
           }
         })
@@ -1063,7 +1070,8 @@
       const snkrCell = document.querySelector(`.snkrdunk-price[data-cert="${cert}"]`);
       if (snkrCell) snkrCell.innerHTML = '<span class="alt-loading">···</span>';
     }
-    await Promise.all([fetchAltPrices(allRows), fetchSnkrdunkPrices(allRows)]);
+    await fetchAltPrices(allRows);
+    await fetchSnkrdunkPrices(allRows);
     btn.disabled = false;
   }
 
