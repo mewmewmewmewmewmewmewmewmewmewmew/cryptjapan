@@ -273,7 +273,7 @@ async function altPriceByCert(url, env) {
   };
 
   try {
-    const certData = await altGql("Cert", `query Cert($certNumber: String!) { cert(certNumber: $certNumber) { certNumber gradeNumber gradingCompany asset { id } } }`, { certNumber: cert });
+    const certData = await altGql("Cert", `query Cert($certNumber: String!) { cert(certNumber: $certNumber) { certNumber gradeNumber gradingCompany asset { id name number displayName cardName setCode setName cardNumber title } } }`, { certNumber: cert });
     const certObj = certData.data?.cert;
     if (!certObj?.asset?.id) {
       return new Response(JSON.stringify({ altPrice: null, assetId: null }), {
@@ -288,12 +288,12 @@ async function altPriceByCert(url, env) {
     });
     const altPrice = assetData.data?.asset?.predictedPrice ?? null;
 
-    // Step 2: introspect Asset type to discover available field names
-    let cardName = null, cardNumber = null, assetFields = null;
-    try {
-      const introData = await altGql("IntrospectAsset", `query IntrospectAsset { __type(name: "Asset") { fields { name } } }`, {});
-      assetFields = introData.data?.__type?.fields?.map(f => f.name) ?? null;
-    } catch { /* introspection blocked */ }
+    // Step 2: extract card name/number from the cert.asset fields we just fetched
+    let cardName = null, cardNumber = null;
+    const certAsset = certObj.asset ?? {};
+    cardName = certAsset.name ?? certAsset.displayName ?? certAsset.cardName ?? certAsset.title ?? certAsset.setName ?? null;
+    const rawNum = certAsset.number ?? certAsset.cardNumber ?? null;
+    cardNumber = rawNum != null ? String(rawNum).padStart(3, "0") : null;
 
     // gradeNumber comes back as "10.0" — normalise to integer string for PSA grade
     const psaGrade = `PSA${Math.floor(parseFloat(certObj.gradeNumber))}`;
@@ -316,7 +316,7 @@ async function altPriceByCert(url, env) {
       psaGrade,
       cardName,
       cardNumber,
-      assetFields,
+      certAsset,
       snkrdunk,
     }), { headers: { ...CORS, "Content-Type": "application/json" } });
   } catch (e) {
