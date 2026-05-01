@@ -795,7 +795,11 @@
   }
 
   async function fetchAltPrice(certNumber) {
-    if (altCache.has(certNumber)) return altCache.get(certNumber);
+    if (altCache.has(certNumber)) {
+      const cached = altCache.get(certNumber);
+      if (!cached || 'cardName' in cached) return cached;
+      // old cache entry without cardName — fall through and re-fetch
+    }
     try {
       const certData = await altPost("Cert", { certNumber });
       const cert = certData.data?.cert;
