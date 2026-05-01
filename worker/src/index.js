@@ -288,17 +288,12 @@ async function altPriceByCert(url, env) {
     });
     const altPrice = assetData.data?.asset?.predictedPrice ?? null;
 
-    // Step 2: probe for card name/number fields — try common names, fail silently
-    let cardName = null, cardNumber = null, rawAsset = null;
+    // Step 2: introspect Asset type to discover available field names
+    let cardName = null, cardNumber = null, assetFields = null;
     try {
-      const nameData = await altGql("AssetMeta", `query AssetMeta($id: ID!) { asset(id: $id) { name number title subtitle cardName cardNumber slug identifier } }`, { id: certObj.asset.id });
-      rawAsset = nameData.data?.asset ?? null;
-      if (rawAsset) {
-        cardName = rawAsset.name ?? rawAsset.title ?? rawAsset.cardName ?? rawAsset.subtitle ?? null;
-        const rawNum = rawAsset.number ?? rawAsset.cardNumber ?? rawAsset.identifier ?? null;
-        cardNumber = rawNum != null ? String(rawNum).padStart(3, "0") : null;
-      }
-    } catch { /* unknown fields — rawAsset stays null */ }
+      const introData = await altGql("IntrospectAsset", `query IntrospectAsset { __type(name: "Asset") { fields { name } } }`, {});
+      assetFields = introData.data?.__type?.fields?.map(f => f.name) ?? null;
+    } catch { /* introspection blocked */ }
 
     // gradeNumber comes back as "10.0" — normalise to integer string for PSA grade
     const psaGrade = `PSA${Math.floor(parseFloat(certObj.gradeNumber))}`;
@@ -321,7 +316,7 @@ async function altPriceByCert(url, env) {
       psaGrade,
       cardName,
       cardNumber,
-      rawAsset,
+      assetFields,
       snkrdunk,
     }), { headers: { ...CORS, "Content-Type": "application/json" } });
   } catch (e) {
