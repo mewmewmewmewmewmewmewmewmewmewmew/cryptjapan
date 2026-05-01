@@ -785,6 +785,17 @@
     }
   }`;
 
+  // "069" → "069", "120/SV-P" → "SV-P 120", "RC32" → "RC32"
+  function normalizeCardNum(raw) {
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) return String(parseInt(raw, 10)).padStart(3, "0");
+    const parts = raw.split("/");
+    if (parts.length === 2 && /^\d+$/.test(parts[0]) && !/^\d+$/.test(parts[1])) {
+      return `${parts[1]} ${parts[0].padStart(3, "0")}`;
+    }
+    return raw;
+  }
+
   async function altPost(operation, variables) {
     const res = await fetch(`${WORKER_URL}/alt/${operation}`, {
       method: "POST",
@@ -808,12 +819,11 @@
         id: cert.asset.id,
         tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany },
       });
-      const rawNum = cert.asset.attributes?.cardNumber ?? null;
       const result = {
         price: assetData.data?.asset?.predictedPrice ?? null,
         assetId: cert.asset.id,
         cardName: cert.asset.subject ?? null,
-        cardNumber: rawNum ? (/^\d+$/.test(rawNum) ? String(parseInt(rawNum, 10)).padStart(3, "0") : rawNum) : null,
+        cardNumber: normalizeCardNum(cert.asset.attributes?.cardNumber ?? null),
       };
       altCache.set(certNumber, result);
       return result;

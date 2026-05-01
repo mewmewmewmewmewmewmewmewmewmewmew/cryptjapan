@@ -108,6 +108,17 @@ function parseSnkrdunkAge(dateStr) {
   return n * (table[m[2]] || 0);
 }
 
+// "069" → "069", "120/SV-P" → "SV-P 120", "RC32" → "RC32"
+function normalizeCardNum(raw) {
+  if (!raw) return null;
+  if (/^\d+$/.test(raw)) return String(parseInt(raw, 10)).padStart(3, "0");
+  const parts = raw.split("/");
+  if (parts.length === 2 && /^\d+$/.test(parts[0]) && !/^\d+$/.test(parts[1])) {
+    return `${parts[1]} ${parts[0].padStart(3, "0")}`;
+  }
+  return raw;
+}
+
 function priceMedian(prices) {
   const s = [...prices].sort((a, b) => a - b);
   const mid = Math.floor(s.length / 2);
@@ -287,11 +298,9 @@ async function altPriceByCert(url, env) {
     });
     const altPrice = assetData.data?.asset?.predictedPrice ?? null;
 
-    // subject = card name (e.g. "Umbreon GX HR"), attributes.cardNumber = e.g. "069" or "RC32"
+    // subject = card name; attributes.cardNumber e.g. "069", "RC32", "120/SV-P"
     const cardName = certObj.asset.subject ?? null;
-    const rawNum = certObj.asset.attributes?.cardNumber ?? null;
-    // pad numeric card numbers to 3 digits; leave alphanumeric (RC32) as-is
-    const cardNumber = rawNum ? (/^\d+$/.test(rawNum) ? String(parseInt(rawNum, 10)).padStart(3, "0") : rawNum) : null;
+    const cardNumber = normalizeCardNum(certObj.asset.attributes?.cardNumber ?? null);
 
     // gradeNumber comes back as "10.0" — normalise for PSA grade string
     const psaGrade = `PSA${Math.floor(parseFloat(certObj.gradeNumber))}`;
