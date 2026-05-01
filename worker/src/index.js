@@ -25,6 +25,10 @@ export default {
     const url = new URL(request.url);
     const path = url.pathname;
 
+    if (path === "/alt-price") {
+      return altPriceByCert(url, env);
+    }
+
     if (path.startsWith("/alt/")) {
       return proxyAlt(request, path, env);
     }
@@ -249,6 +253,50 @@ async function snkrdunkPrice(url) {
   }
 
   return none;
+}
+
+async function altPriceByCert(url, env) {
+  const cert = url.searchParams.get("cert") || "";
+  if (!cert) {
+    return new Response(JSON.stringify({ error: "cert param required" }), {
+      status: 400, headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  const altGql = async (operation, query, variables) => {
+    const res = await fetch(`${ALT_BASE}/graphql/${operation}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.ALT_TOKEN}` },
+      body: JSON.stringify({ operationName: operation, query, variables }),
+    });
+    return res.json();
+  };
+
+  try {
+    const certData = await altGql("Cert", `query Cert($certNumber: String!) { cert(certNumber: $certNumber) { certNumber gradeNumber gradingCompany asset { id } } }`, { certNumber: cert });
+    const certObj = certData.data?.cert;
+    if (!certObj?.asset?.id) {
+      return new Response(JSON.stringify({ price: null, assetId: null }), {
+        headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+    const assetData = await altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id predictedPrice(tsFilter: $tsFilter) } }`, {
+      id: certObj.asset.id,
+      tsFilter: { gradeNumber: certObj.gradeNumber, gradingCompany: certObj.gradingCompany },
+    });
+    const price = assetData.data?.asset?.predictedPrice ?? null;
+    return new Response(JSON.stringify({
+      price,
+      assetId: certObj.asset.id,
+      certNumber: certObj.certNumber,
+      gradeNumber: certObj.gradeNumber,
+      gradingCompany: certObj.gradingCompany,
+    }), { headers: { ...CORS, "Content-Type": "application/json" } });
+  } catch {
+    return new Response(JSON.stringify({ price: null }), {
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
 }
 
 async function proxyCC(path, url) {
