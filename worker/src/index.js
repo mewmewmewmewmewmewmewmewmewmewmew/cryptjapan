@@ -273,7 +273,7 @@ async function altPriceByCert(url, env) {
   };
 
   try {
-    const certData = await altGql("Cert", `query Cert($certNumber: String!) { cert(certNumber: $certNumber) { certNumber gradeNumber gradingCompany asset { id name number displayName cardName setCode setName cardNumber title } } }`, { certNumber: cert });
+    const certData = await altGql("Cert", `query Cert($certNumber: String!) { cert(certNumber: $certNumber) { certNumber gradeNumber gradingCompany asset { id name subject attributes { cardNumber } } } }`, { certNumber: cert });
     const certObj = certData.data?.cert;
     if (!certObj?.asset?.id) {
       return new Response(JSON.stringify({ altPrice: null, assetId: null }), {
@@ -281,21 +281,19 @@ async function altPriceByCert(url, env) {
       });
     }
 
-    // Step 1: get predictedPrice with known-working fields only
     const assetData = await altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id predictedPrice(tsFilter: $tsFilter) } }`, {
       id: certObj.asset.id,
       tsFilter: { gradeNumber: certObj.gradeNumber, gradingCompany: certObj.gradingCompany },
     });
     const altPrice = assetData.data?.asset?.predictedPrice ?? null;
 
-    // Step 2: extract card name/number from the cert.asset fields we just fetched
-    let cardName = null, cardNumber = null;
-    const certAsset = certObj.asset ?? {};
-    cardName = certAsset.name ?? certAsset.displayName ?? certAsset.cardName ?? certAsset.title ?? certAsset.setName ?? null;
-    const rawNum = certAsset.number ?? certAsset.cardNumber ?? null;
-    cardNumber = rawNum != null ? String(rawNum).padStart(3, "0") : null;
+    // subject = card name (e.g. "Umbreon GX HR"), attributes.cardNumber = e.g. "069" or "RC32"
+    const cardName = certObj.asset.subject ?? null;
+    const rawNum = certObj.asset.attributes?.cardNumber ?? null;
+    // pad numeric card numbers to 3 digits; leave alphanumeric (RC32) as-is
+    const cardNumber = rawNum ? (/^\d+$/.test(rawNum) ? String(parseInt(rawNum, 10)).padStart(3, "0") : rawNum) : null;
 
-    // gradeNumber comes back as "10.0" — normalise to integer string for PSA grade
+    // gradeNumber comes back as "10.0" — normalise for PSA grade string
     const psaGrade = `PSA${Math.floor(parseFloat(certObj.gradeNumber))}`;
 
     let snkrdunk = null;
@@ -316,7 +314,6 @@ async function altPriceByCert(url, env) {
       psaGrade,
       cardName,
       cardNumber,
-      certAsset,
       snkrdunk,
     }), { headers: { ...CORS, "Content-Type": "application/json" } });
   } catch (e) {
