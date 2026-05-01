@@ -276,24 +276,44 @@ async function altPriceByCert(url, env) {
     const certData = await altGql("Cert", `query Cert($certNumber: String!) { cert(certNumber: $certNumber) { certNumber gradeNumber gradingCompany asset { id } } }`, { certNumber: cert });
     const certObj = certData.data?.cert;
     if (!certObj?.asset?.id) {
-      return new Response(JSON.stringify({ price: null, assetId: null }), {
+      return new Response(JSON.stringify({ altPrice: null, assetId: null }), {
         headers: { ...CORS, "Content-Type": "application/json" },
       });
     }
-    const assetData = await altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id predictedPrice(tsFilter: $tsFilter) } }`, {
+
+    const assetData = await altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id name number predictedPrice(tsFilter: $tsFilter) } }`, {
       id: certObj.asset.id,
       tsFilter: { gradeNumber: certObj.gradeNumber, gradingCompany: certObj.gradingCompany },
     });
-    const price = assetData.data?.asset?.predictedPrice ?? null;
+    const asset = assetData.data?.asset ?? {};
+    const altPrice = asset.predictedPrice ?? null;
+
+    // Build SNKRDUNK keywords from alt asset name + number
+    const cardName = asset.name ?? null;
+    const cardNumber = asset.number ? String(asset.number).padStart(3, "0") : null;
+    let snkrdunk = null;
+    if (cardName && cardNumber) {
+      const psaGrade = `PSA${certObj.gradeNumber}`;
+      const keywords = `${cardName} ${cardNumber}`;
+      const snkrUrl = new URL("http://internal/snkrdunk/price");
+      snkrUrl.searchParams.set("keywords", keywords);
+      snkrUrl.searchParams.set("grade", psaGrade);
+      const snkrRes = await snkrdunkPrice(snkrUrl);
+      snkrdunk = await snkrRes.json();
+    }
+
     return new Response(JSON.stringify({
-      price,
-      assetId: certObj.asset.id,
+      altPrice,
+      assetId: asset.id,
       certNumber: certObj.certNumber,
       gradeNumber: certObj.gradeNumber,
       gradingCompany: certObj.gradingCompany,
+      cardName,
+      cardNumber,
+      snkrdunk,
     }), { headers: { ...CORS, "Content-Type": "application/json" } });
-  } catch {
-    return new Response(JSON.stringify({ price: null }), {
+  } catch (e) {
+    return new Response(JSON.stringify({ altPrice: null, error: String(e) }), {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
