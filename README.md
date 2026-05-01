@@ -46,6 +46,7 @@ Returns the average recent sale price for a graded card on SNKRDUNK (Japanese ma
 - Prefers sales within the last **7 days** (with 3× median outlier filter)
 - Falls back to **21 days** if fewer than 2 recent sales
 - Falls back to the single most recent sale if nothing in 21 days
+- Always averages at most the **5 most recent** sales from whichever window is used
 
 #### Examples
 
