@@ -296,11 +296,19 @@ async function altPriceByCert(url, env) {
       });
     }
 
-    const assetData = await altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id predictedPrice(tsFilter: $tsFilter) } }`, {
-      id: certObj.asset.id,
-      tsFilter: { gradeNumber: certObj.gradeNumber, gradingCompany: certObj.gradingCompany },
-    });
+    const [assetData, popsData] = await Promise.all([
+      altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id predictedPrice(tsFilter: $tsFilter) } }`, {
+        id: certObj.asset.id,
+        tsFilter: { gradeNumber: certObj.gradeNumber, gradingCompany: certObj.gradingCompany },
+      }),
+      altGql("AssetCardPops", `query AssetCardPops($id: ID!) { asset(id: $id) { id cardPops { gradingCompany gradeNumber count } } }`, {
+        id: certObj.asset.id,
+      }),
+    ]);
     const altPrice = assetData.data?.asset?.predictedPrice ?? null;
+    const cardPops = popsData.data?.asset?.cardPops ?? [];
+    const popEntry = cardPops.find(p => p.gradingCompany === certObj.gradingCompany && p.gradeNumber === certObj.gradeNumber);
+    const pop = popEntry?.count ?? null;
 
     // subject = card name; attributes.cardNumber e.g. "069", "RC32", "120/SV-P"
     const cardName = certObj.asset.subject ?? null;
@@ -320,6 +328,7 @@ async function altPriceByCert(url, env) {
 
     return new Response(JSON.stringify({
       altPrice,
+      pop,
       assetId: certObj.asset.id,
       certNumber: certObj.certNumber,
       gradeNumber: certObj.gradeNumber,

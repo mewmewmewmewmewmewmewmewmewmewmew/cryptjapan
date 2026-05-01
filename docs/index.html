@@ -786,8 +786,14 @@
     asset(id: $id) {
       id
       predictedPrice(tsFilter: $tsFilter)
-      population(tsFilter: $tsFilter)
       __typename
+    }
+  }`;
+
+  const CARDPOPS_QUERY = `query AssetCardPops($id: ID!) {
+    asset(id: $id) {
+      id
+      cardPops { gradingCompany gradeNumber count }
     }
   }`;
 
@@ -806,11 +812,12 @@
     return raw;
   }
 
+  const QUERY_MAP = { Cert: CERT_QUERY, AssetDetails: ASSET_QUERY, AssetCardPops: CARDPOPS_QUERY };
   async function altPost(operation, variables) {
     const res = await fetch(`${WORKER_URL}/alt/${operation}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ operationName: operation, query: operation === "Cert" ? CERT_QUERY : ASSET_QUERY, variables }),
+      body: JSON.stringify({ operationName: operation, query: QUERY_MAP[operation] ?? ASSET_QUERY, variables }),
     });
     return res.json();
   }
@@ -825,13 +832,15 @@
       const certData = await altPost("Cert", { certNumber });
       const cert = certData.data?.cert;
       if (!cert?.asset?.id) return null;
-      const assetData = await altPost("AssetDetails", {
-        id: cert.asset.id,
-        tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany },
-      });
+      const [assetData, popsData] = await Promise.all([
+        altPost("AssetDetails", { id: cert.asset.id, tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany } }),
+        altPost("AssetCardPops", { id: cert.asset.id }),
+      ]);
+      const cardPops = popsData.data?.asset?.cardPops ?? [];
+      const popEntry = cardPops.find(p => p.gradingCompany === cert.gradingCompany && p.gradeNumber === cert.gradeNumber);
       const result = {
         price: assetData.data?.asset?.predictedPrice ?? null,
-        pop: assetData.data?.asset?.population ?? null,
+        pop: popEntry?.count ?? null,
         assetId: cert.asset.id,
         cardName: cert.asset.subject ?? null,
         cardNumber: normalizeCardNum(cert.asset.attributes?.cardNumber ?? null),
