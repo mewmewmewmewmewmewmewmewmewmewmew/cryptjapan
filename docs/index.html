@@ -886,7 +886,7 @@
           for (const c of allRows) {
             if (c.gradingID !== cert) continue;
             if (result?.cardName)   c._altCardName   = result.cardName;
-            if (result?.cardNumber) c._altCardNumber = result.cardNumber;
+            if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
             if (result?.price != null) {
               const altPrice = Number(result.price);
               c._altPrice = altPrice;
