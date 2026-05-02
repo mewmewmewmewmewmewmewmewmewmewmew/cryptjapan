@@ -558,6 +558,7 @@
     try {
       const firstData = await fetchPage(showAll ? 1 : currentPage);
       let cards = (firstData.filterNFtCard || []).filter(c => c.listing);
+      if (cards.length) console.log("CC card fields:", Object.keys(cards[0]), "\nSample:", JSON.stringify(cards[0]).slice(0, 600));
       const total = firstData.findTotal ?? cards.length;
       const pages = firstData.totalPages ?? 1;
 
