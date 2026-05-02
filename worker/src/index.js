@@ -1,4 +1,4 @@
-// v0.37
+// v0.38
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
@@ -167,6 +167,7 @@ async function snkrdunkPrice(url) {
   if (ids.length === 0) return none;
 
   // Extract releasedAt dates from the page's embedded Next.js JSON (id → releasedAt)
+  // IDs may be numbers or strings in JSON, so handle both
   const releasedAtMap = new Map();
   const nextDataMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
   if (nextDataMatch) {
@@ -174,13 +175,22 @@ async function snkrdunkPrice(url) {
       const walkAndCollect = obj => {
         if (!obj || typeof obj !== 'object') return;
         if (Array.isArray(obj)) { obj.forEach(walkAndCollect); return; }
-        if (typeof obj.id === 'number' && typeof obj.releasedAt === 'string') {
-          releasedAtMap.set(String(obj.id), obj.releasedAt);
+        if (typeof obj.releasedAt === 'string') {
+          const idStr = typeof obj.id === 'number' ? String(obj.id)
+                      : (typeof obj.id === 'string' && /^\d+$/.test(obj.id) ? obj.id : null);
+          if (idStr) releasedAtMap.set(idStr, obj.releasedAt);
         }
         for (const v of Object.values(obj)) walkAndCollect(v);
       };
       walkAndCollect(JSON.parse(nextDataMatch[1]));
     } catch {}
+  }
+  // Regex fallback: scan raw HTML for JSON objects containing both an id and releasedAt
+  // Covers cases where Next.js data is not in __NEXT_DATA__ or uses a different structure
+  if (releasedAtMap.size === 0) {
+    for (const m of html.matchAll(/"id"\s*:\s*(\d{4,9})\b[^{}]{0,600}?"releasedAt"\s*:\s*"([^"]{10,30})"/g)) {
+      releasedAtMap.set(m[1], m[2]);
+    }
   }
 
   // For each apparel ID, check whether マスターボール appears in the surrounding
@@ -204,7 +214,12 @@ async function snkrdunkPrice(url) {
   const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
   const apiHeaders = { "Accept": "application/json", "User-Agent": SNKRDUNK_HEADERS["User-Agent"] };
 
-  let naCandidate = null;
+  // Priority buckets — we collect across all IDs then pick the best:
+  // verifiedPriced   = year confirmed + grade-matching sales  (best)
+  // verifiedNa       = year confirmed + no grade-matching sales
+  // unverifiedPriced = no year data   + grade-matching sales
+  // unverifiedNa     = no year data   + no grade-matching sales
+  let verifiedPriced = null, verifiedNa = null, unverifiedPriced = null, unverifiedNa = null;
 
   for (const id of ids) {
     try {
@@ -229,7 +244,7 @@ async function snkrdunkPrice(url) {
         }
       }
 
-      // Year check — prefer API releasedAt, fall back to value extracted from search-page JSON
+      // Year check — API releasedAt first, then search-page JSON, then Stage 2 fallback
       const apparelReleasedAt = apparelObj.releasedAt ?? releasedAtMap.get(id) ?? null;
       let thisYearVerified = false;
       if (expectedYear && apparelReleasedAt) {
@@ -249,8 +264,8 @@ async function snkrdunkPrice(url) {
       if (!apparelName) apparelName = histData.apparel?.name ?? "";
       if (!apparelImage) apparelImage = pickImage(histData.apparel);
 
-      // Fallback year check from Stage 2 data when Stage 1 had no releasedAt
-      if (expectedYear && !apparelReleasedAt) {
+      // Fallback year check from Stage 2 data when no releasedAt found yet
+      if (expectedYear && !thisYearVerified) {
         const histReleasedAt = histData.apparel?.releasedAt ?? null;
         if (histReleasedAt) {
           if (new Date(histReleasedAt).getFullYear() !== expectedYear) continue;
@@ -269,14 +284,10 @@ async function snkrdunkPrice(url) {
       const gradeHistory = grade ? history.filter(s => s.condition === grade) : history;
 
       if (gradeHistory.length > 0) {
-        // Skip unverified apparel if a year-verified N/A candidate already exists
-        if (naCandidate?.yearVerified && !thisYearVerified) continue;
-
         const withAge = gradeHistory.map(s => ({ price: s.price, age: parseSnkrdunkAge(s.date) }));
         const inWeekRaw = withAge.filter(s => s.age <= ONE_WEEK_MS);
         const inThreeWeeks = withAge.filter(s => s.age <= THREE_WEEK_MS);
 
-        // Apply 3× median outlier filter to the 1-week window
         let inWeek = inWeekRaw;
         if (inWeekRaw.length >= 2) {
           const med = priceMedian(inWeekRaw.map(s => s.price));
@@ -288,21 +299,31 @@ async function snkrdunkPrice(url) {
                        : [withAge[0]]).slice(0, 5);
 
         const avg = Math.round(useItems.reduce((sum, s) => sum + s.price, 0) / useItems.length);
-        return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: apparelName, image: apparelImage, salesCount: useItems.length, priceType: "avg" }), {
-          headers: { ...CORS, "Content-Type": "application/json" },
-        });
+        const result = { price: avg, apparelId: Number(id), name: apparelName, image: apparelImage, salesCount: useItems.length, priceType: "avg" };
+
+        if (thisYearVerified) { verifiedPriced = result; break; } // best possible — stop early
+        if (!unverifiedPriced) unverifiedPriced = result;
+        if (!expectedYear) break; // no year filter — first priced result wins
+        continue; // year filter active — keep looking for a verified result
       }
 
-      // Right card found but no grade-matching sales — keep as N/A candidate and try next
-      if (!naCandidate) naCandidate = { apparelId: Number(id), name: apparelName, image: apparelImage, yearVerified: thisYearVerified };
+      // No grade-matching sales — store as N/A candidate in the appropriate bucket
+      const naResult = { price: null, apparelId: Number(id), name: apparelName, image: apparelImage, priceType: "na" };
+      if (thisYearVerified) { if (!verifiedNa) verifiedNa = naResult; }
+      else { if (!unverifiedNa) unverifiedNa = naResult; }
 
     } catch { continue; }
   }
 
-  if (naCandidate) {
-    return new Response(JSON.stringify({ price: null, apparelId: naCandidate.apparelId, name: naCandidate.name, image: naCandidate.image, priceType: "na" }), {
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
+  // Pick the best result.
+  // With year filter:    verifiedPriced > verifiedNa > unverifiedPriced > unverifiedNa
+  // Without year filter: verifiedPriced > unverifiedPriced > verifiedNa  > unverifiedNa
+  const best = expectedYear
+    ? (verifiedPriced ?? verifiedNa ?? unverifiedPriced ?? unverifiedNa)
+    : (verifiedPriced ?? unverifiedPriced ?? verifiedNa ?? unverifiedNa);
+
+  if (best) {
+    return new Response(JSON.stringify(best), { headers: { ...CORS, "Content-Type": "application/json" } });
   }
 
   return none;
