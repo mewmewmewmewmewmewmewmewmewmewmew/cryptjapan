@@ -1,4 +1,4 @@
-// v0.36
+// v0.37
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
@@ -166,6 +166,23 @@ async function snkrdunkPrice(url) {
   const ids = [...new Set(matches.map(m => m[1]))].slice(0, 10);
   if (ids.length === 0) return none;
 
+  // Extract releasedAt dates from the page's embedded Next.js JSON (id → releasedAt)
+  const releasedAtMap = new Map();
+  const nextDataMatch = html.match(/<script[^>]*id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/);
+  if (nextDataMatch) {
+    try {
+      const walkAndCollect = obj => {
+        if (!obj || typeof obj !== 'object') return;
+        if (Array.isArray(obj)) { obj.forEach(walkAndCollect); return; }
+        if (typeof obj.id === 'number' && typeof obj.releasedAt === 'string') {
+          releasedAtMap.set(String(obj.id), obj.releasedAt);
+        }
+        for (const v of Object.values(obj)) walkAndCollect(v);
+      };
+      walkAndCollect(JSON.parse(nextDataMatch[1]));
+    } catch {}
+  }
+
   // For each apparel ID, check whether マスターボール appears in the surrounding
   // search-result HTML (±600 chars). This is more reliable than checking the API
   // name field, which may omit the stamp label.
@@ -212,8 +229,8 @@ async function snkrdunkPrice(url) {
         }
       }
 
-      // Year check from Stage 1 apparel data (saves a Stage 2 fetch when year mismatches)
-      const apparelReleasedAt = apparelObj.releasedAt ?? null;
+      // Year check — prefer API releasedAt, fall back to value extracted from search-page JSON
+      const apparelReleasedAt = apparelObj.releasedAt ?? releasedAtMap.get(id) ?? null;
       let thisYearVerified = false;
       if (expectedYear && apparelReleasedAt) {
         if (new Date(apparelReleasedAt).getFullYear() !== expectedYear) continue;
