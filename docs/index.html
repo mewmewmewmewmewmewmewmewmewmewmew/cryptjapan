@@ -119,6 +119,7 @@
 
     table {
       width: 100%;
+      min-width: 1100px;
       border-collapse: collapse;
       font-size: 13px;
     }
@@ -228,6 +229,11 @@
 
     .toggle-btn.active { background: #1e3a5f; border-color: #2563eb; color: #60a5fa; }
 
+    td.date-col { font-size: 11px; color: #555; padding: 10px 6px; white-space: nowrap; }
+    th.th-listed { font-size: 11px; color: #444; padding: 8px 6px; }
+    td.year-col { font-size: 12px; color: #777; white-space: nowrap; }
+    td.num-col { font-size: 12px; color: #888; font-family: monospace; white-space: nowrap; }
+
     table.hide-alt .alt-price,
     table.hide-alt .alt-delta,
     table.hide-alt .alt-pct,
@@ -325,9 +331,9 @@
 <header>
   <h1>CC &lt;&gt; JP</h1>
   <span>CollectorCrypt Marketplace</span>
-  <button id="refresh-list-btn" onclick="refreshCardList()" disabled>↻ Refresh cards</button>
+  <button id="refresh-list-btn" onclick="refreshCardList()" disabled>↻ Refresh List</button>
   <button id="refresh-alt-btn" onclick="refreshAlt()" disabled>↻ Refresh ALT</button>
-  <button id="refresh-snkr-btn" onclick="refreshSnkr()" disabled>↻ Refresh SNKR</button>
+  <button id="refresh-snkr-btn" onclick="refreshSnkr()" disabled>↻ Refresh SD</button>
 </header>
 
 <div class="filters">
@@ -391,7 +397,10 @@
   <table id="results-table">
     <thead>
       <tr>
-        <th onclick="sortBy('itemName')">Card</th>
+        <th class="th-listed" onclick="sortBy('listedAt')">Listed</th>
+        <th onclick="sortBy('cardYear')">Year</th>
+        <th onclick="sortBy('cardName')">Card</th>
+        <th onclick="sortBy('cardNumber')">#</th>
         <th onclick="sortBy('grade')">Grade</th>
         <th onclick="sortBy('gradingID')">PSA Cert</th>
         <th onclick="sortBy('pop')">Pop</th>
@@ -399,8 +408,8 @@
         <th class="th-alt" onclick="sortBy('altPrice')">Alt $</th>
         <th class="th-alt" onclick="sortBy('altDelta')">Alt Δ</th>
         <th class="th-alt" onclick="sortBy('altPct')">Alt %</th>
-        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SNKRDUNK (PSA)</th>
-        <th class="th-snkrdunk" onclick="sortBy('snkrdunkDelta')">SNKRDUNK Δ</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SD (PSA)</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkDelta')">SD Δ</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkPct')">SNKR %</th>
         <th style="width:40px"></th>
       </tr>
@@ -416,7 +425,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.44</footer>
+<footer>v0.45</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -627,8 +636,14 @@
       ? `<a href="https://www.psacard.com/cert/${esc(c.gradingID)}/psa" target="_blank" rel="noopener" style="color:#94a3b8">${esc(c.gradingID)}</a>`
       : esc(c.gradingID);
     const isJpn = !c.language || c.language.toLowerCase() === "japanese";
+    const cardDisplayName = c.cardName || c.name || "";
+    const cardNumStr = (c.itemName || "").match(/#(\d+)/)?.[1] ?? "";
+    const cardNumDisplay = cardNumStr ? cardNumStr.padStart(3, "0") : "—";
     return `<tr data-nft="${esc(c.nftAddress)}">
-      <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${boldCardName(c.itemName)}</a></td>
+      <td class="date-col">${formatListedDate(c)}</td>
+      <td class="year-col">${itemYear(c) || "—"}</td>
+      <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(cardDisplayName || c.itemName)}</a></td>
+      <td class="num-col">${esc(cardNumDisplay)}</td>
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+)$/)?.[1] || c.grade))}</td>
       <td>${certDisplay}</td>
       <td class="pop-count" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
@@ -686,7 +701,7 @@
 
     if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
 
-    const colOrder = ["itemName","grade","gradingID","pop","price","altPrice","altDelta","altPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
+    const colOrder = ["listedAt","cardYear","cardName","cardNumber","grade","gradingID","pop","price","altPrice","altDelta","altPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
     const thIdx = colOrder.indexOf(col);
     if (thIdx >= 0) {
       ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
@@ -694,10 +709,21 @@
 
     const sorted = [...allRows].sort((a, b) => {
       let av, bv;
-      if (col === "pop") {
+      if (col === "listedAt") {
+        const dateOf = c => new Date(c.listing?.listedAt ?? c.listing?.createdAt ?? c.listedAt ?? 0).getTime();
+        av = dateOf(a); bv = dateOf(b);
+      } else if (col === "cardYear") {
+        av = parseInt(itemYear(a) || "0"); bv = parseInt(itemYear(b) || "0");
+      } else if (col === "cardName") {
+        av = (a.cardName || a.name || "").toLowerCase(); bv = (b.cardName || b.name || "").toLowerCase();
+      } else if (col === "cardNumber") {
+        av = parseInt((a.itemName || "").match(/#(\d+)/)?.[1] ?? "0");
+        bv = parseInt((b.itemName || "").match(/#(\d+)/)?.[1] ?? "0");
+      } else if (col === "pop") {
         av = a._altPop ?? -Infinity; bv = b._altPop ?? -Infinity;
       } else if (col === "price") {
-        av = Number(a.listing?.price ?? 0); bv = Number(b.listing?.price ?? 0);
+        const toUsd = c => { const cur = c.listing?.currency, raw = Number(c.listing?.price ?? 0); return cur === "USDC" ? raw : (cur === "SOL" && solUsd ? raw * solUsd : raw); };
+        av = toUsd(a); bv = toUsd(b);
       } else if (col === "altPrice") {
         av = a._altPrice ?? -Infinity; bv = b._altPrice ?? -Infinity;
       } else if (col === "altDelta") {
@@ -789,6 +815,18 @@
 
   function itemYear(c) {
     return (c.itemName?.match(/^(\d{4})\s/) ?? [])[1] ?? "";
+  }
+
+  function formatListedDate(c) {
+    const dateStr = c.listing?.listedAt ?? c.listing?.createdAt ?? c.listedAt ?? null;
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    const days = Math.floor((Date.now() - d) / 86400000);
+    if (days < 1) return "today";
+    if (days < 30) return `${days}d`;
+    if (days < 365) return `${Math.floor(days / 30)}mo`;
+    return `${Math.floor(days / 365)}y`;
   }
 
   function snkrdunkKwKey(c) {
