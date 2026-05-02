@@ -113,6 +113,7 @@
 
     .table-wrap {
       flex: 1;
+      min-width: 0;
       overflow-x: auto;
       padding: 0 24px 80px;
     }
@@ -425,7 +426,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.45</footer>
+<footer>v0.46</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -642,7 +643,7 @@
     return `<tr data-nft="${esc(c.nftAddress)}">
       <td class="date-col">${formatListedDate(c)}</td>
       <td class="year-col">${itemYear(c) || "—"}</td>
-      <td title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(cardDisplayName || c.itemName)}</a></td>
+      <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
       <td class="num-col">${esc(cardNumDisplay)}</td>
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+)$/)?.[1] || c.grade))}</td>
       <td>${certDisplay}</td>
@@ -787,7 +788,11 @@
       const raw = Number(c.listing?.price ?? 0);
       const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
       updateAltCell(c.gradingID, result, usdc);
-      if (result?.cardName)   c._altCardName   = result.cardName;
+      if (result?.cardName) {
+        c._altCardName = result.cardName;
+        const nameCell = document.querySelector(`.card-name-cell[data-cert="${c.gradingID}"]`);
+        if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
+      }
       if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
       if (result?.pop != null) c._altPop = result.pop;
       if (result?.price != null) {
@@ -822,8 +827,10 @@
     if (!dateStr) return "";
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return "";
-    const days = Math.floor((Date.now() - d) / 86400000);
-    if (days < 1) return "today";
+    const ms = Date.now() - d;
+    const hours = Math.floor(ms / 3600000);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.floor(ms / 86400000);
     if (days < 30) return `${days}d`;
     if (days < 365) return `${Math.floor(days / 30)}mo`;
     return `${Math.floor(days / 365)}y`;
@@ -990,7 +997,11 @@
           updateAltCell(cert, result, usdc);
           for (const c of allRows) {
             if (c.gradingID !== cert) continue;
-            if (result?.cardName)   c._altCardName   = result.cardName;
+            if (result?.cardName) {
+              c._altCardName = result.cardName;
+              const nameCell = document.querySelector(`.card-name-cell[data-cert="${cert}"]`);
+              if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
+            }
             if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
             if (result?.pop != null) c._altPop = result.pop;
             if (result?.price != null) {
