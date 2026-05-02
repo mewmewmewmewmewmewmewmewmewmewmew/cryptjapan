@@ -1116,6 +1116,7 @@
       }
       const mb = isMasterBall(c);
       const setnum = snkrdunkSetnum(c);
+      console.log("snkr build:", c.gradingID, { _altCardNumber: c._altCardNumber, setnum, kw });
       const kwKey = snkrdunkKwKey(c);
       if (!kwGroups.has(kwKey)) kwGroups.set(kwKey, { kw, psaGrade, mb, setnum, kwKey, grpCards: [] });
       kwGroups.get(kwKey).grpCards.push(c);
