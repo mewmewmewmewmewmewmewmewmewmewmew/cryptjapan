@@ -416,7 +416,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.41</footer>
+<footer>v0.42</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -558,7 +558,6 @@
     try {
       const firstData = await fetchPage(showAll ? 1 : currentPage);
       let cards = (firstData.filterNFtCard || []).filter(c => c.listing);
-      if (cards.length) console.log("CC card fields:", Object.keys(cards[0]), "\nSample:", JSON.stringify(cards[0]).slice(0, 600));
       const total = firstData.findTotal ?? cards.length;
       const pages = firstData.totalPages ?? 1;
 
@@ -762,6 +761,8 @@
       const raw = Number(c.listing?.price ?? 0);
       const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
       updateAltCell(c.gradingID, result, usdc);
+      if (result?.cardName)   c._altCardName   = result.cardName;
+      if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
       if (result?.pop != null) c._altPop = result.pop;
       if (result?.price != null) {
         const altPrice = Number(result.price);
@@ -1245,6 +1246,13 @@
       document.getElementById("refresh-alt-btn").disabled = false;
       document.getElementById("refresh-snkr-btn").disabled = false;
       applyLiveFilters();
+      // If any Japanese cards are missing SNKRDUNK prices (e.g. key changed after alt data loaded),
+      // trigger a background fetch so they fill in without requiring a manual refresh.
+      const needsSnkr = allRows.some(c =>
+        c.gradingID && (!c.language || c.language.toLowerCase() === "japanese") &&
+        !snkrdunkCache.has(snkrdunkKwKey(c))
+      );
+      if (needsSnkr) fetchSnkrdunkPrices(allRows);
     } catch {}
   }
 
