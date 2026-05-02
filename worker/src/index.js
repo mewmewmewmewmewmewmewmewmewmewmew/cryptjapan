@@ -1,4 +1,4 @@
-// v0.35
+// v0.36
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
@@ -214,8 +214,10 @@ async function snkrdunkPrice(url) {
 
       // Year check from Stage 1 apparel data (saves a Stage 2 fetch when year mismatches)
       const apparelReleasedAt = apparelObj.releasedAt ?? null;
+      let thisYearVerified = false;
       if (expectedYear && apparelReleasedAt) {
         if (new Date(apparelReleasedAt).getFullYear() !== expectedYear) continue;
+        thisYearVerified = true;
       }
 
       // Stage 2: fetch sales history for price data
@@ -233,7 +235,10 @@ async function snkrdunkPrice(url) {
       // Fallback year check from Stage 2 data when Stage 1 had no releasedAt
       if (expectedYear && !apparelReleasedAt) {
         const histReleasedAt = histData.apparel?.releasedAt ?? null;
-        if (histReleasedAt && new Date(histReleasedAt).getFullYear() !== expectedYear) continue;
+        if (histReleasedAt) {
+          if (new Date(histReleasedAt).getFullYear() !== expectedYear) continue;
+          thisYearVerified = true;
+        }
       }
 
       // Skip Master Ball stamp variants unless the search card is also a Master Ball.
@@ -247,6 +252,9 @@ async function snkrdunkPrice(url) {
       const gradeHistory = grade ? history.filter(s => s.condition === grade) : history;
 
       if (gradeHistory.length > 0) {
+        // Skip unverified apparel if a year-verified N/A candidate already exists
+        if (naCandidate?.yearVerified && !thisYearVerified) continue;
+
         const withAge = gradeHistory.map(s => ({ price: s.price, age: parseSnkrdunkAge(s.date) }));
         const inWeekRaw = withAge.filter(s => s.age <= ONE_WEEK_MS);
         const inThreeWeeks = withAge.filter(s => s.age <= THREE_WEEK_MS);
@@ -269,7 +277,7 @@ async function snkrdunkPrice(url) {
       }
 
       // Right card found but no grade-matching sales — keep as N/A candidate and try next
-      if (!naCandidate) naCandidate = { apparelId: Number(id), name: apparelName, image: apparelImage };
+      if (!naCandidate) naCandidate = { apparelId: Number(id), name: apparelName, image: apparelImage, yearVerified: thisYearVerified };
 
     } catch { continue; }
   }
