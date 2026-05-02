@@ -1,4 +1,4 @@
-// v0.39
+// v0.40
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
@@ -284,13 +284,16 @@ async function snkrdunkPrice(url) {
     return { apparelName, apparelImage, gradeHistory, releasedAt };
   };
 
-  // Pass 1 — ランキング section: check items left-to-right, no year filter.
+  // Pass 1 — ランキング section: check items left-to-right, with year filtering.
   // SNKRDUNK's own ranking is the strongest relevance signal. The first ranking item
   // that passes validation wins — even if it has no grade-matching sales (N/A).
   for (const id of rankingIds) {
     try {
       const r = await fetchApparel(id);
       if (!r) continue;
+      if (expectedYear && r.releasedAt) {
+        if (new Date(r.releasedAt).getFullYear() !== expectedYear) continue;
+      }
       if (r.gradeHistory.length > 0) {
         const { avg, count } = calcAvg(r.gradeHistory);
         return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: r.apparelName, image: r.apparelImage, salesCount: count, priceType: "avg" }), { headers: { ...CORS, "Content-Type": "application/json" } });
