@@ -416,7 +416,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.42</footer>
+<footer>v0.43</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -787,29 +787,16 @@
     return s.includes("master ball");
   }
 
-  // Returns "NUM/TOTAL" setnum for passing to worker, or "" if unavailable.
-  // Checks alt card number first (when alt returns full "051/070"), then CC item name.
-  function snkrdunkSetnum(c) {
-    if (c._altCardNumber && /^\d+\/\d+$/.test(c._altCardNumber)) return c._altCardNumber;
-    const m = c.itemName?.match(/#(\d+)\/(\d+)/);
-    return m ? `${m[1].padStart(3, "0")}/${m[2].padStart(3, "0")}` : "";
-  }
-
   function snkrdunkKwKey(c) {
     const psaGrade = cardToPsaGrade(c);
     let kw;
     if (c._altCardName && c._altCardNumber) {
-      // If alt returned full NUM/TOTAL format, use just the number in keywords
-      const numStr = /^\d+\/\d+$/.test(c._altCardNumber)
-        ? c._altCardNumber.split("/")[0].padStart(3, "0")
-        : c._altCardNumber;
-      kw = `${c._altCardName} ${numStr}`;
+      kw = `${c._altCardName} ${c._altCardNumber}`;
     } else {
       const cleanName = c.name || c.cardName || null;
       kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
     }
-    const setnum = snkrdunkSetnum(c);
-    return `${kw}|${psaGrade}${isMasterBall(c) ? "|mb" : ""}${setnum ? `|${setnum}` : ""}`;
+    return `${kw}|${psaGrade}${isMasterBall(c) ? "|mb" : ""}`;
   }
 
   function repopulateSnkrdunkCells(rows) {
@@ -1106,34 +1093,27 @@
       const psaGrade = cardToPsaGrade(c);
       let kw;
       if (c._altCardName && c._altCardNumber) {
-        const numStr = /^\d+\/\d+$/.test(c._altCardNumber)
-          ? c._altCardNumber.split("/")[0].padStart(3, "0")
-          : c._altCardNumber;
-        kw = `${c._altCardName} ${numStr}`;
+        kw = `${c._altCardName} ${c._altCardNumber}`;
       } else {
         const cleanName = c.name || c.cardName || null;
         kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
       }
       const mb = isMasterBall(c);
-      const setnum = snkrdunkSetnum(c);
-      console.log("snkr build:", c.gradingID, { _altCardNumber: c._altCardNumber, setnum, kw });
       const kwKey = snkrdunkKwKey(c);
-      if (!kwGroups.has(kwKey)) kwGroups.set(kwKey, { kw, psaGrade, mb, setnum, kwKey, grpCards: [] });
+      if (!kwGroups.has(kwKey)) kwGroups.set(kwKey, { kw, psaGrade, mb, kwKey, grpCards: [] });
       kwGroups.get(kwKey).grpCards.push(c);
     }
 
     const entries = [...kwGroups.values()];
     for (let i = 0; i < entries.length; i += concurrency) {
       await Promise.all(
-        entries.slice(i, i + concurrency).map(async ({ kw, psaGrade, mb, setnum, kwKey, grpCards }) => {
+        entries.slice(i, i + concurrency).map(async ({ kw, psaGrade, mb, kwKey, grpCards }) => {
           let result;
           if (snkrdunkCache.has(kwKey)) {
             result = snkrdunkCache.get(kwKey);
           } else {
             try {
-              const snkrParams = new URLSearchParams({ keywords: kw, grade: psaGrade, masterball: mb ? "1" : "" });
-              if (setnum) snkrParams.set("setnum", setnum);
-              const res = await fetch(`${WORKER_URL}/snkrdunk/price?${snkrParams}`);
+              const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(kw)}&grade=${encodeURIComponent(psaGrade)}&masterball=${mb ? "1" : ""}`);
               const data = await res.json();
               result = (data.price != null || data.apparelId != null)
                 ? { price: data.price ?? null, apparelId: data.apparelId, priceType: data.priceType }

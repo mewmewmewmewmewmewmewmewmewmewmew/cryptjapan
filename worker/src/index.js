@@ -1,4 +1,4 @@
-// v0.35
+// v0.34
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
@@ -320,12 +320,7 @@ async function altPriceByCert(url, env) {
     let snkrdunk = null;
     if (cardName && cardNumber) {
       const snkrUrl = new URL("http://internal/snkrdunk/price");
-      // If alt returned "NUM/TOTAL" format, use only NUM as keyword and pass full as setnum
-      const isNumTotal = /^\d+\/\d+$/.test(cardNumber);
-      snkrUrl.searchParams.set("keywords", isNumTotal
-        ? `${cardName} ${cardNumber.split("/")[0].padStart(3, "0")}`
-        : `${cardName} ${cardNumber}`);
-      if (isNumTotal) snkrUrl.searchParams.set("setnum", cardNumber);
+      snkrUrl.searchParams.set("keywords", `${cardName} ${cardNumber}`);
       snkrUrl.searchParams.set("grade", psaGrade);
       const snkrRes = await snkrdunkPrice(snkrUrl);
       snkrdunk = await snkrRes.json();
