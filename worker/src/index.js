@@ -1,4 +1,4 @@
-// v0.38
+// v0.39
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
@@ -213,118 +213,132 @@ async function snkrdunkPrice(url) {
   const ONE_WEEK_MS   = 7  * 24 * 60 * 60 * 1000;
   const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
   const apiHeaders = { "Accept": "application/json", "User-Agent": SNKRDUNK_HEADERS["User-Agent"] };
+  const pickImage = o => o?.primaryMedia?.imageUrl ?? o?.image ?? o?.imageUrl ?? o?.image_url ?? o?.thumbnail ?? o?.thumbnailUrl ?? o?.thumbnail_url ?? (Array.isArray(o?.images) ? o.images[0] : null) ?? null;
 
-  // Priority buckets — we collect across all IDs then pick the best:
-  // verifiedPriced   = year confirmed + grade-matching sales  (best)
-  // verifiedNa       = year confirmed + no grade-matching sales
-  // unverifiedPriced = no year data   + grade-matching sales
-  // unverifiedNa     = no year data   + no grade-matching sales
+  // Extract IDs from the ランキング section specifically (left-to-right = rank order)
+  // The ランキング section is SNKRDUNK's own relevance ranking — trust it over generic results
+  const rankingPos = html.indexOf('ランキング');
+  let rankingIds = [];
+  if (rankingPos >= 0) {
+    const rankingSlice = html.slice(rankingPos, rankingPos + 5000);
+    const moreIdx = rankingSlice.indexOf('もっと見る');
+    const rankingSection = moreIdx > 0 ? rankingSlice.slice(0, moreIdx) : rankingSlice;
+    rankingIds = [...new Set([...rankingSection.matchAll(/\/apparels\/(\d+)/g)].map(m => m[1]))].slice(0, 5);
+  }
+
+  // Shared price calculator
+  const calcAvg = gradeHistory => {
+    const withAge = gradeHistory.map(s => ({ price: s.price, age: parseSnkrdunkAge(s.date) }));
+    const inWeekRaw = withAge.filter(s => s.age <= ONE_WEEK_MS);
+    const inThreeWeeks = withAge.filter(s => s.age <= THREE_WEEK_MS);
+    let inWeek = inWeekRaw;
+    if (inWeekRaw.length >= 2) {
+      const med = priceMedian(inWeekRaw.map(s => s.price));
+      inWeek = inWeekRaw.filter(s => s.price <= med * 3);
+    }
+    const useItems = (inWeek.length >= 2 ? inWeek : inThreeWeeks.length >= 1 ? inThreeWeeks : [withAge[0]]).slice(0, 5);
+    return { avg: Math.round(useItems.reduce((sum, s) => sum + s.price, 0) / useItems.length), count: useItems.length };
+  };
+
+  // Shared per-apparel fetch: returns null if skipped, otherwise { apparelName, apparelImage, gradeHistory }
+  const fetchApparel = async id => {
+    const usedRes = await fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=1&page=1&sizeId=0&isSaleOnly=false`, { headers: apiHeaders });
+    if (!usedRes.ok) return null;
+    const usedData = await usedRes.json();
+    const apparelObj = usedData.apparelUsedItems?.[0]?.apparel ?? {};
+    let apparelName = apparelObj.name ?? "";
+    let apparelImage = pickImage(apparelObj);
+
+    // Card number validation against bracket notation [SetCode NUM/TOTAL]
+    if (cardNum && apparelName) {
+      const bm = apparelName.match(/\[\S+ (\d+)\/(\d+)\]/);
+      if (bm) {
+        if (parseInt(bm[1], 10) !== cardNumNorm) return null;
+        if (cardTotalNorm !== null && parseInt(bm[2], 10) !== cardTotalNorm) return null;
+      }
+    }
+
+    const histRes = await fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/sales-history?size_id=0&page=1&per_page=100`, { headers: apiHeaders });
+    if (!histRes.ok) return null;
+    const histData = await histRes.json();
+
+    if (!apparelName) apparelName = histData.apparel?.name ?? "";
+    if (!apparelImage) apparelImage = pickImage(histData.apparel);
+
+    // Card number re-check with Stage 2 name when Stage 1 had no listings
+    if (cardNum && !usedData.apparelUsedItems?.[0] && apparelName) {
+      const bm = apparelName.match(/\[\S+ (\d+)\/(\d+)\]/);
+      if (bm) {
+        if (parseInt(bm[1], 10) !== cardNumNorm) return null;
+        if (cardTotalNorm !== null && parseInt(bm[2], 10) !== cardTotalNorm) return null;
+      }
+    }
+
+    const isMasterBallApparel = masterBallIds.has(id) || apparelName.includes("マスターボール");
+    if (isMasterBallApparel && !hasMasterBall) return null;
+
+    const history = histData.history || [];
+    const gradeHistory = grade ? history.filter(s => s.condition === grade) : history;
+    const releasedAt = apparelObj.releasedAt ?? releasedAtMap.get(id) ?? histData.apparel?.releasedAt ?? null;
+
+    return { apparelName, apparelImage, gradeHistory, releasedAt };
+  };
+
+  // Pass 1 — ランキング section: check items left-to-right, no year filter.
+  // SNKRDUNK's own ranking is the strongest relevance signal. The first ranking item
+  // that passes validation wins — even if it has no grade-matching sales (N/A).
+  for (const id of rankingIds) {
+    try {
+      const r = await fetchApparel(id);
+      if (!r) continue;
+      if (r.gradeHistory.length > 0) {
+        const { avg, count } = calcAvg(r.gradeHistory);
+        return new Response(JSON.stringify({ price: avg, apparelId: Number(id), name: r.apparelName, image: r.apparelImage, salesCount: count, priceType: "avg" }), { headers: { ...CORS, "Content-Type": "application/json" } });
+      }
+      // Valid ranking item but no grade sales — return N/A immediately; don't fall through
+      return new Response(JSON.stringify({ price: null, apparelId: Number(id), name: r.apparelName, image: r.apparelImage, priceType: "na" }), { headers: { ...CORS, "Content-Type": "application/json" } });
+    } catch { continue; }
+  }
+
+  // Pass 2 — full search results (non-ranking), with year filtering.
+  // Only reached when no ranking item passed validation.
+  const rankingIdSet = new Set(rankingIds);
+  const remainingIds = ids.filter(id => !rankingIdSet.has(id));
+
   let verifiedPriced = null, verifiedNa = null, unverifiedPriced = null, unverifiedNa = null;
 
-  for (const id of ids) {
+  for (const id of remainingIds) {
     try {
-      // Stage 1: fetch one used listing to get the apparel name for validation
-      const usedRes = await fetch(
-        `${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=1&page=1&sizeId=0&isSaleOnly=false`,
-        { headers: apiHeaders }
-      );
-      if (!usedRes.ok) continue;
-      const usedData = await usedRes.json();
-      const apparelObj = usedData.apparelUsedItems?.[0]?.apparel ?? {};
-      let apparelName = apparelObj.name ?? "";
-      const pickImage = o => o?.primaryMedia?.imageUrl ?? o?.image ?? o?.imageUrl ?? o?.image_url ?? o?.thumbnail ?? o?.thumbnailUrl ?? o?.thumbnail_url ?? (Array.isArray(o?.images) ? o.images[0] : null) ?? null;
-      let apparelImage = pickImage(apparelObj);
+      const r = await fetchApparel(id);
+      if (!r) continue;
 
-      // Verify card number (and total if setnum provided) against bracket notation [SetCode NUM/TOTAL]
-      if (cardNum && apparelName) {
-        const bm = apparelName.match(/\[\S+ (\d+)\/(\d+)\]/);
-        if (bm) {
-          if (parseInt(bm[1], 10) !== cardNumNorm) continue;
-          if (cardTotalNorm !== null && parseInt(bm[2], 10) !== cardTotalNorm) continue;
-        }
+      let yearVerified = false;
+      if (expectedYear && r.releasedAt) {
+        if (new Date(r.releasedAt).getFullYear() !== expectedYear) continue;
+        yearVerified = true;
       }
 
-      // Year check — API releasedAt first, then search-page JSON, then Stage 2 fallback
-      const apparelReleasedAt = apparelObj.releasedAt ?? releasedAtMap.get(id) ?? null;
-      let thisYearVerified = false;
-      if (expectedYear && apparelReleasedAt) {
-        if (new Date(apparelReleasedAt).getFullYear() !== expectedYear) continue;
-        thisYearVerified = true;
-      }
-
-      // Stage 2: fetch sales history for price data
-      const histRes = await fetch(
-        `${SNKRDUNK_BASE}/v1/apparels/${id}/sales-history?size_id=0&page=1&per_page=100`,
-        { headers: apiHeaders }
-      );
-      if (!histRes.ok) continue;
-      const histData = await histRes.json();
-
-      // Fallback: get apparel name/image from sales-history response if Stage 1 returned nothing
-      if (!apparelName) apparelName = histData.apparel?.name ?? "";
-      if (!apparelImage) apparelImage = pickImage(histData.apparel);
-
-      // Fallback year check from Stage 2 data when no releasedAt found yet
-      if (expectedYear && !thisYearVerified) {
-        const histReleasedAt = histData.apparel?.releasedAt ?? null;
-        if (histReleasedAt) {
-          if (new Date(histReleasedAt).getFullYear() !== expectedYear) continue;
-          thisYearVerified = true;
-        }
-      }
-
-      // Skip Master Ball stamp variants unless the search card is also a Master Ball.
-      // Primary signal: search-HTML context; fallback: API name field.
-      const isMasterBallApparel = masterBallIds.has(id) || apparelName.includes("マスターボール");
-      if (isMasterBallApparel && !hasMasterBall) continue;
-
-      const history = histData.history || [];
-
-      // Filter by grade condition (condition field contains e.g. "PSA10" directly)
-      const gradeHistory = grade ? history.filter(s => s.condition === grade) : history;
-
-      if (gradeHistory.length > 0) {
-        const withAge = gradeHistory.map(s => ({ price: s.price, age: parseSnkrdunkAge(s.date) }));
-        const inWeekRaw = withAge.filter(s => s.age <= ONE_WEEK_MS);
-        const inThreeWeeks = withAge.filter(s => s.age <= THREE_WEEK_MS);
-
-        let inWeek = inWeekRaw;
-        if (inWeekRaw.length >= 2) {
-          const med = priceMedian(inWeekRaw.map(s => s.price));
-          inWeek = inWeekRaw.filter(s => s.price <= med * 3);
-        }
-
-        const useItems = (inWeek.length >= 2 ? inWeek
-                       : inThreeWeeks.length >= 1 ? inThreeWeeks
-                       : [withAge[0]]).slice(0, 5);
-
-        const avg = Math.round(useItems.reduce((sum, s) => sum + s.price, 0) / useItems.length);
-        const result = { price: avg, apparelId: Number(id), name: apparelName, image: apparelImage, salesCount: useItems.length, priceType: "avg" };
-
-        if (thisYearVerified) { verifiedPriced = result; break; } // best possible — stop early
+      if (r.gradeHistory.length > 0) {
+        const { avg, count } = calcAvg(r.gradeHistory);
+        const result = { price: avg, apparelId: Number(id), name: r.apparelName, image: r.apparelImage, salesCount: count, priceType: "avg" };
+        if (yearVerified) { verifiedPriced = result; break; }
         if (!unverifiedPriced) unverifiedPriced = result;
-        if (!expectedYear) break; // no year filter — first priced result wins
-        continue; // year filter active — keep looking for a verified result
+        if (!expectedYear) break;
+        continue;
       }
 
-      // No grade-matching sales — store as N/A candidate in the appropriate bucket
-      const naResult = { price: null, apparelId: Number(id), name: apparelName, image: apparelImage, priceType: "na" };
-      if (thisYearVerified) { if (!verifiedNa) verifiedNa = naResult; }
+      const naResult = { price: null, apparelId: Number(id), name: r.apparelName, image: r.apparelImage, priceType: "na" };
+      if (yearVerified) { if (!verifiedNa) verifiedNa = naResult; }
       else { if (!unverifiedNa) unverifiedNa = naResult; }
 
     } catch { continue; }
   }
 
-  // Pick the best result.
-  // With year filter:    verifiedPriced > verifiedNa > unverifiedPriced > unverifiedNa
-  // Without year filter: verifiedPriced > unverifiedPriced > verifiedNa  > unverifiedNa
   const best = expectedYear
     ? (verifiedPriced ?? verifiedNa ?? unverifiedPriced ?? unverifiedNa)
     : (verifiedPriced ?? unverifiedPriced ?? verifiedNa ?? unverifiedNa);
 
-  if (best) {
-    return new Response(JSON.stringify(best), { headers: { ...CORS, "Content-Type": "application/json" } });
-  }
+  if (best) return new Response(JSON.stringify(best), { headers: { ...CORS, "Content-Type": "application/json" } });
 
   return none;
 }
