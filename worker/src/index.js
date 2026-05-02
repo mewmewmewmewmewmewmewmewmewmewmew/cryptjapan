@@ -1,4 +1,4 @@
-// v0.34
+// v0.35
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
@@ -134,6 +134,7 @@ async function snkrdunkPrice(url) {
   const grade = (url.searchParams.get("grade") || "").replace(/\s+/g, ""); // "PSA 10" → "PSA10"
   const hasMasterBallParam = url.searchParams.get("masterball") === "1";
   const setNum = url.searchParams.get("setnum") || ""; // e.g. "069/086"
+  const expectedYear = parseInt(url.searchParams.get("year") || "0") || null;
 
   const none = new Response(JSON.stringify({ price: null }), {
     headers: { ...CORS, "Content-Type": "application/json" },
@@ -211,6 +212,12 @@ async function snkrdunkPrice(url) {
         }
       }
 
+      // Year check from Stage 1 apparel data (saves a Stage 2 fetch when year mismatches)
+      const apparelReleasedAt = apparelObj.releasedAt ?? null;
+      if (expectedYear && apparelReleasedAt) {
+        if (new Date(apparelReleasedAt).getFullYear() !== expectedYear) continue;
+      }
+
       // Stage 2: fetch sales history for price data
       const histRes = await fetch(
         `${SNKRDUNK_BASE}/v1/apparels/${id}/sales-history?size_id=0&page=1&per_page=100`,
@@ -222,6 +229,12 @@ async function snkrdunkPrice(url) {
       // Fallback: get apparel name/image from sales-history response if Stage 1 returned nothing
       if (!apparelName) apparelName = histData.apparel?.name ?? "";
       if (!apparelImage) apparelImage = pickImage(histData.apparel);
+
+      // Fallback year check from Stage 2 data when Stage 1 had no releasedAt
+      if (expectedYear && !apparelReleasedAt) {
+        const histReleasedAt = histData.apparel?.releasedAt ?? null;
+        if (histReleasedAt && new Date(histReleasedAt).getFullYear() !== expectedYear) continue;
+      }
 
       // Skip Master Ball stamp variants unless the search card is also a Master Ball.
       // Primary signal: search-HTML context; fallback: API name field.
