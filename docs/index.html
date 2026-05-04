@@ -368,7 +368,7 @@
     <div class="grade-menu" id="grade-menu" style="display:none"></div>
   </div>
 
-  <select id="language">
+  <select id="language" onchange="if(document.getElementById('source')?.value==='beezie')applyLiveFilters()">
     <option value="Japanese">Japanese</option>
     <option value="English">English</option>
     <option value="">Any language</option>
@@ -434,7 +434,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.53</footer>
+<footer>v0.54</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1250,7 +1250,7 @@
     const createdAtIso = createdAtMs ? new Date(createdAtMs).toISOString() : null;
     const priceUsdc   = item.SellOrder?.amountUSDC ? parseFloat(item.SellOrder.amountUSDC) : null;
     const slugify = s => s.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "-");
-    const cardUrl = `https://beezie.com/marketplace/collectible/${[year, language, slugify(setName), slugify(pokemonName), cardNumber, grader, grade, item.tokenId ?? item.id].join("-")}`;
+    const cardUrl = `https://beezie.com/marketplace/collectible/${[year, language, slugify(setName), slugify(pokemonName), cardNumber, grader, grade, item.tokenId ?? item.id].filter(s => s !== "").join("-")}`;
     const altFmv = item.altFmv ? parseFloat(item.altFmv) : null;
     if (altFmv && serial && item.altAssetId) {
       altCache.set(serial, { price: altFmv, assetId: item.altAssetId, pop: null, cardName: pokemonName, cardNumber: normalizeCardNum(cardNumber) });
@@ -1499,6 +1499,7 @@
     menu.innerHTML = rows.join("");
     const first = menu.querySelector('input[type="checkbox"]');
     if (first) { first.checked = true; updateGradeLabel(); }
+    if (document.getElementById("source")?.value === "beezie") applyLiveFilters();
   }
 
   function onGradeCheck(cb) {
@@ -1511,6 +1512,7 @@
     }
     if (!allBoxes.some(c => c.checked) && anyBox) anyBox.checked = true;
     updateGradeLabel();
+    if (document.getElementById("source")?.value === "beezie") applyLiveFilters();
   }
 
   function getSelectedGrades() {
