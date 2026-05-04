@@ -1422,6 +1422,8 @@
   updateGradeOptions();
   if (sessionStorage.getItem("auth") === "1") loadCardCache();
 
+  window._row = () => allRows[0]; // debug: inspect first card's fields
+
   function esc(s) {
     return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
   }
