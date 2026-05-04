@@ -434,7 +434,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.59</footer>
+<footer>v0.60</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1249,14 +1249,7 @@
     const createdAtMs = item.SellOrder?.createdAt;
     const createdAtIso = createdAtMs ? new Date(createdAtMs).toISOString() : null;
     const priceUsdc   = item.SellOrder?.amountUSDC ? parseFloat(item.SellOrder.amountUSDC) : null;
-    const slugify = s => s.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "-");
-    const escapedGrader = grader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const nameCore = (item.metadata?.name ?? "")
-      .replace(new RegExp(`\\s+${escapedGrader}\\s+\\d+(\\.\\d+)?\\s*$`, "i"), "")
-      .replace(/#\d+\s*/g, "")
-      .replace(/^\d{4}\s+/, "")
-      .trim();
-    const cardUrl = `https://beezie.com/marketplace/collectible/${[year, language, slugify(nameCore), cardNumber, grader, grade, item.tokenId ?? item.id].filter(s => s !== "").join("-")}`;
+    const cardUrl = `https://beezie.com/marketplace/collectible/${item.tokenId ?? item.id}`;
     return {
       nftAddress: `beezie-${item.tokenId ?? item.id}`,
       gradingID: serial,
