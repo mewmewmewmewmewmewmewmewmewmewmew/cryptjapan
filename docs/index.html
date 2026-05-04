@@ -427,7 +427,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.48</footer>
+<footer>v0.49</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -467,7 +467,7 @@
   let sortCol = null;
   let cacheLoadAborted = false;
   let sortDir = 1;
-  let previousNftAddresses = new Set();
+  let previousCardPrices = new Map(); // nftAddress → price, for detecting new/repriced listings
   let currentPage = 1;
   let totalPages = 1;
 
@@ -602,10 +602,13 @@
           }
         }
 
-        // On forced refresh, bubble truly new listings (not seen in previous load) to the top
-        if (forceRefresh && previousNftAddresses.size > 0) {
-          const isNew = c => !previousNftAddresses.has(c.nftAddress);
-          cards = [...cards.filter(isNew), ...cards.filter(c => !isNew(c))];
+        // On forced refresh, bubble new and repriced listings to the top
+        if (forceRefresh && previousCardPrices.size > 0) {
+          const isNewOrRepriced = c => {
+            const prev = previousCardPrices.get(c.nftAddress);
+            return prev === undefined || prev !== Number(c.listing?.price ?? 0);
+          };
+          cards = [...cards.filter(isNewOrRepriced), ...cards.filter(c => !isNewOrRepriced(c))];
           allRows = cards;
           renderTable(cards);
         }
@@ -1303,7 +1306,7 @@
   }
 
   async function refreshCardList() {
-    previousNftAddresses = new Set(allRows.map(c => c.nftAddress).filter(Boolean));
+    previousCardPrices = new Map(allRows.filter(c => c.nftAddress).map(c => [c.nftAddress, Number(c.listing?.price ?? 0)]));
     await fetchListings(true, true);
   }
 
