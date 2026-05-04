@@ -427,7 +427,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.49</footer>
+<footer>v0.50</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -606,7 +606,7 @@
         if (forceRefresh && previousCardPrices.size > 0) {
           const isNewOrRepriced = c => {
             const prev = previousCardPrices.get(c.nftAddress);
-            return prev === undefined || prev !== Number(c.listing?.price ?? 0);
+            return prev === undefined || prev !== (c.listing?.updatedAt ?? c.listing?.createdAt ?? "");
           };
           cards = [...cards.filter(isNewOrRepriced), ...cards.filter(c => !isNewOrRepriced(c))];
           allRows = cards;
@@ -724,7 +724,7 @@
     const sorted = [...allRows].sort((a, b) => {
       let av, bv;
       if (col === "listedAt") {
-        const dateOf = c => new Date(c.listing?.listedAt ?? c.listing?.createdAt ?? c.listedAt ?? 0).getTime();
+        const dateOf = c => new Date(c.listing?.updatedAt ?? c.listing?.createdAt ?? 0).getTime();
         av = dateOf(a); bv = dateOf(b);
       } else if (col === "cardYear") {
         av = parseInt(itemYear(a) || "0"); bv = parseInt(itemYear(b) || "0");
@@ -832,11 +832,11 @@
   }
 
   function itemYear(c) {
-    return (c.itemName?.match(/^(\d{4})\s/) ?? [])[1] ?? "";
+    return String(c.year || (c.itemName?.match(/^(\d{4})\s/) ?? [])[1] || "");
   }
 
   function formatListedDate(c) {
-    const dateStr = c.listing?.listedAt ?? c.listing?.createdAt ?? c.listedAt ?? null;
+    const dateStr = c.listing?.updatedAt ?? c.listing?.createdAt ?? null;
     if (!dateStr) return "";
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return "";
@@ -1306,7 +1306,7 @@
   }
 
   async function refreshCardList() {
-    previousCardPrices = new Map(allRows.filter(c => c.nftAddress).map(c => [c.nftAddress, Number(c.listing?.price ?? 0)]));
+    previousCardPrices = new Map(allRows.filter(c => c.nftAddress).map(c => [c.nftAddress, c.listing?.updatedAt ?? c.listing?.createdAt ?? ""]));
     await fetchListings(true, true);
   }
 
