@@ -1,4 +1,4 @@
-// v0.40
+// v0.41
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
@@ -43,6 +43,10 @@ export default {
 
     if (path === "/snkrdunk/price") {
       return snkrdunkPrice(url);
+    }
+
+    if (path === "/beezie/listings") {
+      return beezieListings(request);
     }
 
     if (path.startsWith("/marketplace") || path.startsWith("/cart")) {
@@ -419,6 +423,20 @@ async function altPriceByCert(url, env) {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
+}
+
+async function beezieListings(request) {
+  const body = await request.text();
+  const upstream = await fetch("https://api.beezie.com/dropItems/byCategory", {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Accept": "application/json" },
+    body,
+  });
+  const text = await upstream.text();
+  return new Response(text, {
+    status: upstream.status,
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
 }
 
 async function proxyCC(path, url) {

@@ -339,6 +339,11 @@
 </header>
 
 <div class="filters">
+  <select id="source">
+    <option value="cc">Collector Crypt</option>
+    <option value="beezie">Beezie</option>
+  </select>
+
   <select id="categories">
     <option value="Pokemon,One Piece">Pokemon + One Piece</option>
     <option value="Pokemon">Pokemon</option>
@@ -427,7 +432,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.50</footer>
+<footer>v0.51</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -488,6 +493,9 @@
   }
 
   async function fetchListings(resetPage = false, forceRefresh = false) {
+    if (document.getElementById("source")?.value === "beezie") {
+      return fetchBeezieListings();
+    }
     cacheLoadAborted = true; // prevent any in-flight loadCardCache from overwriting
     if (resetPage) currentPage = 1;
     const btn = document.getElementById("fetch-btn");
@@ -640,7 +648,7 @@
 
   function buildRowHtml(c) {
     const l = c.listing;
-    const cardUrl = `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
+    const cardUrl = c._cardUrl || `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
     const price = Number(l.price);
     const solAmt = `${price % 1 === 0 ? price : price.toFixed(2)} SOL`;
     const priceStr = l.currency === "SOL"
@@ -1201,6 +1209,101 @@
   }
   // ─────────────────────────────────────────────────────────────────────
 
+  // ── Beezie marketplace integration ──────────────────────────────────
+  function beezieAttr(item, traitType) {
+    return item.metadata?.attributes?.find(a => a.trait_type === traitType)?.trait_value ?? null;
+  }
+
+  function normalizeBeezieCard(item) {
+    const grader      = beezieAttr(item, "grader") ?? "";
+    const grade       = beezieAttr(item, "grade") ?? "";
+    const year        = beezieAttr(item, "year") ?? "";
+    const pokemonName = beezieAttr(item, "pokemon name") ?? "";
+    const setName     = beezieAttr(item, "set name") ?? "";
+    const cardNumber  = beezieAttr(item, "card number") ?? "";
+    const serial      = beezieAttr(item, "serial") ?? String(item.tokenId ?? item.id);
+    const language    = beezieAttr(item, "language") ?? "";
+    const createdAtMs = item.SellOrder?.createdAt;
+    const createdAtIso = createdAtMs ? new Date(createdAtMs).toISOString() : null;
+    const priceUsdc   = item.SellOrder?.amountUSDC ? parseFloat(item.SellOrder.amountUSDC) : null;
+    const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
+    const cardUrl = `https://beezie.com/marketplace/collectible/${[year, slugify(setName), slugify(pokemonName), cardNumber, grader.toLowerCase(), grade, item.id].join("-")}`;
+    const altFmv = item.altFmv ? parseFloat(item.altFmv) : null;
+    if (altFmv && serial && item.altAssetId) {
+      altCache.set(serial, { price: altFmv, assetId: item.altAssetId, pop: null, cardName: pokemonName, cardNumber: normalizeCardNum(cardNumber) });
+    }
+    return {
+      nftAddress: `beezie-${item.tokenId ?? item.id}`,
+      gradingID: serial,
+      gradingCompany: grader,
+      grade: grade,
+      year: parseInt(year) || null,
+      language: language,
+      cardName: pokemonName,
+      name: pokemonName,
+      set: setName,
+      itemName: item.metadata?.name ?? "",
+      listing: { price: priceUsdc, currency: "USDC", createdAt: createdAtIso, updatedAt: createdAtIso },
+      _source: "beezie",
+      _cardUrl: cardUrl,
+      _altCardName: pokemonName,
+    };
+  }
+
+  async function fetchBeezieListings() {
+    const btn = document.getElementById("fetch-btn");
+    const status = document.getElementById("status");
+    btn.disabled = true;
+    status.textContent = "Fetching Beezie listings…";
+    const tbody = document.getElementById("results-body");
+    tbody.innerHTML = "";
+    document.getElementById("empty-msg").style.display = "none";
+    allRows = [];
+    const pageSize = 40;
+    let page = 0;
+    let cards = [];
+    try {
+      await getSolPrice();
+      await getJpyRate();
+      while (page <= 50) {
+        const res = await fetch(`${WORKER_URL}/beezie/listings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categoryId: "1", page: String(page), pageSize: String(pageSize), filters: [], saleStatus: "all", sellOrderDateOrder: "DESC" }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rawItems = data.dropItems || [];
+        const items = rawItems.filter(item => item.SellOrder);
+        const normalized = items.map(normalizeBeezieCard);
+        cards = cards.concat(normalized);
+        allRows = cards;
+        tbody.insertAdjacentHTML("beforeend", normalized.map(buildRowHtml).join(""));
+        applyHiddenRows();
+        repopulateAltCells(normalized);
+        status.textContent = `${cards.length} Beezie listings…`;
+        if (rawItems.length < pageSize) break;
+        page++;
+      }
+      if (!cards.length) {
+        document.getElementById("empty-msg").style.display = "block";
+      }
+      status.textContent = `${cards.length} Beezie listings loaded`;
+      updatePagination(1);
+      window.scrollTo(0, 0);
+      document.getElementById("refresh-list-btn").disabled = false;
+      document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-snkr-btn").disabled = false;
+      applyLiveFilters();
+      fetchSnkrdunkPrices(cards);
+    } catch (e) {
+      status.textContent = `Beezie error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
   async function refreshAlt() {
     const btn = document.getElementById("refresh-alt-btn");
     btn.disabled = true;
@@ -1306,6 +1409,9 @@
   }
 
   async function refreshCardList() {
+    if (document.getElementById("source")?.value === "beezie") {
+      return fetchBeezieListings();
+    }
     previousCardPrices = new Map(allRows.filter(c => c.nftAddress).map(c => [c.nftAddress, c.listing?.updatedAt ?? c.listing?.createdAt ?? ""]));
     await fetchListings(true, true);
   }
