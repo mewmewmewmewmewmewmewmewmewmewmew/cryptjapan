@@ -356,6 +356,8 @@
     <option value="PSA">PSA</option>
     <option value="Beckett">BGS</option>
     <option value="CGC">CGC</option>
+    <option value="TAG">TAG</option>
+    <option value="AGS">AGS</option>
     <option value="">Any grader</option>
   </select>
 
@@ -432,7 +434,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.51</footer>
+<footer>v0.52</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -794,6 +796,18 @@
         if (!isNaN(maxVal) && usdc > maxVal) return false;
         return true;
       });
+    }
+
+    if (document.getElementById("source")?.value === "beezie") {
+      const gc = document.getElementById("gradingCompany")?.value;
+      if (gc) {
+        const beezieGrader = gc === "Beckett" ? "BGS" : gc;
+        filtered = filtered.filter(c => c.gradingCompany === beezieGrader);
+      }
+      const lang = document.getElementById("language")?.value;
+      if (lang) {
+        filtered = filtered.filter(c => (c.language || "").toLowerCase() === lang.toLowerCase());
+      }
     }
 
     renderTable(filtered);
@@ -1226,8 +1240,8 @@
     const createdAtMs = item.SellOrder?.createdAt;
     const createdAtIso = createdAtMs ? new Date(createdAtMs).toISOString() : null;
     const priceUsdc   = item.SellOrder?.amountUSDC ? parseFloat(item.SellOrder.amountUSDC) : null;
-    const slugify = s => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "");
-    const cardUrl = `https://beezie.com/marketplace/collectible/${[year, slugify(setName), slugify(pokemonName), cardNumber, grader.toLowerCase(), grade, item.id].join("-")}`;
+    const slugify = s => s.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "-");
+    const cardUrl = `https://beezie.com/marketplace/collectible/${[year, slugify(setName), slugify(pokemonName), cardNumber, grader, grade, item.tokenId ?? item.id].join("-")}`;
     const altFmv = item.altFmv ? parseFloat(item.altFmv) : null;
     if (altFmv && serial && item.altAssetId) {
       altCache.set(serial, { price: altFmv, assetId: item.altAssetId, pop: null, cardName: pokemonName, cardNumber: normalizeCardNum(cardNumber) });
@@ -1467,7 +1481,7 @@
 
   function updateGradeOptions() {
     const company = document.getElementById("gradingCompany").value;
-    const options = GRADE_OPTIONS[company] || GRADE_OPTIONS.PSA;
+    const options = GRADE_OPTIONS[company] || [];
     const menu = document.getElementById("grade-menu");
     const rows = options.map(opt =>
       `<label><input type="checkbox" value="${esc(opt.value)}" onchange="onGradeCheck(this)" />${opt.label}</label>`
