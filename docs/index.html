@@ -434,7 +434,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.57</footer>
+<footer>v0.58</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1250,7 +1250,13 @@
     const createdAtIso = createdAtMs ? new Date(createdAtMs).toISOString() : null;
     const priceUsdc   = item.SellOrder?.amountUSDC ? parseFloat(item.SellOrder.amountUSDC) : null;
     const slugify = s => s.replace(/[^a-zA-Z0-9 ]/g, "").replace(/\s+/g, "-");
-    const cardUrl = `https://beezie.com/marketplace/collectible/${[year, language, slugify(setName), slugify(pokemonName), cardNumber, grader, grade, item.tokenId ?? item.id].filter(s => s !== "").join("-")}`;
+    const escapedGrader = grader.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const nameCore = (item.metadata?.name ?? "")
+      .replace(new RegExp(`\\s+${escapedGrader}\\s+\\d+(\\.\\d+)?\\s*$`, "i"), "")
+      .replace(/#\d+\s*/g, "")
+      .replace(/^\d{4}\s+/, "")
+      .trim();
+    const cardUrl = `https://beezie.com/marketplace/collectible/${[year, language, slugify(nameCore), cardNumber, grader, grade, item.tokenId ?? item.id].filter(s => s !== "").join("-")}`;
     const altFmv = item.altFmv ? parseFloat(item.altFmv) : null;
     if (altFmv && serial && item.altAssetId) {
       altCache.set(serial, { price: altFmv, assetId: item.altAssetId, pop: null, cardName: pokemonName, cardNumber: normalizeCardNum(cardNumber) });
