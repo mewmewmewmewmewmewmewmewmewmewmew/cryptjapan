@@ -434,7 +434,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.56</footer>
+<footer>v0.57</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1281,6 +1281,18 @@
     document.getElementById("results-body").innerHTML = "";
     document.getElementById("empty-msg").style.display = "none";
     allRows = [];
+
+    // Build server-side filters from current dropdown selections
+    const filters = [];
+    const gc = document.getElementById("gradingCompany")?.value;
+    if (gc) filters.push({ filterName: "grader", value: gc === "Beckett" ? "BGS" : gc });
+    for (const g of getSelectedGrades()) {
+      const n = (g.match(/\d+(?:\.\d+)?/g) || [])[0];
+      if (n) filters.push({ filterName: "grade", value: n });
+    }
+    const lang = document.getElementById("language")?.value;
+    if (lang) filters.push({ filterName: "language", value: lang });
+
     const pageSize = 40;
     let page = 0;
     let cards = [];
@@ -1291,7 +1303,7 @@
         const res = await fetch(`${WORKER_URL}/beezie/listings`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ categoryId: "1", page: String(page), pageSize: String(pageSize), filters: [], saleStatus: "all", sellOrderDateOrder: "DESC" }),
+          body: JSON.stringify({ categoryId: "1", page: String(page), pageSize: String(pageSize), filters, saleStatus: "all", sellOrderDateOrder: "DESC" }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
@@ -1302,7 +1314,7 @@
         page++;
       }
       allRows = cards;
-      applyLiveFilters(); // filter then render — no unfiltered rows ever hit the DOM
+      applyLiveFilters();
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
       status.textContent = `${cards.length} Beezie listings loaded`;
       updatePagination(1);
