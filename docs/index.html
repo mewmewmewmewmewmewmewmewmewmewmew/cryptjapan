@@ -434,7 +434,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.55</footer>
+<footer>v0.56</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -495,10 +495,10 @@
   }
 
   async function fetchListings(resetPage = false, forceRefresh = false) {
+    cacheLoadAborted = true; // prevent any in-flight loadCardCache from overwriting
     if (document.getElementById("source")?.value === "beezie") {
       return fetchBeezieListings();
     }
-    cacheLoadAborted = true; // prevent any in-flight loadCardCache from overwriting
     if (resetPage) currentPage = 1;
     const btn = document.getElementById("fetch-btn");
     const status = document.getElementById("status");
@@ -1278,8 +1278,7 @@
     const status = document.getElementById("status");
     btn.disabled = true;
     status.textContent = "Fetching Beezie listings…";
-    const tbody = document.getElementById("results-body");
-    tbody.innerHTML = "";
+    document.getElementById("results-body").innerHTML = "";
     document.getElementById("empty-msg").style.display = "none";
     allRows = [];
     const pageSize = 40;
@@ -1297,27 +1296,20 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const rawItems = data.dropItems || [];
-        const items = rawItems.filter(item => item.SellOrder);
-        const normalized = items.map(normalizeBeezieCard);
-        cards = cards.concat(normalized);
-        allRows = cards;
-        tbody.insertAdjacentHTML("beforeend", normalized.map(buildRowHtml).join(""));
-        applyHiddenRows();
-        repopulateAltCells(normalized);
+        cards = cards.concat(rawItems.filter(item => item.SellOrder).map(normalizeBeezieCard));
         status.textContent = `${cards.length} Beezie listings…`;
         if (rawItems.length < pageSize) break;
         page++;
       }
-      if (!cards.length) {
-        document.getElementById("empty-msg").style.display = "block";
-      }
+      allRows = cards;
+      applyLiveFilters(); // filter then render — no unfiltered rows ever hit the DOM
+      if (!cards.length) document.getElementById("empty-msg").style.display = "block";
       status.textContent = `${cards.length} Beezie listings loaded`;
       updatePagination(1);
       window.scrollTo(0, 0);
       document.getElementById("refresh-list-btn").disabled = false;
       document.getElementById("refresh-alt-btn").disabled = false;
       document.getElementById("refresh-snkr-btn").disabled = false;
-      applyLiveFilters();
       fetchSnkrdunkPrices(cards);
     } catch (e) {
       status.textContent = `Beezie error: ${e.message}`;
