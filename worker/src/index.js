@@ -49,6 +49,10 @@ export default {
       return beezieListings(request);
     }
 
+    if (path === "/phygitals/listings") {
+      return phygitalsListings(url);
+    }
+
     if (path.startsWith("/marketplace") || path.startsWith("/cart")) {
       return proxyCC(path, url);
     }
@@ -423,6 +427,21 @@ async function altPriceByCert(url, env) {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
+}
+
+async function phygitalsListings(workerUrl) {
+  const upstream = await fetch(`https://api.phygitals.com/api/marketplace/marketplace-listings${workerUrl.search}`, {
+    headers: {
+      "Accept": "application/json, text/plain, */*",
+      "Origin": "https://www.phygitals.com",
+      "Referer": "https://www.phygitals.com/",
+    },
+  });
+  const text = await upstream.text();
+  return new Response(text, {
+    status: upstream.status,
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
 }
 
 async function beezieListings(request) {
