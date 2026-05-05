@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.70</footer>
+<footer>v0.71</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -903,10 +903,7 @@
   function cardToPsaGrade(c) {
     const m = (c.grade || "").match(/(\d+(?:\.\d+)?)/);
     if (!m) return "";
-    const n = (c.gradingCompany || "").toUpperCase() === "PSA"
-      ? m[1]
-      : String(Math.floor(parseFloat(m[1])));
-    return `PSA${n}`;
+    return `PSA${Math.floor(parseFloat(m[1]))}`;
   }
 
   function isMasterBall(c) {
