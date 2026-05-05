@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.68</footer>
+<footer>v0.69</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -489,11 +489,15 @@
   // Shared client-side filter for platforms that fetch all data and filter locally
   function clientFilterByDropdowns(filtered) {
     const gc = document.getElementById("gradingCompany")?.value;
+    const src = document.getElementById("source")?.value;
+    if (src !== "cc") console.log(`[filter] gc="${gc}" rows=${filtered.length} sample grader="${filtered[0]?.gradingCompany}" grade="${filtered[0]?.grade}" lang="${filtered[0]?.language}"`);
     if (gc) {
       const grader = gc === "Beckett" ? "BGS" : gc;
       filtered = filtered.filter(c => c.gradingCompany === grader);
+      if (src !== "cc") console.log(`[filter] after grader: ${filtered.length} rows`);
     }
     const selectedGrades = getSelectedGrades();
+    if (src !== "cc") console.log(`[filter] selectedGrades:`, selectedGrades);
     if (selectedGrades.length > 0) {
       filtered = filtered.filter(c => {
         const cgNum = parseFloat(c.grade ?? "");
@@ -501,6 +505,7 @@
           (g.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat).some(n => n === cgNum)
         );
       });
+      if (src !== "cc") console.log(`[filter] after grade: ${filtered.length} rows`);
     }
     const lang = document.getElementById("language")?.value;
     if (lang) {
