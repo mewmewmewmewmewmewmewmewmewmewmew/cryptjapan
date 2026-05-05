@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.63</footer>
+<footer>v0.64</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1414,19 +1414,13 @@
     document.getElementById("empty-msg").style.display = "none";
     allRows = [];
 
+    // Only invariant filters server-side; user filters (grader/grade/language) are applied
+    // client-side after we learn Phygitals' exact attribute value format from the response.
     const metaCond = {
       "set": [], "grader": [], "grade": [], "rarity": [], "type": [],
       "set release date": [], "grade type": ["Graded Cards"],
       "language": [], "category": ["Pokemon"],
     };
-    const gc = document.getElementById("gradingCompany")?.value;
-    if (gc) metaCond["grader"] = [gc === "Beckett" ? "BGS" : gc];
-    for (const g of getSelectedGrades()) {
-      const n = (g.match(/\d+(?:\.\d+)?/g) || [])[0];
-      if (n) metaCond["grade"].push(n);
-    }
-    const lang = document.getElementById("language")?.value;
-    if (lang) metaCond["language"] = [lang];
 
     const collAddresses = ["BSG6DyEihFFtfvxtL9mKYsvTwiZXB1rq5gARMTJC2xAM", "phygZDQZJZVHvJGYPGoKPYUtXw7mstSYtTtcuh8LJcC"];
     const pageSize = 48;
@@ -1436,21 +1430,18 @@
       await getSolPrice();
       await getJpyRate();
       while (page <= 100) {
-        const params = new URLSearchParams({
-          searchTerm: "",
-          sortBy: "price-low-high",
-          itemsPerPage: String(pageSize),
-          page: String(page),
-          metadataConditions: JSON.stringify(metaCond),
-          priceRange: "[null,null]",
-          fmvRange: "[null,null]",
-          listedStatus: "listed",
-          collectionAddresses: JSON.stringify(collAddresses),
-        });
-        const res = await fetch(`${WORKER_URL}/phygitals/listings?${params}`);
+        // Build query string to exactly match the original Phygitals URL format:
+        // metadataConditions: encode only {, }, " and space; leave :, ,, [ ] literal
+        // priceRange/fmvRange: literal [null,null]; collectionAddresses: encode only quotes
+        const metaRaw = JSON.stringify(metaCond)
+          .replace(/{/g, '%7B').replace(/}/g, '%7D')
+          .replace(/"/g, '%22').replace(/ /g, '+');
+        const collRaw = JSON.stringify(collAddresses).replace(/"/g, '%22');
+        const qs = `searchTerm=&sortBy=price-low-high&itemsPerPage=${pageSize}&page=${page}&metadataConditions=${metaRaw}&priceRange=[null,null]&fmvRange=[null,null]&listedStatus=listed&collectionAddresses=${collRaw}`;
+        const res = await fetch(`${WORKER_URL}/phygitals/listings?${qs}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (page === 0) console.log("[Phygitals] response shape:", JSON.stringify(data).slice(0, 800));
+        if (page === 0) console.log("[Phygitals] first item:", JSON.stringify((data.listings ?? data.data ?? data.items ?? [])[0]).slice(0, 1200));
         const rawItems = data.listings ?? data.data ?? data.items ?? [];
         const newCards = rawItems.map(normalizePhygitalsCard).filter(c => c.listing?.price != null);
         cards = cards.concat(newCards);
