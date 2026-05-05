@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.66</footer>
+<footer>v0.67</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -724,7 +724,7 @@
       <td class="year-col">${itemYear(c) || "—"}</td>
       <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
       <td class="num-col">${esc(cardNumDisplay)}</td>
-      <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+)$/)?.[1] || c.grade))}</td>
+      <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+(?:\.\d+)?)$/)?.[1] || c.grade))}</td>
       <td>${certDisplay}</td>
       <td class="pop-count" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
       <td class="price">${priceStr}</td>
@@ -1393,7 +1393,7 @@
     const createdAt = item.createdAt ?? item.listedAt ?? null;
     const isoDate   = createdAt ? new Date(createdAt).toISOString() : null;
     const address   = item.address ?? item.mintAddress ?? "";
-    const cardUrl   = item.slug ? `https://www.phygitals.com/nft/${item.slug}` : `https://www.phygitals.com/marketplace`;
+    const cardUrl   = `https://www.phygitals.com/card/${address}`;
     return {
       nftAddress:     `phygitals-${address}`,
       gradingID:      serial || address,
