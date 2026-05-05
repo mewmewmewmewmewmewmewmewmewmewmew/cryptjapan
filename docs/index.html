@@ -382,7 +382,7 @@
     <option value="priceDesc">Price: high to low</option>
   </select>
 
-  <select id="step" onchange="if(activePlatform().clientFilter){currentPage=1;applyLiveFilters()}">
+  <select id="step" onchange="if(activePlatform().clientFilter||activePlatform().paginate){currentPage=1;applyLiveFilters()}">
     <option value="24">24 per page</option>
     <option value="48" selected>48 per page</option>
     <option value="96">96 per page</option>
@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.69</footer>
+<footer>v0.70</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -489,15 +489,11 @@
   // Shared client-side filter for platforms that fetch all data and filter locally
   function clientFilterByDropdowns(filtered) {
     const gc = document.getElementById("gradingCompany")?.value;
-    const src = document.getElementById("source")?.value;
-    if (src !== "cc") console.log(`[filter] gc="${gc}" rows=${filtered.length} sample grader="${filtered[0]?.gradingCompany}" grade="${filtered[0]?.grade}" lang="${filtered[0]?.language}"`);
     if (gc) {
       const grader = gc === "Beckett" ? "BGS" : gc;
       filtered = filtered.filter(c => c.gradingCompany === grader);
-      if (src !== "cc") console.log(`[filter] after grader: ${filtered.length} rows`);
     }
     const selectedGrades = getSelectedGrades();
-    if (src !== "cc") console.log(`[filter] selectedGrades:`, selectedGrades);
     if (selectedGrades.length > 0) {
       filtered = filtered.filter(c => {
         const cgNum = parseFloat(c.grade ?? "");
@@ -505,7 +501,6 @@
           (g.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat).some(n => n === cgNum)
         );
       });
-      if (src !== "cc") console.log(`[filter] after grade: ${filtered.length} rows`);
     }
     const lang = document.getElementById("language")?.value;
     if (lang) {
@@ -524,7 +519,7 @@
     },
     phygitals: {
       fetch: () => fetchPhygitalsListings(),
-      clientFilter: clientFilterByDropdowns,
+      paginate: true,
     },
   };
 
@@ -546,7 +541,8 @@
     const next = currentPage + delta;
     if (next < 1 || next > totalPages) return;
     currentPage = next;
-    if (activePlatform().clientFilter) applyLiveFilters();
+    const pf = activePlatform();
+    if (pf.clientFilter || pf.paginate) applyLiveFilters();
     else fetchListings();
   }
 
@@ -862,6 +858,8 @@
     const pf = activePlatform();
     if (pf.clientFilter) {
       filtered = pf.clientFilter(filtered);
+    }
+    if (pf.clientFilter || pf.paginate) {
       const stepVal = document.getElementById("step")?.value;
       const step = stepVal === "all" || !stepVal ? 0 : parseInt(stepVal);
       if (step > 0) {
@@ -1426,13 +1424,30 @@
     document.getElementById("empty-msg").style.display = "none";
     allRows = [];
 
-    // Only invariant filters server-side; user filters (grader/grade/language) are applied
-    // client-side after we learn Phygitals' exact attribute value format from the response.
+    // Build server-side metadataConditions from dropdown selections
     const metaCond = {
       "set": [], "grader": [], "grade": [], "rarity": [], "type": [],
       "set release date": [], "grade type": ["Graded Cards"],
       "language": [], "category": ["Pokemon"],
     };
+
+    const gc = document.getElementById("gradingCompany")?.value;
+    const graderAbbrev = gc === "Beckett" ? "BGS" : gc;
+    if (graderAbbrev) metaCond["grader"] = [graderAbbrev];
+
+    for (const g of getSelectedGrades()) {
+      // Phygitals grade format: "{GRADER} {N}.0" for whole numbers, "{GRADER} {N.M}" for decimals
+      const n = (g.match(/\d+(?:\.\d+)?/) || [])[0];
+      if (n != null) {
+        const num = parseFloat(n);
+        const formatted = Number.isInteger(num) ? `${num}.0` : String(num);
+        metaCond["grade"].push(graderAbbrev ? `${graderAbbrev} ${formatted}` : formatted);
+      }
+    }
+    metaCond["grade"] = [...new Set(metaCond["grade"])];
+
+    const lang = document.getElementById("language")?.value;
+    if (lang) metaCond["language"] = [lang];
 
     const collAddresses = ["BSG6DyEihFFtfvxtL9mKYsvTwiZXB1rq5gARMTJC2xAM", "phygZDQZJZVHvJGYPGoKPYUtXw7mstSYtTtcuh8LJcC"];
     const pageSize = 48;
@@ -1442,18 +1457,17 @@
       await getSolPrice();
       await getJpyRate();
       while (page <= 100) {
-        // Build query string to exactly match the original Phygitals URL format:
-        // metadataConditions: encode only {, }, " and space; leave :, ,, [ ] literal
-        // priceRange/fmvRange: literal [null,null]; collectionAddresses: encode only quotes
+        // Build query string to match Phygitals URL format:
+        // metadataConditions: encode only {, }, " and space (as +); leave :, ,, [ ] literal
+        // priceRange/fmvRange: ["",""] with encoded quotes; collectionAddresses: encode only quotes
         const metaRaw = JSON.stringify(metaCond)
           .replace(/{/g, '%7B').replace(/}/g, '%7D')
           .replace(/"/g, '%22').replace(/ /g, '+');
         const collRaw = JSON.stringify(collAddresses).replace(/"/g, '%22');
-        const qs = `searchTerm=&sortBy=price-low-high&itemsPerPage=${pageSize}&page=${page}&metadataConditions=${metaRaw}&priceRange=[null,null]&fmvRange=[null,null]&listedStatus=listed&collectionAddresses=${collRaw}`;
+        const qs = `searchTerm=&sortBy=price-low-high&itemsPerPage=${pageSize}&page=${page}&metadataConditions=${metaRaw}&priceRange=[%22%22,%22%22]&fmvRange=[%22%22,%22%22]&listedStatus=listed&collectionAddresses=${collRaw}`;
         const res = await fetch(`${WORKER_URL}/phygitals/listings?${qs}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (page === 0) console.log("[Phygitals] first item:", JSON.stringify((data.listings ?? data.data ?? data.items ?? [])[0]));
         const rawItems = data.listings ?? data.data ?? data.items ?? [];
         const newCards = rawItems.map(normalizePhygitalsCard).filter(c => c.listing?.price != null);
         cards = cards.concat(newCards);
@@ -1650,12 +1664,13 @@
     );
     rows.push(`<label><input type="checkbox" value="" onchange="onGradeCheck(this)" />Any grade</label>`);
     menu.innerHTML = rows.join("");
-    // Client-filter platforms default to Any grade; CC defaults to first specific grade
-    const toCheck = activePlatform().clientFilter
+    // Client-filter/paginate platforms default to Any grade; CC defaults to first specific grade
+    const pf = activePlatform();
+    const toCheck = (pf.clientFilter || pf.paginate)
       ? menu.querySelector('input[value=""]')
       : menu.querySelector('input[type="checkbox"]');
     if (toCheck) { toCheck.checked = true; updateGradeLabel(); }
-    if (activePlatform().clientFilter) applyLiveFilters();
+    if (pf.clientFilter) applyLiveFilters();
   }
 
   function onGradeCheck(cb) {
