@@ -381,7 +381,7 @@
     <option value="priceDesc">Price: high to low</option>
   </select>
 
-  <select id="step">
+  <select id="step" onchange="if(activePlatform().clientFilter){currentPage=1;applyLiveFilters()}">
     <option value="24">24 per page</option>
     <option value="48" selected>48 per page</option>
     <option value="96">96 per page</option>
@@ -434,7 +434,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.61</footer>
+<footer>v0.62</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -525,7 +525,8 @@
     const next = currentPage + delta;
     if (next < 1 || next > totalPages) return;
     currentPage = next;
-    fetchListings();
+    if (activePlatform().clientFilter) applyLiveFilters();
+    else fetchListings();
   }
 
   function updatePagination(total) {
@@ -838,7 +839,18 @@
     }
 
     const pf = activePlatform();
-    if (pf.clientFilter) filtered = pf.clientFilter(filtered);
+    if (pf.clientFilter) {
+      filtered = pf.clientFilter(filtered);
+      const stepVal = document.getElementById("step")?.value;
+      const step = stepVal === "all" || !stepVal ? 0 : parseInt(stepVal);
+      if (step > 0) {
+        const pages = Math.max(1, Math.ceil(filtered.length / step));
+        updatePagination(pages);
+        filtered = filtered.slice((currentPage - 1) * step, currentPage * step);
+      } else {
+        updatePagination(1);
+      }
+    }
 
     renderTable(filtered);
     repopulateAltCells(allRows);
@@ -1330,10 +1342,10 @@
         page++;
       }
       allRows = cards;
+      currentPage = 1;
       applyLiveFilters();
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
       status.textContent = `${cards.length} Beezie listings loaded`;
-      updatePagination(1);
       window.scrollTo(0, 0);
       document.getElementById("refresh-list-btn").disabled = false;
       document.getElementById("refresh-alt-btn").disabled = false;
