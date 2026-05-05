@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.71</footer>
+<footer>v0.72</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -478,6 +478,8 @@
   let previousCardPrices = new Map(); // nftAddress → price, for detecting new/repriced listings
   let currentPage = 1;
   let totalPages = 1;
+  const platformFilterCache = {};
+  let _activeSrc = document.getElementById("source")?.value ?? "cc";
 
   // ── Platform registry ────────────────────────────────────────────────
   // To add a new platform: add an entry to PLATFORMS with a fetch() method.
@@ -529,12 +531,48 @@
   }
   // ─────────────────────────────────────────────────────────────────────
 
-  function onSourceChange() {
-    if (activePlatform().clientFilter) {
-      document.getElementById("gradingCompany").value = "";
-      updateGradeOptions();
-      document.getElementById("language").value = "";
+  function captureFilterState() {
+    return {
+      gradingCompany: document.getElementById("gradingCompany")?.value ?? "",
+      grades: getSelectedGrades(),
+      language: document.getElementById("language")?.value ?? "",
+      step: document.getElementById("step")?.value ?? "48",
+      orderBy: document.getElementById("orderBy")?.value ?? "listedDateDesc",
+    };
+  }
+
+  const PLATFORM_FILTER_DEFAULTS = {
+    beezie:    { gradingCompany: "",    grades: [],             language: "Japanese", step: "48", orderBy: "listedDateDesc" },
+    phygitals: { gradingCompany: "PSA", grades: ["GEM-MT 10"], language: "Japanese", step: "48", orderBy: "listedDateDesc" },
+  };
+
+  function applyFilterState(src, state) {
+    const s = state ?? PLATFORM_FILTER_DEFAULTS[src] ?? null;
+    if (s) {
+      document.getElementById("gradingCompany").value = s.gradingCompany;
+      document.getElementById("language").value = s.language;
+      document.getElementById("step").value = s.step;
+      document.getElementById("orderBy").value = s.orderBy;
     }
+    updateGradeOptions(); // rebuild menu for company + set platform default grade
+    if (s?.grades?.length > 0) {
+      const menu = document.getElementById("grade-menu");
+      menu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.checked = s.grades.includes(cb.value);
+      });
+      if (!menu.querySelector('input[type="checkbox"]:checked')) {
+        const anyBox = menu.querySelector('input[value=""]');
+        if (anyBox) anyBox.checked = true;
+      }
+      updateGradeLabel();
+      if (activePlatform().clientFilter) applyLiveFilters();
+    }
+  }
+
+  function onSourceChange() {
+    platformFilterCache[_activeSrc] = captureFilterState();
+    _activeSrc = document.getElementById("source")?.value ?? "cc";
+    applyFilterState(_activeSrc, platformFilterCache[_activeSrc] ?? null);
   }
 
   function goPage(delta) {
