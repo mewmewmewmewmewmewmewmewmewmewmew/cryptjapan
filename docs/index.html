@@ -339,7 +339,7 @@
 </header>
 
 <div class="filters">
-  <select id="source">
+  <select id="source" onchange="onSourceChange()">
     <option value="cc">Collector Crypt</option>
     <option value="beezie">Beezie</option>
     <option value="phygitals">Phygitals</option>
@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.65</footer>
+<footer>v0.66</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -528,6 +528,14 @@
     return activePlatform().fetch(resetPage, forceRefresh);
   }
   // ─────────────────────────────────────────────────────────────────────
+
+  function onSourceChange() {
+    if (activePlatform().clientFilter) {
+      document.getElementById("gradingCompany").value = "";
+      updateGradeOptions();
+      document.getElementById("language").value = "";
+    }
+  }
 
   function goPage(delta) {
     const next = currentPage + delta;
@@ -1369,20 +1377,17 @@
 
   // ── Phygitals marketplace integration ───────────────────────────────
   function normalizePhygitalsCard(item) {
-    const meta = item.metadata ?? [];  // [{key, val}, ...]
-    const attr = name => {
-      const lc = name.toLowerCase();
-      return meta.find(m => (m.key ?? m.trait_type ?? "").toLowerCase() === lc)?.val
-          ?? meta.find(m => (m.key ?? m.trait_type ?? "").toLowerCase() === lc)?.value
-          ?? null;
-    };
-    const grader   = attr("grader") ?? attr("grading company") ?? "";
-    const grade    = String(attr("grade") ?? "");
-    const language = attr("language") ?? "";
-    const set      = attr("set") ?? attr("set name") ?? "";
-    const yearRaw  = attr("year") ?? attr("set release date") ?? "";
-    const cardName = attr("pokemon name") ?? attr("pokemon") ?? attr("card name") ?? "";
-    const serial   = attr("serial") ?? attr("cert") ?? attr("cert number") ?? attr("certification number") ?? "";
+    const meta = item.metadata ?? [];  // [{key, value}, ...]
+    const attr = name => meta.find(m => (m.key ?? "").toLowerCase() === name.toLowerCase())?.value ?? null;
+    const grader   = attr("Grader") ?? "";
+    const gradeRaw = attr("Grade") ?? "";
+    // "CGC 9.0" → "9.0", "PSA 10" → "10" — strip leading grader prefix
+    const grade    = gradeRaw.replace(/^[A-Za-z]+\s*/, "").trim();
+    const language = attr("Language") ?? "";
+    const set      = attr("Set") ?? attr("Set Name") ?? "";
+    const yearRaw  = attr("Year") ?? attr("Set Release Date") ?? "";
+    const title    = attr("Title") ?? item.name ?? "";
+    const serial   = attr("Cert Number") ?? attr("Cert") ?? attr("Serial") ?? "";
     // price is micro-USDC (6 decimal places)
     const priceUsdc = item.price != null ? parseFloat(item.price) / 1_000_000 : null;
     const createdAt = item.createdAt ?? item.listedAt ?? null;
@@ -1396,14 +1401,14 @@
       grade,
       year:           parseInt(yearRaw) || null,
       language,
-      cardName,
-      name:           cardName,
+      cardName:       "",
+      name:           "",
       set,
-      itemName:       item.name ?? "",
+      itemName:       title,
       listing:        { price: priceUsdc, currency: "USDC", createdAt: isoDate, updatedAt: isoDate },
       _source:        "phygitals",
       _cardUrl:       cardUrl,
-      _altCardName:   cardName,
+      _altCardName:   "",
     };
   }
 
@@ -1448,7 +1453,7 @@
         const newCards = rawItems.map(normalizePhygitalsCard).filter(c => c.listing?.price != null);
         cards = cards.concat(newCards);
         status.textContent = `${cards.length} Phygitals listings…`;
-        const total = data.total ?? data.totalCount ?? data.totalItems ?? 0;
+        const total = data.amount ?? data.total ?? data.totalCount ?? data.totalItems ?? 0;
         const totalPages = data.totalPages ?? data.total_pages ?? Math.ceil(total / pageSize);
         if (rawItems.length < pageSize || page >= totalPages - 1) break;
         page++;
