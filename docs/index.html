@@ -368,7 +368,7 @@
     <div class="grade-menu" id="grade-menu" style="display:none"></div>
   </div>
 
-  <select id="language" onchange="if(document.getElementById('source')?.value==='beezie')applyLiveFilters()">
+  <select id="language" onchange="if(activePlatform().clientFilter)applyLiveFilters()">
     <option value="Japanese">Japanese</option>
     <option value="English">English</option>
     <option value="">Any language</option>
@@ -434,7 +434,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.60</footer>
+<footer>v0.61</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -478,6 +478,49 @@
   let currentPage = 1;
   let totalPages = 1;
 
+  // ── Platform registry ────────────────────────────────────────────────
+  // To add a new platform: add an entry to PLATFORMS with a fetch() method.
+  // If the platform needs client-side filtering (instead of server-side), add clientFilter(filtered) → filtered.
+  function activePlatform() {
+    return PLATFORMS[document.getElementById("source")?.value] ?? PLATFORMS.cc;
+  }
+
+  const PLATFORMS = {
+    cc: {
+      fetch: (resetPage, forceRefresh) => fetchCcListings(resetPage, forceRefresh),
+    },
+    beezie: {
+      fetch: () => fetchBeezieListings(),
+      clientFilter(filtered) {
+        const gc = document.getElementById("gradingCompany")?.value;
+        if (gc) {
+          const beezieGrader = gc === "Beckett" ? "BGS" : gc;
+          filtered = filtered.filter(c => c.gradingCompany === beezieGrader);
+        }
+        const selectedGrades = getSelectedGrades();
+        if (selectedGrades.length > 0) {
+          filtered = filtered.filter(c => {
+            const cgNum = parseFloat(c.grade ?? "");
+            return selectedGrades.some(g =>
+              (g.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat).some(n => n === cgNum)
+            );
+          });
+        }
+        const lang = document.getElementById("language")?.value;
+        if (lang) {
+          filtered = filtered.filter(c => (c.language || "").toLowerCase() === lang.toLowerCase());
+        }
+        return filtered;
+      },
+    },
+  };
+
+  async function fetchListings(resetPage = false, forceRefresh = false) {
+    cacheLoadAborted = true;
+    return activePlatform().fetch(resetPage, forceRefresh);
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
   function goPage(delta) {
     const next = currentPage + delta;
     if (next < 1 || next > totalPages) return;
@@ -494,11 +537,7 @@
     document.getElementById("next-btn").disabled = currentPage >= totalPages;
   }
 
-  async function fetchListings(resetPage = false, forceRefresh = false) {
-    cacheLoadAborted = true; // prevent any in-flight loadCardCache from overwriting
-    if (document.getElementById("source")?.value === "beezie") {
-      return fetchBeezieListings();
-    }
+  async function fetchCcListings(resetPage = false, forceRefresh = false) {
     if (resetPage) currentPage = 1;
     const btn = document.getElementById("fetch-btn");
     const status = document.getElementById("status");
@@ -798,26 +837,8 @@
       });
     }
 
-    if (document.getElementById("source")?.value === "beezie") {
-      const gc = document.getElementById("gradingCompany")?.value;
-      if (gc) {
-        const beezieGrader = gc === "Beckett" ? "BGS" : gc;
-        filtered = filtered.filter(c => c.gradingCompany === beezieGrader);
-      }
-      const selectedGrades = getSelectedGrades();
-      if (selectedGrades.length > 0) {
-        filtered = filtered.filter(c => {
-          const cgNum = parseFloat(c.grade ?? "");
-          return selectedGrades.some(g =>
-            (g.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat).some(n => n === cgNum)
-          );
-        });
-      }
-      const lang = document.getElementById("language")?.value;
-      if (lang) {
-        filtered = filtered.filter(c => (c.language || "").toLowerCase() === lang.toLowerCase());
-      }
-    }
+    const pf = activePlatform();
+    if (pf.clientFilter) filtered = pf.clientFilter(filtered);
 
     renderTable(filtered);
     repopulateAltCells(allRows);
@@ -1431,9 +1452,8 @@
   }
 
   async function refreshCardList() {
-    if (document.getElementById("source")?.value === "beezie") {
-      return fetchBeezieListings();
-    }
+    const pf = activePlatform();
+    if (pf !== PLATFORMS.cc) return pf.fetch();
     previousCardPrices = new Map(allRows.filter(c => c.nftAddress).map(c => [c.nftAddress, c.listing?.updatedAt ?? c.listing?.createdAt ?? ""]));
     await fetchListings(true, true);
   }
@@ -1498,7 +1518,7 @@
     menu.innerHTML = rows.join("");
     const first = menu.querySelector('input[type="checkbox"]');
     if (first) { first.checked = true; updateGradeLabel(); }
-    if (document.getElementById("source")?.value === "beezie") applyLiveFilters();
+    if (activePlatform().clientFilter) applyLiveFilters();
   }
 
   function onGradeCheck(cb) {
@@ -1511,7 +1531,7 @@
     }
     if (!allBoxes.some(c => c.checked) && anyBox) anyBox.checked = true;
     updateGradeLabel();
-    if (document.getElementById("source")?.value === "beezie") applyLiveFilters();
+    if (activePlatform().clientFilter) applyLiveFilters();
   }
 
   function getSelectedGrades() {
