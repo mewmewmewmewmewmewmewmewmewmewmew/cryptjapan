@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.64</footer>
+<footer>v0.65</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1369,27 +1369,29 @@
 
   // ── Phygitals marketplace integration ───────────────────────────────
   function normalizePhygitalsCard(item) {
-    const attrs = item.metadata?.attributes ?? item.attributes ?? [];
+    const meta = item.metadata ?? [];  // [{key, val}, ...]
     const attr = name => {
       const lc = name.toLowerCase();
-      return attrs.find(a => (a.trait_type ?? a.key ?? "").toLowerCase() === lc)?.value ?? null;
+      return meta.find(m => (m.key ?? m.trait_type ?? "").toLowerCase() === lc)?.val
+          ?? meta.find(m => (m.key ?? m.trait_type ?? "").toLowerCase() === lc)?.value
+          ?? null;
     };
-    const grader   = attr("grader") ?? "";
-    const grade    = String(attr("grade") ?? item.grade ?? "");
+    const grader   = attr("grader") ?? attr("grading company") ?? "";
+    const grade    = String(attr("grade") ?? "");
     const language = attr("language") ?? "";
-    const set      = attr("set") ?? "";
+    const set      = attr("set") ?? attr("set name") ?? "";
     const yearRaw  = attr("year") ?? attr("set release date") ?? "";
-    const cardName = attr("pokemon name") ?? attr("pokemon") ?? attr("name") ?? "";
-    const serial   = attr("serial") ?? attr("cert") ?? attr("certification number") ?? item.certNumber ?? "";
-    const priceRaw = item.price ?? item.listing?.price ?? item.salePrice ?? null;
-    const currency = item.currency ?? item.listing?.currency ?? "USDC";
-    const createdAt = item.listedAt ?? item.createdAt ?? item.listing?.createdAt ?? null;
-    const isoDate  = createdAt ? new Date(createdAt).toISOString() : null;
-    const mint     = item.mintAddress ?? item.mint ?? item.id ?? "";
-    const cardUrl  = `https://www.phygitals.com/marketplace/${mint}`;
+    const cardName = attr("pokemon name") ?? attr("pokemon") ?? attr("card name") ?? "";
+    const serial   = attr("serial") ?? attr("cert") ?? attr("cert number") ?? attr("certification number") ?? "";
+    // price is micro-USDC (6 decimal places)
+    const priceUsdc = item.price != null ? parseFloat(item.price) / 1_000_000 : null;
+    const createdAt = item.createdAt ?? item.listedAt ?? null;
+    const isoDate   = createdAt ? new Date(createdAt).toISOString() : null;
+    const address   = item.address ?? item.mintAddress ?? "";
+    const cardUrl   = item.slug ? `https://www.phygitals.com/nft/${item.slug}` : `https://www.phygitals.com/marketplace`;
     return {
-      nftAddress:     `phygitals-${mint}`,
-      gradingID:      serial || mint,
+      nftAddress:     `phygitals-${address}`,
+      gradingID:      serial || address,
       gradingCompany: grader,
       grade,
       year:           parseInt(yearRaw) || null,
@@ -1397,8 +1399,8 @@
       cardName,
       name:           cardName,
       set,
-      itemName:       item.metadata?.name ?? item.name ?? "",
-      listing:        { price: priceRaw != null ? parseFloat(priceRaw) : null, currency, createdAt: isoDate, updatedAt: isoDate },
+      itemName:       item.name ?? "",
+      listing:        { price: priceUsdc, currency: "USDC", createdAt: isoDate, updatedAt: isoDate },
       _source:        "phygitals",
       _cardUrl:       cardUrl,
       _altCardName:   cardName,
@@ -1441,7 +1443,7 @@
         const res = await fetch(`${WORKER_URL}/phygitals/listings?${qs}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
-        if (page === 0) console.log("[Phygitals] first item:", JSON.stringify((data.listings ?? data.data ?? data.items ?? [])[0]).slice(0, 1200));
+        if (page === 0) console.log("[Phygitals] first item:", JSON.stringify((data.listings ?? data.data ?? data.items ?? [])[0]));
         const rawItems = data.listings ?? data.data ?? data.items ?? [];
         const newCards = rawItems.map(normalizePhygitalsCard).filter(c => c.listing?.price != null);
         cards = cards.concat(newCards);
