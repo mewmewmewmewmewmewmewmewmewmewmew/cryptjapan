@@ -393,6 +393,10 @@ async function altPriceByCert(url, env) {
     const cardPops = popsData.data?.asset?.cardPops ?? [];
     const popEntry = cardPops.find(p => p.gradingCompany === certObj.gradingCompany && p.gradeNumber === certObj.gradeNumber);
     const pop = popEntry?.count ?? null;
+    const gradeFloor = `${Math.floor(parseFloat(certObj.gradeNumber))}.0`;
+    const psaEntry = cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === certObj.gradeNumber)
+                  ?? cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === gradeFloor);
+    const psaPop = psaEntry?.count ?? null;
 
     // subject = card name; attributes.cardNumber e.g. "069", "RC32", "120/SV-P"
     const cardName = certObj.asset.subject ?? null;
@@ -413,6 +417,7 @@ async function altPriceByCert(url, env) {
     return new Response(JSON.stringify({
       altPrice,
       pop,
+      psaPop,
       assetId: certObj.asset.id,
       certNumber: certObj.certNumber,
       gradeNumber: certObj.gradeNumber,
