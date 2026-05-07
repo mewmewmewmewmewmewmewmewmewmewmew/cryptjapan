@@ -413,7 +413,7 @@
         <th onclick="sortBy('cardNumber')">#</th>
         <th onclick="sortBy('grade')">Grade</th>
         <th onclick="sortBy('gradingID')">PSA Cert</th>
-        <th onclick="sortBy('pop')">Pop</th>
+        <th onclick="sortBy('pop')">PSA Pop</th>
         <th onclick="sortBy('price')">Price</th>
         <th class="th-alt" onclick="sortBy('altPrice')">Alt $</th>
         <th class="th-alt" onclick="sortBy('altDelta')">Alt Δ</th>
@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.72</footer>
+<footer>v0.73</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -928,7 +928,7 @@
         if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
       }
       if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
-      if (result?.pop != null) c._altPop = result.pop;
+      if (result?.psaPop != null || result?.pop != null) c._altPop = result.psaPop ?? result.pop;
       if (result?.price != null) {
         const altPrice = Number(result.price);
         c._altPrice = altPrice;
@@ -1059,9 +1059,13 @@
       ]);
       const cardPops = popsData.data?.asset?.cardPops ?? [];
       const popEntry = cardPops.find(p => p.gradingCompany === cert.gradingCompany && p.gradeNumber === cert.gradeNumber);
+      const gradeFloor = `${Math.floor(parseFloat(cert.gradeNumber))}.0`;
+      const psaEntry = cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === cert.gradeNumber)
+                    ?? cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === gradeFloor);
       const result = {
         price: assetData.data?.asset?.predictedPrice ?? null,
         pop: popEntry?.count ?? null,
+        psaPop: psaEntry?.count ?? null,
         assetId: cert.asset.id,
         cardName: cert.asset.subject ?? null,
         cardNumber: normalizeCardNum(cert.asset.attributes?.cardNumber ?? null),
@@ -1088,7 +1092,8 @@
     const deltaCell = document.querySelector(`.alt-delta[data-cert="${certNumber}"]`);
     const pctCell = document.querySelector(`.alt-pct[data-cert="${certNumber}"]`);
     const popCell = document.querySelector(`.pop-count[data-cert="${certNumber}"]`);
-    if (popCell) popCell.textContent = result?.pop != null ? result.pop : "—";
+    const displayPop = result?.psaPop ?? result?.pop;
+  if (popCell) popCell.textContent = displayPop != null ? displayPop : "—";
     if (!priceCell) return;
     if (!result?.price) {
       priceCell.textContent = "—";
@@ -1134,7 +1139,7 @@
               if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
             }
             if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
-            if (result?.pop != null) c._altPop = result.pop;
+            if (result?.psaPop != null || result?.pop != null) c._altPop = result.psaPop ?? result.pop;
             if (result?.price != null) {
               const altPrice = Number(result.price);
               c._altPrice = altPrice;
