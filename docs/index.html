@@ -1042,6 +1042,7 @@
     });
     const data = await res.json();
     if (data.errors) console.warn(`[Alt/${operation}]`, JSON.stringify(data.errors));
+    if (operation === "AssetDetails") console.log(`[Alt/AssetDetails]`, JSON.stringify(data));
     return data;
   }
 
