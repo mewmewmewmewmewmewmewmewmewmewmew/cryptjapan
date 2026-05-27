@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.73</footer>
+<footer>v0.74</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1003,10 +1003,10 @@
     }
   }`;
 
-  const ASSET_QUERY = `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
+  const ASSET_QUERY = `query AssetDetails($id: ID!) {
     asset(id: $id) {
       id
-      predictedPrice(tsFilter: $tsFilter)
+      altValueInfo { currentAltValue }
       __typename
     }
   }`;
@@ -1047,15 +1047,16 @@
   async function fetchAltPrice(certNumber) {
     if (altCache.has(certNumber)) {
       const cached = altCache.get(certNumber);
-      if (!cached || 'cardName' in cached) return cached;
-      // old cache entry without cardName — fall through and re-fetch
+      if (!cached) return cached;
+      if ('cardName' in cached && cached.price !== null) return cached;
+      // re-fetch if price is null (stale cache or first fetch after Alt API change)
     }
     try {
       const certData = await altPost("Cert", { certNumber });
       const cert = certData.data?.cert;
       if (!cert?.asset?.id) return null;
       const [assetData, popsData] = await Promise.all([
-        altPost("AssetDetails", { id: cert.asset.id, tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany } }),
+        altPost("AssetDetails", { id: cert.asset.id }),
         altPost("AssetCardPops", { id: cert.asset.id }),
       ]);
       const cardPops = popsData.data?.asset?.cardPops ?? [];
@@ -1064,7 +1065,7 @@
       const psaEntry = cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === cert.gradeNumber)
                     ?? cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === gradeFloor);
       const result = {
-        price: assetData.data?.asset?.predictedPrice ?? null,
+        price: assetData.data?.asset?.altValueInfo?.currentAltValue ?? null,
         pop: popEntry?.count ?? null,
         psaPop: psaEntry?.count ?? null,
         assetId: cert.asset.id,

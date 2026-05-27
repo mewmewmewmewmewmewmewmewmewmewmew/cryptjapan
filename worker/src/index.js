@@ -381,15 +381,14 @@ async function altPriceByCert(url, env) {
     }
 
     const [assetData, popsData] = await Promise.all([
-      altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id predictedPrice(tsFilter: $tsFilter) } }`, {
+      altGql("AssetDetails", `query AssetDetails($id: ID!) { asset(id: $id) { id altValueInfo { currentAltValue } } }`, {
         id: certObj.asset.id,
-        tsFilter: { gradeNumber: certObj.gradeNumber, gradingCompany: certObj.gradingCompany },
       }),
       altGql("AssetCardPops", `query AssetCardPops($id: ID!) { asset(id: $id) { id cardPops { gradingCompany gradeNumber count } } }`, {
         id: certObj.asset.id,
       }),
     ]);
-    const altPrice = assetData.data?.asset?.predictedPrice ?? null;
+    const altPrice = assetData.data?.asset?.altValueInfo?.currentAltValue ?? null;
     const cardPops = popsData.data?.asset?.cardPops ?? [];
     const popEntry = cardPops.find(p => p.gradingCompany === certObj.gradingCompany && p.gradeNumber === certObj.gradeNumber);
     const pop = popEntry?.count ?? null;
