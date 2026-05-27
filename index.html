@@ -1,0 +1,1776 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CC &lt;&gt; JP</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { overflow-x: auto; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #0f0f0f;
+      color: #e8e8e8;
+      min-height: 100vh;
+      min-width: 1100px;
+      display: flex;
+      flex-direction: column;
+    }
+
+    header {
+      padding: 20px 24px;
+      border-bottom: 1px solid #222;
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 {
+      font-size: 18px;
+      font-weight: 600;
+      letter-spacing: -0.3px;
+    }
+
+    header span {
+      font-size: 13px;
+      color: #555;
+    }
+
+    .filters {
+      padding: 16px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      border-bottom: 1px solid #1a1a1a;
+      background: #111;
+    }
+
+    .filters-live {
+      padding: 10px 24px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 2px solid #222;
+      background: #0a0a0a;
+    }
+
+    .filters-live input {
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      color: #e8e8e8;
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      outline: none;
+    }
+
+    .filters-live input:hover { border-color: #444; }
+    .filters-live input:focus { border-color: #555; }
+    #live-search { width: 220px; }
+    #price-min, #price-max { width: 88px; -moz-appearance: textfield; }
+    #price-min::-webkit-outer-spin-button, #price-min::-webkit-inner-spin-button,
+    #price-max::-webkit-outer-spin-button, #price-max::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .filter-label { font-size: 12px; color: #555; }
+
+    select, button {
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      color: #e8e8e8;
+      padding: 7px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    select:hover, button:hover { border-color: #444; }
+
+    button#fetch-btn {
+      background: #2563eb;
+      border-color: #2563eb;
+      color: #fff;
+      font-weight: 500;
+      padding: 7px 18px;
+    }
+
+    button#fetch-btn:hover { background: #1d4ed8; }
+    button#fetch-btn:disabled { background: #1a3a7a; border-color: #1a3a7a; cursor: not-allowed; }
+
+    button#refresh-list-btn { margin-left: auto; }
+    button#refresh-list-btn:hover:not(:disabled),
+    button#refresh-alt-btn:hover:not(:disabled),
+    button#refresh-snkr-btn:hover:not(:disabled) { border-color: #555; }
+    button#refresh-list-btn:disabled,
+    button#refresh-alt-btn:disabled,
+    button#refresh-snkr-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    .status {
+      padding: 10px 24px;
+      font-size: 13px;
+      color: #666;
+      min-height: 36px;
+    }
+
+    .table-wrap {
+      flex: 1;
+      padding: 0 24px 80px;
+    }
+
+    table {
+      width: 100%;
+      min-width: 1100px;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    thead th {
+      text-align: left;
+      padding: 10px 12px;
+      border-bottom: 1px solid #222;
+      color: #777;
+      font-weight: 500;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+    }
+
+    thead th:hover { color: #aaa; }
+    thead th.sort-asc::after { content: " ↑"; color: #2563eb; }
+    thead th.sort-desc::after { content: " ↓"; color: #2563eb; }
+
+    tbody tr { border-bottom: 1px solid #181818; transition: background 0.1s; }
+    tbody tr:nth-child(even) { background: #141414; }
+    tbody tr:hover { background: #1c1c1c; }
+    tbody tr.selected { background: #1c2e44; }
+    tbody tr.selected:hover { background: #1f3349; }
+
+    td {
+      padding: 10px 12px;
+      vertical-align: middle;
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    td.price {
+      font-variant-numeric: tabular-nums;
+      color: #4ade80;
+      white-space: nowrap;
+    }
+
+    td.currency { color: #555; font-size: 11px; }
+
+    td a { color: #60a5fa; text-decoration: none; }
+    td a:hover { text-decoration: underline; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 500;
+      background: #1e293b;
+      color: #94a3b8;
+    }
+
+    .badge.me { background: #1c1a2e; color: #a78bfa; }
+
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 14px 24px 72px;
+      font-size: 13px;
+      color: #666;
+    }
+
+    .pagination button {
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      color: #e8e8e8;
+      padding: 6px 14px;
+      border-radius: 6px;
+      font-size: 13px;
+      cursor: pointer;
+    }
+
+    .pagination button:hover:not(:disabled) { border-color: #444; }
+    .pagination button:disabled { opacity: 0.3; cursor: not-allowed; }
+
+    footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      padding: 8px 16px;
+      font-size: 11px;
+      color: #333;
+    }
+
+    .empty { text-align: center; padding: 60px; color: #444; }
+    .alt-loading { color: #333; font-size: 11px; }
+    .alt-link { color: #a78bfa; text-decoration: none; }
+    .alt-link:hover { text-decoration: underline; }
+    .card-link { color: #e8e8e8; text-decoration: none; }
+    .card-link:hover { text-decoration: underline; }
+    .snkrdunk-price a { color: #38bdf8; text-decoration: none; }
+    .snkrdunk-price a:hover { text-decoration: underline; }
+    .price-sub { color: #fff; }
+    .delta-pos { color: #4ade80; font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .delta-neg { color: #f87171; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+    td.hide-cell { padding: 0; }
+    .hide-toggle { display: flex; align-items: center; justify-content: center; width: 100%; height: 100%; min-width: 36px; min-height: 28px; background: #1e293b; border: 1px solid #334155; border-radius: 4px; color: #94a3b8; cursor: pointer; font-size: 14px; line-height: 1; }
+    .hide-toggle:hover { background: #334155; color: #e2e8f0; }
+    tr.row-hidden td:not(.hide-cell) { filter: grayscale(1); opacity: 0.3; }
+    tr.row-hidden .hide-toggle { background: #3b1a1a; border-color: #7f1d1d; color: #f87171; }
+    tr.row-hidden .hide-toggle:hover { background: #5c2020; }
+
+    .toggle-btn.active { background: #1e3a5f; border-color: #2563eb; color: #60a5fa; }
+
+    td.date-col { font-size: 11px; color: #555; padding: 10px 6px; white-space: nowrap; }
+    th.th-listed { font-size: 11px; color: #444; padding: 8px 6px; }
+    td.year-col { font-size: 12px; color: #777; white-space: nowrap; }
+    td.num-col { font-size: 12px; color: #888; font-family: monospace; white-space: nowrap; }
+
+    table.hide-alt .alt-price,
+    table.hide-alt .alt-delta,
+    table.hide-alt .alt-pct,
+    table.hide-alt .th-alt { display: none; }
+
+    table.hide-snkrdunk .snkrdunk-price,
+    table.hide-snkrdunk .snkrdunk-delta,
+    table.hide-snkrdunk .snkr-pct,
+    table.hide-snkrdunk .th-snkrdunk { display: none; }
+
+    .grade-select { position: relative; display: inline-block; }
+    .grade-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      border-radius: 6px;
+      padding: 4px 0;
+      z-index: 100;
+      min-width: 180px;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+    }
+    .grade-menu label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      color: #e8e8e8;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .grade-menu label:hover { background: #252525; }
+    .grade-menu input[type="checkbox"] { accent-color: #2563eb; cursor: pointer; }
+
+    #lock-screen {
+      position: fixed; inset: 0;
+      background: #0f0f0f;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+
+    #lock-screen form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 280px;
+    }
+
+    #lock-screen h2 { font-size: 16px; font-weight: 600; text-align: center; }
+
+    #lock-screen input {
+      background: #1c1c1c;
+      border: 1px solid #2e2e2e;
+      color: #e8e8e8;
+      padding: 10px 14px;
+      border-radius: 6px;
+      font-size: 14px;
+      outline: none;
+      width: 100%;
+    }
+
+    #lock-screen input:focus { border-color: #444; }
+
+    #lock-screen button {
+      background: #2563eb;
+      border: none;
+      color: #fff;
+      padding: 10px;
+      border-radius: 6px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+
+    #lock-screen button:hover { background: #1d4ed8; }
+    #lock-error { color: #f87171; font-size: 13px; text-align: center; min-height: 18px; }
+  </style>
+</head>
+<body>
+
+<div id="lock-screen">
+  <form onsubmit="unlock(event)">
+    <h2>CC &lt;&gt; JP</h2>
+    <input type="password" id="pw-input" placeholder="Password" autofocus />
+    <div id="lock-error"></div>
+    <button type="submit">Enter</button>
+  </form>
+</div>
+
+<header>
+  <h1>CC &lt;&gt; JP</h1>
+  <span>CollectorCrypt Marketplace</span>
+  <button id="refresh-list-btn" onclick="refreshCardList()" disabled>↻ Refresh List</button>
+  <button id="refresh-alt-btn" onclick="refreshAlt()" disabled>↻ Refresh ALT</button>
+  <button id="refresh-snkr-btn" onclick="refreshSnkr()" disabled>↻ Refresh SD</button>
+</header>
+
+<div class="filters">
+  <select id="source" onchange="onSourceChange()">
+    <option value="cc">Collector Crypt</option>
+    <option value="beezie">Beezie</option>
+    <option value="phygitals">Phygitals</option>
+  </select>
+
+  <select id="categories">
+    <option value="Pokemon,One Piece">Pokemon + One Piece</option>
+    <option value="Pokemon">Pokemon</option>
+    <option value="One Piece">One Piece</option>
+    <option value="Yu-Gi-Oh!">Yu-Gi-Oh!</option>
+    <option value="Magic The Gathering">Magic The Gathering</option>
+  </select>
+
+  <select id="gradingCompany" onchange="updateGradeOptions()">
+    <option value="PSA">PSA</option>
+    <option value="Beckett">BGS</option>
+    <option value="CGC">CGC</option>
+    <option value="TAG">TAG</option>
+    <option value="AGS">AGS</option>
+    <option value="">Any grader</option>
+  </select>
+
+  <div class="grade-select" id="grade-wrap">
+    <button type="button" id="grade-btn" onclick="toggleGradeMenu()">
+      <span id="grade-label">GEM-MT 10</span> <span style="font-size:10px;opacity:.5">▾</span>
+    </button>
+    <div class="grade-menu" id="grade-menu" style="display:none"></div>
+  </div>
+
+  <select id="language" onchange="if(activePlatform().clientFilter)applyLiveFilters()">
+    <option value="Japanese">Japanese</option>
+    <option value="English">English</option>
+    <option value="">Any language</option>
+  </select>
+
+  <select id="orderBy">
+    <option value="listedDateDesc">Newest first</option>
+    <option value="listedDateAsc">Oldest first</option>
+    <option value="priceAsc">Price: low to high</option>
+    <option value="priceDesc">Price: high to low</option>
+  </select>
+
+  <select id="step" onchange="if(activePlatform().clientFilter||activePlatform().paginate){currentPage=1;applyLiveFilters()}">
+    <option value="24">24 per page</option>
+    <option value="48" selected>48 per page</option>
+    <option value="96">96 per page</option>
+    <option value="all">Show all</option>
+  </select>
+
+  <button id="fetch-btn" onclick="fetchListings(true)">Fetch listings</button>
+</div>
+
+<div class="filters-live">
+  <input type="text" id="live-search" placeholder="Search card, set or cert…" oninput="applyLiveFilters()" />
+  <span class="filter-label">Price $</span>
+  <input type="number" id="price-min" placeholder="Min" min="0" oninput="applyLiveFilters()" />
+  <input type="number" id="price-max" placeholder="Max" min="0" oninput="applyLiveFilters()" />
+  <button id="toggle-alt" class="toggle-btn active" onclick="toggleSource('alt')">Alt</button>
+  <button id="toggle-snkrdunk" class="toggle-btn active" onclick="toggleSource('snkrdunk')">SNKRDUNK</button>
+</div>
+
+<div class="status" id="status">Ready.</div>
+
+<div class="table-wrap">
+  <table id="results-table">
+    <thead>
+      <tr>
+        <th class="th-listed" onclick="sortBy('listedAt')">Listed</th>
+        <th onclick="sortBy('cardYear')">Year</th>
+        <th onclick="sortBy('cardName')">Card</th>
+        <th onclick="sortBy('cardNumber')">#</th>
+        <th onclick="sortBy('grade')">Grade</th>
+        <th onclick="sortBy('gradingID')">PSA Cert</th>
+        <th onclick="sortBy('pop')">PSA Pop</th>
+        <th onclick="sortBy('price')">Price</th>
+        <th class="th-alt" onclick="sortBy('altPrice')">Alt $</th>
+        <th class="th-alt" onclick="sortBy('altDelta')">Alt Δ</th>
+        <th class="th-alt" onclick="sortBy('altPct')">Alt %</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SD (PSA)</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkDelta')">SD Δ</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPct')">SNKR %</th>
+        <th style="width:40px"></th>
+      </tr>
+    </thead>
+    <tbody id="results-body"></tbody>
+  </table>
+  <div class="empty" id="empty-msg">Hit "Fetch listings" to load cards.</div>
+</div>
+
+<div class="pagination" id="pagination" style="display:none">
+  <button id="prev-btn" onclick="goPage(-1)">← Prev</button>
+  <span id="page-info"></span>
+  <button id="next-btn" onclick="goPage(1)">Next →</button>
+</div>
+
+<footer>v0.75</footer>
+
+<script>
+  const PASSWORD_HASH = "61c871e2628ce622be89769c7c059d6cfc5d28242501f261e484d201a5538b47";
+
+  async function sha256(str) {
+    if (!window.isSecureContext || !crypto.subtle) {
+      throw new Error("HTTPS required — please access via https://");
+    }
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function unlock(e) {
+    e.preventDefault();
+    try {
+      const input = document.getElementById("pw-input").value;
+      const hash = await sha256(input);
+      if (hash === PASSWORD_HASH) {
+        sessionStorage.setItem("auth", "1");
+        document.getElementById("lock-screen").remove();
+        loadCardCache();
+      } else {
+        document.getElementById("lock-error").textContent = "Incorrect password.";
+      }
+    } catch (err) {
+      document.getElementById("lock-error").textContent = err.message;
+    }
+  }
+
+  if (sessionStorage.getItem("auth") === "1") {
+    document.getElementById("lock-screen").remove();
+  }
+
+  const WORKER_URL = "https://cryptjapan-proxy.mew-860.workers.dev";
+
+  let allRows = [];
+  let sortCol = null;
+  let cacheLoadAborted = false;
+  let sortDir = 1;
+  let previousCardPrices = new Map(); // nftAddress → price, for detecting new/repriced listings
+  let currentPage = 1;
+  let totalPages = 1;
+  const platformFilterCache = {};
+  let _activeSrc = document.getElementById("source")?.value ?? "cc";
+
+  // ── Platform registry ────────────────────────────────────────────────
+  // To add a new platform: add an entry to PLATFORMS with a fetch() method.
+  // If the platform needs client-side filtering (instead of server-side), add clientFilter(filtered) → filtered.
+  function activePlatform() {
+    return PLATFORMS[document.getElementById("source")?.value] ?? PLATFORMS.cc;
+  }
+
+  // Shared client-side filter for platforms that fetch all data and filter locally
+  function clientFilterByDropdowns(filtered) {
+    const gc = document.getElementById("gradingCompany")?.value;
+    if (gc) {
+      const grader = gc === "Beckett" ? "BGS" : gc;
+      filtered = filtered.filter(c => c.gradingCompany === grader);
+    }
+    const selectedGrades = getSelectedGrades();
+    if (selectedGrades.length > 0) {
+      filtered = filtered.filter(c => {
+        const cgNum = parseFloat(c.grade ?? "");
+        return selectedGrades.some(g =>
+          (g.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat).some(n => n === cgNum)
+        );
+      });
+    }
+    const lang = document.getElementById("language")?.value;
+    if (lang) {
+      filtered = filtered.filter(c => (c.language || "").toLowerCase() === lang.toLowerCase());
+    }
+    return filtered;
+  }
+
+  const PLATFORMS = {
+    cc: {
+      fetch: (resetPage, forceRefresh) => fetchCcListings(resetPage, forceRefresh),
+    },
+    beezie: {
+      fetch: () => fetchBeezieListings(),
+      clientFilter: clientFilterByDropdowns,
+    },
+    phygitals: {
+      fetch: () => fetchPhygitalsListings(),
+      paginate: true,
+    },
+  };
+
+  async function fetchListings(resetPage = false, forceRefresh = false) {
+    cacheLoadAborted = true;
+    return activePlatform().fetch(resetPage, forceRefresh);
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  function captureFilterState() {
+    return {
+      gradingCompany: document.getElementById("gradingCompany")?.value ?? "",
+      grades: getSelectedGrades(),
+      language: document.getElementById("language")?.value ?? "",
+      step: document.getElementById("step")?.value ?? "48",
+      orderBy: document.getElementById("orderBy")?.value ?? "listedDateDesc",
+    };
+  }
+
+  const PLATFORM_FILTER_DEFAULTS = {
+    beezie:    { gradingCompany: "",    grades: [],             language: "Japanese", step: "48", orderBy: "listedDateDesc" },
+    phygitals: { gradingCompany: "PSA", grades: ["GEM-MT 10"], language: "Japanese", step: "48", orderBy: "listedDateDesc" },
+  };
+
+  function applyFilterState(src, state) {
+    const s = state ?? PLATFORM_FILTER_DEFAULTS[src] ?? null;
+    if (s) {
+      document.getElementById("gradingCompany").value = s.gradingCompany;
+      document.getElementById("language").value = s.language;
+      document.getElementById("step").value = s.step;
+      document.getElementById("orderBy").value = s.orderBy;
+    }
+    updateGradeOptions(); // rebuild menu for company + set platform default grade
+    if (s?.grades?.length > 0) {
+      const menu = document.getElementById("grade-menu");
+      menu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.checked = s.grades.includes(cb.value);
+      });
+      if (!menu.querySelector('input[type="checkbox"]:checked')) {
+        const anyBox = menu.querySelector('input[value=""]');
+        if (anyBox) anyBox.checked = true;
+      }
+      updateGradeLabel();
+      if (activePlatform().clientFilter) applyLiveFilters();
+    }
+  }
+
+  function onSourceChange() {
+    platformFilterCache[_activeSrc] = captureFilterState();
+    _activeSrc = document.getElementById("source")?.value ?? "cc";
+    applyFilterState(_activeSrc, platformFilterCache[_activeSrc] ?? null);
+  }
+
+  function goPage(delta) {
+    const next = currentPage + delta;
+    if (next < 1 || next > totalPages) return;
+    currentPage = next;
+    const pf = activePlatform();
+    if (pf.clientFilter || pf.paginate) applyLiveFilters();
+    else fetchListings();
+  }
+
+  function updatePagination(total) {
+    totalPages = total;
+    const pag = document.getElementById("pagination");
+    pag.style.display = totalPages > 1 ? "flex" : "none";
+    document.getElementById("page-info").textContent = `Page ${currentPage} of ${totalPages}`;
+    document.getElementById("prev-btn").disabled = currentPage <= 1;
+    document.getElementById("next-btn").disabled = currentPage >= totalPages;
+  }
+
+  async function fetchCcListings(resetPage = false, forceRefresh = false) {
+    if (resetPage) currentPage = 1;
+    const btn = document.getElementById("fetch-btn");
+    const status = document.getElementById("status");
+    btn.disabled = true;
+
+    const stepSel = document.getElementById("step").value;
+    const showAll = stepSel === "all";
+    const stepVal = showAll ? "96" : stepSel;
+
+    const selectedGrades = getSelectedGrades();
+    const baseParams = {
+      cardType: "Card",
+      categories: document.getElementById("categories").value,
+      gradingCompany: document.getElementById("gradingCompany").value,
+      language: document.getElementById("language").value,
+      orderBy: document.getElementById("orderBy").value,
+      step: stepVal,
+    };
+    // filterState stores "all" as step so the cache key is meaningful
+    const filterState = { ...baseParams, step: stepSel, grade: selectedGrades.join(",") || "" };
+
+    // For show-all, use cached card list if filters match and not force-refreshing
+    if (showAll && !forceRefresh) {
+      try {
+        const cached = JSON.parse(localStorage.getItem("cardListCache") || "null");
+        const filterKeys = ["categories","gradingCompany","grade","language","orderBy"];
+        const fresh = !cached?.savedAt || Date.now() - cached.savedAt <= 3600_000;
+        if (fresh && cached?.rows?.length && cached.filters?.step === "all" &&
+            filterKeys.every(k => cached.filters[k] === filterState[k])) {
+          allRows = cached.rows;
+          await getSolPrice();
+          await getJpyRate();
+          updatePagination(1);
+          status.textContent = (cached.statusText || `${allRows.length} listings loaded`) + " (cached)";
+          document.getElementById("refresh-list-btn").disabled = false;
+          document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-snkr-btn").disabled = false;
+          applyLiveFilters();
+          window.scrollTo(0, 0);
+          btn.disabled = false;
+          return;
+        }
+      } catch {}
+    }
+
+    async function fetchPage(page) {
+      const grades = selectedGrades.length > 0 ? selectedGrades : [""];
+      if (grades.length === 1) {
+        const params = new URLSearchParams({ ...baseParams, grade: grades[0], page });
+        for (const [k, v] of [...params]) { if (!v) params.delete(k); }
+        const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }
+      const fetches = await Promise.all(grades.map(async g => {
+        try {
+          const params = new URLSearchParams({ ...baseParams, grade: g, page });
+          for (const [k, v] of [...params]) { if (!v) params.delete(k); }
+          const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
+          if (!res.ok) return null;
+          return res.json();
+        } catch { return null; }
+      }));
+      const seen = new Set();
+      const cards = [];
+      let total = 0, pages = 1;
+      for (const data of fetches.filter(Boolean)) {
+        total += data.findTotal ?? 0;
+        pages = Math.max(pages, data.totalPages ?? 1);
+        for (const c of (data.filterNFtCard || []).filter(c => c.listing)) {
+          if (!seen.has(c.nftAddress)) { seen.add(c.nftAddress); cards.push(c); }
+        }
+      }
+      return { filterNFtCard: cards, findTotal: total, totalPages: pages };
+    }
+
+    status.textContent = "Fetching…";
+
+    try {
+      const firstData = await fetchPage(showAll ? 1 : currentPage);
+      let cards = (firstData.filterNFtCard || []).filter(c => c.listing);
+      const total = firstData.findTotal ?? cards.length;
+      const pages = firstData.totalPages ?? 1;
+
+      await getSolPrice();
+      updatePagination(showAll ? 1 : pages);
+
+      if (showAll) {
+        allRows = cards;
+        renderTable(cards);
+        repopulateAltCells(cards);
+        repopulateSnkrdunkCells(cards);
+        window.scrollTo(0, 0);
+
+        if (pages > 1) {
+          const tbody = document.getElementById("results-body");
+          document.getElementById("empty-msg").style.display = "none";
+          status.textContent = `Loading ${pages} pages…`;
+          const remaining = await Promise.all(
+            Array.from({ length: pages - 1 }, (_, i) => fetchPage(i + 2).catch(() => null))
+          );
+          for (const d of remaining) {
+            if (!d) continue;
+            const newCards = (d.filterNFtCard || []).filter(c => c.listing);
+            cards = cards.concat(newCards);
+            allRows = cards;
+            tbody.insertAdjacentHTML("beforeend", newCards.map(buildRowHtml).join(""));
+            applyHiddenRows();
+            repopulateAltCells(newCards);
+            repopulateSnkrdunkCells(newCards);
+          }
+        }
+
+        // On forced refresh, bubble new and repriced listings to the top
+        if (forceRefresh && previousCardPrices.size > 0) {
+          const isNewOrRepriced = c => {
+            const prev = previousCardPrices.get(c.nftAddress);
+            return prev === undefined || prev !== (c.listing?.updatedAt ?? c.listing?.createdAt ?? "");
+          };
+          cards = [...cards.filter(isNewOrRepriced), ...cards.filter(c => !isNewOrRepriced(c))];
+          allRows = cards;
+          renderTable(cards);
+        }
+
+        const msg = `${cards.length.toLocaleString()} listings loaded`;
+        status.textContent = msg;
+        applyLiveFilters();
+        saveCardCache(cards, filterState, currentPage, 1, msg);
+        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+      } else {
+        allRows = cards;
+        const msg = `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
+        status.textContent = msg;
+        applyLiveFilters();
+        saveCardCache(cards, filterState, currentPage, pages, msg);
+        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+        window.scrollTo(0, 0);
+      }
+
+      document.getElementById("refresh-list-btn").disabled = false;
+      document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-snkr-btn").disabled = false;
+    } catch (e) {
+      status.textContent = `Error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function buildRowHtml(c) {
+    const l = c.listing;
+    const cardUrl = c._cardUrl || `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
+    const price = Number(l.price);
+    const solAmt = `${price % 1 === 0 ? price : price.toFixed(2)} SOL`;
+    const priceStr = l.currency === "SOL"
+      ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="price-sub">(${solAmt})</span>` : solAmt)
+      : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    const certDisplay = c.gradingCompany === "PSA"
+      ? `<a href="https://www.psacard.com/cert/${esc(c.gradingID)}/psa" target="_blank" rel="noopener" style="color:#94a3b8">${esc(c.gradingID)}</a>`
+      : esc(c.gradingID);
+    const isJpn = !c.language || c.language.toLowerCase() === "japanese";
+    const cardDisplayName = c.cardName || c.name || "";
+    const cardNumStr = (c.itemName || "").match(/#(\d+)/)?.[1] ?? "";
+    const cardNumDisplay = cardNumStr ? cardNumStr.padStart(3, "0") : "—";
+    return `<tr data-nft="${esc(c.nftAddress)}">
+      <td class="date-col">${formatListedDate(c)}</td>
+      <td class="year-col">${itemYear(c) || "—"}</td>
+      <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
+      <td class="num-col">${esc(cardNumDisplay)}</td>
+      <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+(?:\.\d+)?)$/)?.[1] || c.grade).replace(/\.0$/, ""))}</td>
+      <td>${certDisplay}</td>
+      <td class="pop-count" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="price">${priceStr}</td>
+      <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
+      <td class="alt-pct" data-cert="${esc(c.gradingID)}"></td>
+      <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}">${isJpn ? '<span class="alt-loading">···</span>' : '—'}</td>
+      <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
+      <td class="snkr-pct" data-cert="${esc(c.gradingID)}"></td>
+      <td class="hide-cell"><button class="hide-toggle" onclick="toggleRowHide('${esc(c.nftAddress)}')" title="Hide row">${EYE_OPEN}</button></td>
+    </tr>`;
+  }
+
+  const EYE_OPEN = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  const EYE_CLOSED = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
+  const hiddenRows = new Set(JSON.parse(localStorage.getItem("hiddenRows") || "[]"));
+
+  function toggleRowHide(nft) {
+    if (hiddenRows.has(nft)) {
+      hiddenRows.delete(nft);
+    } else {
+      hiddenRows.add(nft);
+    }
+    localStorage.setItem("hiddenRows", JSON.stringify([...hiddenRows]));
+    applyHiddenRows();
+  }
+
+  function applyHiddenRows() {
+    document.querySelectorAll("tr[data-nft]").forEach(tr => {
+      const isHidden = hiddenRows.has(tr.dataset.nft);
+      tr.classList.toggle("row-hidden", isHidden);
+      const btn = tr.querySelector(".hide-toggle");
+      if (btn) btn.innerHTML = isHidden ? EYE_CLOSED : EYE_OPEN;
+    });
+  }
+
+  function renderTable(rows) {
+    const tbody = document.getElementById("results-body");
+    const empty = document.getElementById("empty-msg");
+    if (!rows.length) {
+      tbody.innerHTML = "";
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+    tbody.innerHTML = rows.map(buildRowHtml).join("");
+    applyHiddenRows();
+  }
+
+  function sortBy(col) {
+    const ths = document.querySelectorAll("thead th");
+    ths.forEach(th => th.classList.remove("sort-asc", "sort-desc"));
+
+    if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
+
+    const colOrder = ["listedAt","cardYear","cardName","cardNumber","grade","gradingID","pop","price","altPrice","altDelta","altPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
+    const thIdx = colOrder.indexOf(col);
+    if (thIdx >= 0) {
+      ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
+    }
+
+    const sorted = [...allRows].sort((a, b) => {
+      let av, bv;
+      if (col === "listedAt") {
+        const dateOf = c => new Date(c.listing?.updatedAt ?? c.listing?.createdAt ?? 0).getTime();
+        av = dateOf(a); bv = dateOf(b);
+      } else if (col === "cardYear") {
+        av = parseInt(itemYear(a) || "0"); bv = parseInt(itemYear(b) || "0");
+      } else if (col === "cardName") {
+        av = (a.cardName || a.name || "").toLowerCase(); bv = (b.cardName || b.name || "").toLowerCase();
+      } else if (col === "cardNumber") {
+        av = parseInt((a.itemName || "").match(/#(\d+)/)?.[1] ?? "0");
+        bv = parseInt((b.itemName || "").match(/#(\d+)/)?.[1] ?? "0");
+      } else if (col === "pop") {
+        av = a._altPop ?? -Infinity; bv = b._altPop ?? -Infinity;
+      } else if (col === "price") {
+        const toUsd = c => { const cur = c.listing?.currency, raw = Number(c.listing?.price ?? 0); return cur === "USDC" ? raw : (cur === "SOL" && solUsd ? raw * solUsd : raw); };
+        av = toUsd(a); bv = toUsd(b);
+      } else if (col === "altPrice") {
+        av = a._altPrice ?? -Infinity; bv = b._altPrice ?? -Infinity;
+      } else if (col === "altDelta") {
+        av = a._altDelta ?? -Infinity; bv = b._altDelta ?? -Infinity;
+      } else if (col === "altPct") {
+        av = a._altPct ?? -Infinity; bv = b._altPct ?? -Infinity;
+      } else if (col === "snkrdunkPrice") {
+        av = a._snkrdunkPrice ?? -Infinity; bv = b._snkrdunkPrice ?? -Infinity;
+      } else if (col === "snkrdunkDelta") {
+        av = a._snkrdunkDelta ?? -Infinity; bv = b._snkrdunkDelta ?? -Infinity;
+      } else if (col === "snkrdunkPct") {
+        av = a._snkrdunkPct ?? -Infinity; bv = b._snkrdunkPct ?? -Infinity;
+      } else {
+        av = a[col] ?? ""; bv = b[col] ?? "";
+      }
+      if (typeof av === "string") return av.localeCompare(bv) * sortDir;
+      return (av - bv) * sortDir;
+    });
+    allRows = sorted;
+    applyLiveFilters();
+  }
+
+  function applyLiveFilters() {
+    const q = (document.getElementById("live-search")?.value || "").toLowerCase();
+    const minVal = parseFloat(document.getElementById("price-min")?.value || "");
+    const maxVal = parseFloat(document.getElementById("price-max")?.value || "");
+
+    let filtered = allRows;
+
+    if (q) {
+      filtered = filtered.filter(c => {
+        const name = (c.itemName || "").toLowerCase();
+        const cert = (c.gradingID || "").toLowerCase();
+        const cardName = (c.name || c.cardName || "").toLowerCase();
+        return name.includes(q) || cert.includes(q) || cardName.includes(q);
+      });
+    }
+
+    if (!isNaN(minVal) || !isNaN(maxVal)) {
+      filtered = filtered.filter(c => {
+        const cur = c.listing?.currency;
+        const raw = Number(c.listing?.price ?? 0);
+        const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+        if (usdc == null) return true;
+        if (!isNaN(minVal) && usdc < minVal) return false;
+        if (!isNaN(maxVal) && usdc > maxVal) return false;
+        return true;
+      });
+    }
+
+    const pf = activePlatform();
+    if (pf.clientFilter) {
+      filtered = pf.clientFilter(filtered);
+    }
+    if (pf.clientFilter || pf.paginate) {
+      const stepVal = document.getElementById("step")?.value;
+      const step = stepVal === "all" || !stepVal ? 0 : parseInt(stepVal);
+      if (step > 0) {
+        const pages = Math.max(1, Math.ceil(filtered.length / step));
+        updatePagination(pages);
+        filtered = filtered.slice((currentPage - 1) * step, currentPage * step);
+      } else {
+        updatePagination(1);
+      }
+    }
+
+    renderTable(filtered);
+    repopulateAltCells(allRows);
+    repopulateSnkrdunkCells(allRows);
+  }
+
+  function repopulateAltCells(rows) {
+    for (const c of rows) {
+      if (!c.gradingID || !altCache.has(c.gradingID)) continue;
+      const result = altCache.get(c.gradingID);
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+      updateAltCell(c.gradingID, result, usdc);
+      if (result?.cardName) {
+        c._altCardName = result.cardName;
+        const nameCell = document.querySelector(`.card-name-cell[data-cert="${c.gradingID}"]`);
+        if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
+      }
+      if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
+      if (result?.psaPop != null || result?.pop != null) c._altPop = result.psaPop ?? result.pop;
+      if (result?.price != null) {
+        const altPrice = Number(result.price);
+        c._altPrice = altPrice;
+        c._altDelta = usdc != null ? altPrice - usdc : null;
+        c._altPct = usdc != null ? ((altPrice - usdc) / usdc) * 100 : null;
+      }
+    }
+  }
+
+  function cardToPsaGrade(c) {
+    const m = (c.grade || "").match(/(\d+(?:\.\d+)?)/);
+    if (!m) return "";
+    return `PSA${Math.floor(parseFloat(m[1]))}`;
+  }
+
+  function isMasterBall(c) {
+    const s = ((c.itemName || "") + " " + (c.name || "") + " " + (c.cardName || "")).toLowerCase();
+    return s.includes("master ball");
+  }
+
+  function itemYear(c) {
+    return String(c.year || (c.itemName?.match(/^(\d{4})\s/) ?? [])[1] || "");
+  }
+
+  function formatListedDate(c) {
+    const dateStr = c.listing?.updatedAt ?? c.listing?.createdAt ?? null;
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    const ms = Date.now() - d;
+    const hours = Math.floor(ms / 3600000);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.floor(ms / 86400000);
+    if (days < 30) return `${days}d`;
+    if (days < 365) return `${Math.floor(days / 30)}mo`;
+    return `${Math.floor(days / 365)}y`;
+  }
+
+  function snkrdunkKwKey(c) {
+    const psaGrade = cardToPsaGrade(c);
+    let kw;
+    if (c._altCardName && c._altCardNumber) {
+      kw = `${c._altCardName} ${c._altCardNumber}`;
+    } else {
+      const cleanName = c.name || c.cardName || null;
+      kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+    }
+    const year = itemYear(c);
+    return `${kw}|${psaGrade}${isMasterBall(c) ? "|mb" : ""}${year ? `|${year}` : ""}`;
+  }
+
+  function repopulateSnkrdunkCells(rows) {
+    for (const c of rows) {
+      if (!c.gradingID) continue;
+      if (c.language && c.language.toLowerCase() !== "japanese") continue;
+      const key = snkrdunkKwKey(c);
+      if (!snkrdunkCache.has(key)) continue;
+      const result = snkrdunkCache.get(key);
+      updateSnkrdunkCell(c.gradingID, result);
+      if (result?.price != null) c._snkrdunkPrice = result.price;
+    }
+  }
+
+  // ── Alt.xyz price fetching ───────────────────────────────────────────
+  const altCache = new Map();
+
+  const CERT_QUERY = `query Cert($certNumber: String!) {
+    cert(certNumber: $certNumber) {
+      certNumber gradeNumber gradingCompany
+      asset { id subject attributes { cardNumber } __typename }
+      __typename
+    }
+  }`;
+
+  const ASSET_QUERY = `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
+    asset(id: $id) {
+      id
+      altValueInfo(tsFilter: $tsFilter) { currentAltValue }
+      __typename
+    }
+  }`;
+
+  const CARDPOPS_QUERY = `query AssetCardPops($id: ID!) {
+    asset(id: $id) {
+      id
+      cardPops { gradingCompany gradeNumber count }
+    }
+  }`;
+
+  // "069"→"069", "120/SV-P"→"SV-P 120", "294XYP"→"XY-P 294", "RC32"→"RC32"
+  function normalizeCardNum(raw) {
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) return String(parseInt(raw, 10)).padStart(3, "0");
+    const parts = raw.split("/");
+    if (parts.length === 2 && /^\d+$/.test(parts[0]) && !/^\d+$/.test(parts[1]))
+      return `${parts[1]} ${parts[0].padStart(3, "0")}`;
+    const m = raw.match(/^(\d+)([A-Za-z].*)$/);
+    if (m) {
+      const code = m[2].replace(/([A-Za-z])P$/i, "$1-P");
+      return `${code} ${m[1].padStart(3, "0")}`;
+    }
+    return raw;
+  }
+
+  const QUERY_MAP = { Cert: CERT_QUERY, AssetDetails: ASSET_QUERY, AssetCardPops: CARDPOPS_QUERY };
+  async function altPost(operation, variables) {
+    const res = await fetch(`${WORKER_URL}/alt/${operation}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operationName: operation, query: QUERY_MAP[operation] ?? ASSET_QUERY, variables }),
+    });
+    const data = await res.json();
+    return data;
+  }
+
+  async function fetchAltPrice(certNumber) {
+    if (altCache.has(certNumber)) {
+      const cached = altCache.get(certNumber);
+      if (!cached) return cached;
+      if ('cardName' in cached && cached.price !== null) return cached;
+      // re-fetch if price is null (stale cache or first fetch after Alt API change)
+    }
+    try {
+      const certData = await altPost("Cert", { certNumber });
+      const cert = certData.data?.cert;
+      if (!cert?.asset?.id) return null;
+      const [assetData, popsData] = await Promise.all([
+        altPost("AssetDetails", { id: cert.asset.id, tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany, autograph: null } }),
+        altPost("AssetCardPops", { id: cert.asset.id }),
+      ]);
+      const cardPops = popsData.data?.asset?.cardPops ?? [];
+      const popEntry = cardPops.find(p => p.gradingCompany === cert.gradingCompany && p.gradeNumber === cert.gradeNumber);
+      const gradeFloor = `${Math.floor(parseFloat(cert.gradeNumber))}.0`;
+      const psaEntry = cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === cert.gradeNumber)
+                    ?? cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === gradeFloor);
+      const result = {
+        price: assetData.data?.asset?.altValueInfo?.currentAltValue ?? null,
+        pop: popEntry?.count ?? null,
+        psaPop: psaEntry?.count ?? null,
+        assetId: cert.asset.id,
+        cardName: cert.asset.subject ?? null,
+        cardNumber: normalizeCardNum(cert.asset.attributes?.cardNumber ?? null),
+      };
+      altCache.set(certNumber, result);
+      return result;
+    } catch { return null; }
+  }
+
+  let solUsd = null;
+
+  async function getSolPrice() {
+    if (solUsd !== null) return solUsd;
+    try {
+      const res = await fetch(`${WORKER_URL}/sol-price`);
+      const data = await res.json();
+      solUsd = data.usd ?? null;
+    } catch { solUsd = null; }
+    return solUsd;
+  }
+
+  function updateAltCell(certNumber, result, ccPriceUsdc) {
+    const priceCell = document.querySelector(`.alt-price[data-cert="${certNumber}"]`);
+    const deltaCell = document.querySelector(`.alt-delta[data-cert="${certNumber}"]`);
+    const pctCell = document.querySelector(`.alt-pct[data-cert="${certNumber}"]`);
+    const popCell = document.querySelector(`.pop-count[data-cert="${certNumber}"]`);
+    const displayPop = result?.psaPop ?? result?.pop;
+  if (popCell) popCell.textContent = displayPop != null ? displayPop : "—";
+    if (!priceCell) return;
+    if (!result?.price) {
+      priceCell.textContent = "—";
+      if (pctCell) pctCell.textContent = "";
+      return;
+    }
+    const altPrice = Number(result.price);
+    const url = `https://alt.xyz/itm/${result.assetId}/research`;
+    priceCell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}</a>`;
+    if (ccPriceUsdc != null) {
+      const delta = altPrice - ccPriceUsdc;
+      const pct = (delta / ccPriceUsdc) * 100;
+      const sign = delta >= 0 ? "+" : "";
+      const cls = delta >= 0 ? "delta-pos" : "delta-neg";
+      if (deltaCell) deltaCell.innerHTML = `<span class="${cls}">${sign}$${Math.abs(delta).toFixed(2)}</span>`;
+      if (pctCell) pctCell.innerHTML = `<span class="${cls}">${sign}${Math.abs(pct).toFixed(1)}%</span>`;
+    }
+  }
+
+  async function fetchAltPrices(cards, concurrency = 8) {
+    const rate = await getSolPrice();
+    await getJpyRate();
+    const certPrices = new Map();
+    for (const c of cards) {
+      if (!c.gradingID) continue;
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && rate ? raw * rate : null;
+      if (usdc !== null) certPrices.set(c.gradingID, usdc);
+    }
+    const certs = [...new Set(cards.map(c => c.gradingID).filter(Boolean))];
+    for (let i = 0; i < certs.length; i += concurrency) {
+      await Promise.all(
+        certs.slice(i, i + concurrency).map(async cert => {
+          const result = await fetchAltPrice(cert);
+          const usdc = certPrices.get(cert);
+          updateAltCell(cert, result, usdc);
+          for (const c of allRows) {
+            if (c.gradingID !== cert) continue;
+            if (result?.cardName) {
+              c._altCardName = result.cardName;
+              const nameCell = document.querySelector(`.card-name-cell[data-cert="${cert}"]`);
+              if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
+            }
+            if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
+            if (result?.psaPop != null || result?.pop != null) c._altPop = result.psaPop ?? result.pop;
+            if (result?.price != null) {
+              const altPrice = Number(result.price);
+              c._altPrice = altPrice;
+              c._altDelta = usdc != null ? altPrice - usdc : null;
+              c._altPct   = usdc != null ? ((altPrice - usdc) / usdc) * 100 : null;
+            }
+          }
+        })
+      );
+    }
+    savePriceCache();
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── SNKRDUNK price fetching ──────────────────────────────────────────
+  const snkrdunkCache = new Map(); // key: `${kw}|${psaGrade}`
+  let jpyUsd = null;
+
+  async function getJpyRate() {
+    if (jpyUsd !== null) return jpyUsd;
+    try {
+      const res = await fetch(`${WORKER_URL}/jpy-rate`);
+      const data = await res.json();
+      jpyUsd = data.usdPerJpy ?? null;
+    } catch { jpyUsd = null; }
+    return jpyUsd;
+  }
+
+  // Build SNKRDUNK keywords from the CC clean card name field (e.g. "Shining Lugia-Holo" → "Shining Lugia 058")
+  function snkrdunkKeywordsFromClean(cleanName, itemName) {
+    const numMatch = itemName.match(/#(\d+)/);
+    const num = numMatch ? numMatch[1].padStart(3, "0") : "";
+    // Strip PSA/grading company suffixes and holo/rarity suffixes (CC "Card Name" field includes them)
+    const baseName = cleanName.replace(/\s*-.*$/, "").replace(/\s*(PSA|BGS|CGC|SGC).*$/i, "").trim();
+    return `${baseName} ${num}`.trim();
+  }
+
+  // Extract "CardName num" from CC itemName — forward parse, then backward fallback for
+  // non-standard formats like "2017 #58 JAPANESE SUN & MOON ... SHINING LUGIA PSA 10"
+  function snkrdunkKeywords(itemName) {
+    const m = itemName.match(/#(\d+)\s+(.+)/);
+    if (!m) return itemName;
+    const num = m[1].padStart(3, "0");
+    const rest = m[2];
+    // "Full Art/Braixen" → take the part after "/"
+    const slashMatch = rest.match(/\b\w+\/(\w+)/);
+    if (slashMatch) return `${slashMatch[1]} ${num}`.trim();
+    const stopWords = new Set(["psa","bgs","cgc","sgc","japanese","english","holo","reverse","sar","sr","ur","rr","hr","chr","csr","full","secret","pokemon","magic"]);
+    const words = rest.split(/\s+/);
+    // Forward: take 1-2 name words from right after the card number
+    // Stop at a dash — everything after is a rarity/variant suffix (e.g. "Squirtle-Holo" → "Squirtle")
+    const fwdWords = [];
+    for (const w of words) {
+      if (stopWords.has(w.toLowerCase())) break;
+      if (w.includes("-")) { fwdWords.push(w.split("-")[0]); break; }
+      fwdWords.push(w);
+      if (fwdWords.length >= 2) break;
+    }
+    if (fwdWords.length > 0) return `${fwdWords.join(" ")} ${num}`.trim();
+    // Backward fallback: find grade marker and take 1-2 words that precede it
+    const psaIdx = words.findIndex(w => /^(psa|bgs|cgc|sgc)$/i.test(w));
+    if (psaIdx > 0) {
+      const bwdWords = [];
+      for (let i = psaIdx - 1; i >= 0 && bwdWords.length < 2; i--) {
+        const w = words[i];
+        if (stopWords.has(w.toLowerCase()) || /^[&]$/.test(w)) break;
+        bwdWords.unshift(w);
+      }
+      if (bwdWords.length > 0) return `${bwdWords.join(" ")} ${num}`.trim();
+    }
+    return num;
+  }
+
+  // Bold the card name + number extracted by snkrdunkKeywords within the full itemName display
+  function boldCardName(itemName) {
+    const kw = snkrdunkKeywords(itemName);
+    const numMatch = kw.match(/(\d+)$/);
+    if (!numMatch) return esc(itemName);
+    const num = numMatch[1];
+    const nameOnly = kw.slice(0, -num.length).trim();
+    let result = esc(itemName);
+    result = result.replace(`#${num}`, `<b>#${num}</b>`);
+    if (nameOnly) {
+      const pat = nameOnly.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      result = result.replace(new RegExp(pat), `<b>${esc(nameOnly)}</b>`);
+    }
+    return result;
+  }
+
+  function updateSnkrdunkCell(certNumber, result) {
+    const cell = document.querySelector(`.snkrdunk-price[data-cert="${certNumber}"]`);
+    const deltaCell = document.querySelector(`.snkrdunk-delta[data-cert="${certNumber}"]`);
+    const pctCell = document.querySelector(`.snkr-pct[data-cert="${certNumber}"]`);
+    if (!cell) return;
+    if (!result?.price) {
+      if (result?.priceType === "na" && result?.apparelId) {
+        const naUrl = `https://snkrdunk.com/apparels/${result.apparelId}`;
+        cell.innerHTML = `<a href="${naUrl}" target="_blank" rel="noopener" style="color:#555">N/A</a>`;
+      } else {
+        cell.textContent = "—";
+      }
+      if (deltaCell) deltaCell.textContent = "";
+      if (pctCell) pctCell.textContent = "";
+      return;
+    }
+    const jpy = result.price;
+    const usdSnkr = jpyUsd ? jpy * jpyUsd : null;
+    const url = `https://snkrdunk.com/apparels/${result.apparelId}`;
+    const label = result.priceType === "ask" ? " ask" : "";
+    const usdPart = usdSnkr != null ? `$${usdSnkr.toFixed(0)}${label} ` : "";
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener">${usdPart}<span class="price-sub">(¥${jpy.toLocaleString()})</span></a>`;
+    if (usdSnkr != null) {
+      const row = allRows.find(c => c.gradingID === certNumber);
+      if (row) {
+        const cur = row.listing?.currency;
+        const raw = Number(row.listing?.price ?? 0);
+        const ccUsd = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+        if (ccUsd != null) {
+          const delta = usdSnkr - ccUsd;
+          const pct = (delta / ccUsd) * 100;
+          row._snkrdunkDelta = delta;
+          row._snkrdunkPct = pct;
+          const sign = delta >= 0 ? "+" : "";
+          const cls = delta >= 0 ? "delta-pos" : "delta-neg";
+          if (deltaCell) deltaCell.innerHTML = `<span class="${cls}">${sign}$${Math.abs(delta).toFixed(0)}</span>`;
+          if (pctCell) pctCell.innerHTML = `<span class="${cls}">${sign}${Math.abs(pct).toFixed(1)}%</span>`;
+        }
+      }
+    }
+  }
+
+  async function fetchSnkrdunkPrices(cards, concurrency = 4) {
+    await getJpyRate();
+
+    // Deduplicate by computed keywords+grade — multiple CC listings of the same card
+    // often have slightly different itemName strings but resolve to identical searches
+    const kwGroups = new Map();
+    for (const c of cards) {
+      if (!c.gradingID) continue;
+      if (c.language && c.language.toLowerCase() !== "japanese") continue;
+      const psaGrade = cardToPsaGrade(c);
+      let kw;
+      if (c._altCardName && c._altCardNumber) {
+        kw = `${c._altCardName} ${c._altCardNumber}`;
+      } else {
+        const cleanName = c.name || c.cardName || null;
+        kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+      }
+      const mb = isMasterBall(c);
+      const year = itemYear(c);
+      const kwKey = snkrdunkKwKey(c);
+      if (!kwGroups.has(kwKey)) kwGroups.set(kwKey, { kw, psaGrade, mb, year, kwKey, grpCards: [] });
+      kwGroups.get(kwKey).grpCards.push(c);
+    }
+
+    const entries = [...kwGroups.values()];
+    for (let i = 0; i < entries.length; i += concurrency) {
+      await Promise.all(
+        entries.slice(i, i + concurrency).map(async ({ kw, psaGrade, mb, year, kwKey, grpCards }) => {
+          let result;
+          if (snkrdunkCache.has(kwKey)) {
+            result = snkrdunkCache.get(kwKey);
+          } else {
+            try {
+              const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(kw)}&grade=${encodeURIComponent(psaGrade)}&masterball=${mb ? "1" : ""}${year ? `&year=${year}` : ""}`);
+              const data = await res.json();
+              result = (data.price != null || data.apparelId != null)
+                ? { price: data.price ?? null, apparelId: data.apparelId, priceType: data.priceType }
+                : null;
+            } catch { result = null; }
+            snkrdunkCache.set(kwKey, result);
+          }
+          for (const c of grpCards) {
+            updateSnkrdunkCell(c.gradingID, result);
+            const row = allRows.find(r => r.gradingID === c.gradingID);
+            if (row) row._snkrdunkPrice = result?.price ?? null;
+          }
+        })
+      );
+    }
+    savePriceCache();
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── Beezie marketplace integration ──────────────────────────────────
+  function beezieAttr(item, traitType) {
+    return item.metadata?.attributes?.find(a => a.trait_type === traitType)?.trait_value ?? null;
+  }
+
+  function normalizeBeezieCard(item) {
+    const grader      = beezieAttr(item, "grader") ?? "";
+    const grade       = beezieAttr(item, "grade") ?? "";
+    const year        = beezieAttr(item, "year") ?? "";
+    const pokemonName = beezieAttr(item, "pokemon name") ?? "";
+    const setName     = beezieAttr(item, "set name") ?? "";
+    const cardNumber  = beezieAttr(item, "card number") ?? "";
+    const serial      = beezieAttr(item, "serial") ?? String(item.tokenId ?? item.id);
+    const language    = beezieAttr(item, "language") ?? "";
+    const createdAtMs = item.SellOrder?.createdAt;
+    const createdAtIso = createdAtMs ? new Date(createdAtMs).toISOString() : null;
+    const priceUsdc   = item.SellOrder?.amountUSDC ? parseFloat(item.SellOrder.amountUSDC) : null;
+    const cardUrl = `https://beezie.com/marketplace/collectible/${item.tokenId ?? item.id}`;
+    return {
+      nftAddress: `beezie-${item.tokenId ?? item.id}`,
+      gradingID: serial,
+      gradingCompany: grader,
+      grade: grade,
+      year: parseInt(year) || null,
+      language: language,
+      cardName: pokemonName,
+      name: pokemonName,
+      set: setName,
+      itemName: item.metadata?.name ?? "",
+      listing: { price: priceUsdc, currency: "USDC", createdAt: createdAtIso, updatedAt: createdAtIso },
+      _source: "beezie",
+      _cardUrl: cardUrl,
+      _altCardName: pokemonName,
+    };
+  }
+
+  async function fetchBeezieListings() {
+    const btn = document.getElementById("fetch-btn");
+    const status = document.getElementById("status");
+    btn.disabled = true;
+    status.textContent = "Fetching Beezie listings…";
+    document.getElementById("results-body").innerHTML = "";
+    document.getElementById("empty-msg").style.display = "none";
+    allRows = [];
+
+    // Build server-side filters from current dropdown selections
+    const filters = [];
+    const gc = document.getElementById("gradingCompany")?.value;
+    if (gc) filters.push({ filterName: "grader", value: gc === "Beckett" ? "BGS" : gc });
+    for (const g of getSelectedGrades()) {
+      const n = (g.match(/\d+(?:\.\d+)?/g) || [])[0];
+      if (n) filters.push({ filterName: "grade", value: n });
+    }
+    const lang = document.getElementById("language")?.value;
+    if (lang) filters.push({ filterName: "language", value: lang });
+
+    const pageSize = 40;
+    let page = 0;
+    let cards = [];
+    try {
+      await getSolPrice();
+      await getJpyRate();
+      while (page <= 50) {
+        const res = await fetch(`${WORKER_URL}/beezie/listings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categoryId: "1", page: String(page), pageSize: String(pageSize), filters, saleStatus: "all", sellOrderDateOrder: "DESC" }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rawItems = data.dropItems || [];
+        cards = cards.concat(rawItems.filter(item => item.SellOrder).map(normalizeBeezieCard));
+        status.textContent = `${cards.length} Beezie listings…`;
+        if (rawItems.length < pageSize) break;
+        page++;
+      }
+      allRows = cards;
+      currentPage = 1;
+      applyLiveFilters();
+      if (!cards.length) document.getElementById("empty-msg").style.display = "block";
+      status.textContent = `${cards.length} Beezie listings loaded`;
+      window.scrollTo(0, 0);
+      document.getElementById("refresh-list-btn").disabled = false;
+      document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-snkr-btn").disabled = false;
+      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+    } catch (e) {
+      status.textContent = `Beezie error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── Phygitals marketplace integration ───────────────────────────────
+  function normalizePhygitalsCard(item) {
+    const meta = item.metadata ?? [];  // [{key, value}, ...]
+    const attr = name => meta.find(m => (m.key ?? "").toLowerCase() === name.toLowerCase())?.value ?? null;
+    const grader   = attr("Grader") ?? "";
+    const gradeRaw = attr("Grade") ?? "";
+    // "CGC 9.0" → "9.0", "PSA 10" → "10" — strip leading grader prefix
+    const grade    = gradeRaw.replace(/^[A-Za-z]+\s*/, "").trim();
+    const language = attr("Language") ?? "";
+    const set      = attr("Set") ?? attr("Set Name") ?? "";
+    const yearRaw  = attr("Year") ?? attr("Set Release Date") ?? "";
+    const title    = attr("Title") ?? item.name ?? "";
+    const serial   = attr("Cert Number") ?? attr("Cert") ?? attr("Serial") ?? "";
+    // price is micro-USDC (6 decimal places)
+    const priceUsdc = item.price != null ? parseFloat(item.price) / 1_000_000 : null;
+    const createdAt = item.createdAt ?? item.listedAt ?? null;
+    const isoDate   = createdAt ? new Date(createdAt).toISOString() : null;
+    const address   = item.address ?? item.mintAddress ?? "";
+    const cardUrl   = `https://www.phygitals.com/card/${address}`;
+    return {
+      nftAddress:     `phygitals-${address}`,
+      gradingID:      serial || address,
+      gradingCompany: grader,
+      grade,
+      year:           parseInt(yearRaw) || null,
+      language,
+      cardName:       "",
+      name:           "",
+      set,
+      itemName:       title,
+      listing:        { price: priceUsdc, currency: "USDC", createdAt: isoDate, updatedAt: isoDate },
+      _source:        "phygitals",
+      _cardUrl:       cardUrl,
+      _altCardName:   "",
+    };
+  }
+
+  async function fetchPhygitalsListings() {
+    const btn = document.getElementById("fetch-btn");
+    const status = document.getElementById("status");
+    btn.disabled = true;
+    status.textContent = "Fetching Phygitals listings…";
+    document.getElementById("results-body").innerHTML = "";
+    document.getElementById("empty-msg").style.display = "none";
+    allRows = [];
+
+    // Build server-side metadataConditions from dropdown selections
+    const metaCond = {
+      "set": [], "grader": [], "grade": [], "rarity": [], "type": [],
+      "set release date": [], "grade type": ["Graded Cards"],
+      "language": [], "category": ["Pokemon"],
+    };
+
+    const gc = document.getElementById("gradingCompany")?.value;
+    const graderAbbrev = gc === "Beckett" ? "BGS" : gc;
+    if (graderAbbrev) metaCond["grader"] = [graderAbbrev];
+
+    for (const g of getSelectedGrades()) {
+      // Phygitals grade format: "{GRADER} {N}.0" for whole numbers, "{GRADER} {N.M}" for decimals
+      const n = (g.match(/\d+(?:\.\d+)?/) || [])[0];
+      if (n != null) {
+        const num = parseFloat(n);
+        const formatted = Number.isInteger(num) ? `${num}.0` : String(num);
+        metaCond["grade"].push(graderAbbrev ? `${graderAbbrev} ${formatted}` : formatted);
+      }
+    }
+    metaCond["grade"] = [...new Set(metaCond["grade"])];
+
+    const lang = document.getElementById("language")?.value;
+    if (lang) metaCond["language"] = [lang];
+
+    const collAddresses = ["BSG6DyEihFFtfvxtL9mKYsvTwiZXB1rq5gARMTJC2xAM", "phygZDQZJZVHvJGYPGoKPYUtXw7mstSYtTtcuh8LJcC"];
+    const pageSize = 48;
+    let page = 0;
+    let cards = [];
+    try {
+      await getSolPrice();
+      await getJpyRate();
+      while (page <= 100) {
+        // Build query string to match Phygitals URL format:
+        // metadataConditions: encode only {, }, " and space (as +); leave :, ,, [ ] literal
+        // priceRange/fmvRange: ["",""] with encoded quotes; collectionAddresses: encode only quotes
+        const metaRaw = JSON.stringify(metaCond)
+          .replace(/{/g, '%7B').replace(/}/g, '%7D')
+          .replace(/"/g, '%22').replace(/ /g, '+');
+        const collRaw = JSON.stringify(collAddresses).replace(/"/g, '%22');
+        const qs = `searchTerm=&sortBy=price-low-high&itemsPerPage=${pageSize}&page=${page}&metadataConditions=${metaRaw}&priceRange=[%22%22,%22%22]&fmvRange=[%22%22,%22%22]&listedStatus=listed&collectionAddresses=${collRaw}`;
+        const res = await fetch(`${WORKER_URL}/phygitals/listings?${qs}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rawItems = data.listings ?? data.data ?? data.items ?? [];
+        const newCards = rawItems.map(normalizePhygitalsCard).filter(c => c.listing?.price != null);
+        cards = cards.concat(newCards);
+        status.textContent = `${cards.length} Phygitals listings…`;
+        const total = data.amount ?? data.total ?? data.totalCount ?? data.totalItems ?? 0;
+        const totalPages = data.totalPages ?? data.total_pages ?? Math.ceil(total / pageSize);
+        if (rawItems.length < pageSize || page >= totalPages - 1) break;
+        page++;
+      }
+      allRows = cards;
+      currentPage = 1;
+      applyLiveFilters();
+      if (!cards.length) document.getElementById("empty-msg").style.display = "block";
+      status.textContent = `${cards.length} Phygitals listings loaded`;
+      window.scrollTo(0, 0);
+      document.getElementById("refresh-list-btn").disabled = false;
+      document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-snkr-btn").disabled = false;
+      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+    } catch (e) {
+      status.textContent = `Phygitals error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  async function refreshAlt() {
+    const btn = document.getElementById("refresh-alt-btn");
+    btn.disabled = true;
+    for (const c of allRows) { if (c.gradingID) altCache.delete(c.gradingID); }
+    for (const c of allRows) {
+      const cert = c.gradingID;
+      const altCell = document.querySelector(`.alt-price[data-cert="${cert}"]`);
+      if (altCell) altCell.innerHTML = '<span class="alt-loading">···</span>';
+      for (const cls of ["alt-delta","alt-pct"]) {
+        const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
+        if (el) el.textContent = "";
+      }
+    }
+    await fetchAltPrices(allRows);
+    btn.disabled = false;
+  }
+
+  async function refreshSnkr() {
+    const btn = document.getElementById("refresh-snkr-btn");
+    btn.disabled = true;
+    const snkrKeys = new Set(allRows.map(c => snkrdunkKwKey(c)));
+    for (const k of snkrKeys) snkrdunkCache.delete(k);
+    for (const c of allRows) {
+      const cert = c.gradingID;
+      for (const cls of ["snkrdunk-delta","snkr-pct"]) {
+        const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
+        if (el) el.textContent = "";
+      }
+      const snkrCell = document.querySelector(`.snkrdunk-price[data-cert="${cert}"]`);
+      if (snkrCell) snkrCell.innerHTML = '<span class="alt-loading">···</span>';
+    }
+    await fetchSnkrdunkPrices(allRows);
+    btn.disabled = false;
+  }
+
+  function saveCardCache(rows, filters, page, pages, statusText) {
+    try {
+      localStorage.setItem("cardListCache", JSON.stringify({ rows, filters, page, pages, statusText, savedAt: Date.now() }));
+    } catch {} // quota exceeded — skip silently
+  }
+
+  function savePriceCache() {
+    try {
+      sessionStorage.setItem("altCacheData", JSON.stringify([...altCache.entries()]));
+      sessionStorage.setItem("snkrdunkCacheData", JSON.stringify([...snkrdunkCache.entries()]));
+    } catch {}
+  }
+
+  async function loadCardCache() {
+    try {
+      const raw = localStorage.getItem("cardListCache");
+      if (!raw) return;
+      const cached = JSON.parse(raw);
+      if (!cached?.rows?.length) return;
+      if (cached.savedAt && Date.now() - cached.savedAt > 3600_000) return; // 1-hour TTL
+      // Restore filter selects
+      const f = cached.filters || {};
+      const filterMap = { categories: "categories", gradingCompany: "gradingCompany", language: "language", orderBy: "orderBy", step: "step" };
+      for (const [param, id] of Object.entries(filterMap)) {
+        const el = document.getElementById(id);
+        if (el && f[param] != null) el.value = f[param];
+      }
+      // Rebuild grade options for the restored company, then restore selections
+      updateGradeOptions();
+      if (f.grade != null) {
+        const gradeValues = f.grade ? f.grade.split(",") : [];
+        document.querySelectorAll('#grade-menu input[type="checkbox"]').forEach(cb => {
+          cb.checked = gradeValues.length === 0 ? cb.value === "" : gradeValues.includes(cb.value);
+        });
+        if (!document.querySelector('#grade-menu input[type="checkbox"]:checked')) {
+          const anyBox = document.querySelector('#grade-menu input[value=""]');
+          if (anyBox) anyBox.checked = true;
+        }
+        updateGradeLabel();
+      }
+      // Restore price caches before repopulating cells
+      try {
+        const altEntries = JSON.parse(sessionStorage.getItem("altCacheData") || "[]");
+        for (const [k, v] of altEntries) altCache.set(k, v);
+        const snkrEntries = JSON.parse(sessionStorage.getItem("snkrdunkCacheData") || "[]");
+        for (const [k, v] of snkrEntries) snkrdunkCache.set(k, v);
+      } catch {}
+      allRows = cached.rows;
+      currentPage = cached.page ?? 1;
+      totalPages = cached.pages ?? 1;
+      await getSolPrice();
+      await getJpyRate();
+      if (cacheLoadAborted) return; // fetchListings was called while we were awaiting
+      updatePagination(totalPages);
+      document.getElementById("status").textContent = (cached.statusText || "") + " (cached)";
+      document.getElementById("refresh-list-btn").disabled = false;
+      document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-snkr-btn").disabled = false;
+      applyLiveFilters();
+      // If any Japanese cards are missing SNKRDUNK prices (e.g. key changed after alt data loaded),
+      // trigger a background fetch so they fill in without requiring a manual refresh.
+      const needsSnkr = allRows.some(c =>
+        c.gradingID && (!c.language || c.language.toLowerCase() === "japanese") &&
+        !snkrdunkCache.has(snkrdunkKwKey(c))
+      );
+      if (needsSnkr) fetchSnkrdunkPrices(allRows);
+    } catch {}
+  }
+
+  async function refreshCardList() {
+    const pf = activePlatform();
+    if (pf !== PLATFORMS.cc) return pf.fetch();
+    previousCardPrices = new Map(allRows.filter(c => c.nftAddress).map(c => [c.nftAddress, c.listing?.updatedAt ?? c.listing?.createdAt ?? ""]));
+    await fetchListings(true, true);
+  }
+
+  function toggleSource(source) {
+    const btn = document.getElementById(`toggle-${source}`);
+    const table = document.getElementById("results-table");
+    btn.classList.toggle("active");
+    table.classList.toggle(`hide-${source}`, !btn.classList.contains("active"));
+  }
+
+  window.addEventListener("beforeunload", savePriceCache);
+
+  document.getElementById("results-body").addEventListener("click", e => {
+    const tr = e.target.closest("tr");
+    if (!tr) return;
+    const already = tr.classList.contains("selected");
+    document.querySelectorAll("#results-body tr.selected").forEach(r => r.classList.remove("selected"));
+    if (!already) tr.classList.add("selected");
+  });
+
+  // ── Grade multi-select ───────────────────────────────────────────────
+  const GRADE_OPTIONS = {
+    PSA: [
+      { label: "GEM-MT 10", value: "GEM-MT 10" },
+      { label: "MINT 9",    value: "MINT 9"    },
+      { label: "NM-MT 8",   value: "NM-MT 8"   },
+      { label: "NM 7",      value: "NM 7"      },
+    ],
+    Beckett: [
+      { label: "Black Label 10", value: "10-PRISTINE BLACK LABEL" },
+      { label: "Pristine 10",    value: "10-PRISTINE"             },
+      { label: "Gem Mint 9.5",   value: "9.5-GEM MINT"           },
+      { label: "Mint 9",         value: "9-MINT"                  },
+      { label: "NM-MT 8",        value: "8-NM-MT"                },
+      { label: "Near Mint 7",    value: "7-NEAR MINT"            },
+      { label: "EX-NM 6",        value: "6-EX-NM"               },
+      { label: "Excellent 5",    value: "5-EXCELLENT"            },
+      { label: "VG-EX 4",        value: "4-VG-EX"               },
+      { label: "Very Good 3",    value: "3-VERY GOOD"            },
+      { label: "Good 2",         value: "2-GOOD"                 },
+      { label: "Poor 1",         value: "1-POOR"                 },
+    ],
+    CGC: [
+      { label: "Pristine 10",  value: "PRISTINE 10"   },
+      { label: "Gem Mint 10",  value: "GEM MINT 10"   },
+      { label: "Mint+ 9.5",    value: "MINT+ 9.5"    },
+      { label: "Mint 9",       value: "MINT 9"        },
+      { label: "NM/Mint+ 8.5", value: "NM/MINT+ 8.5" },
+      { label: "NM/Mint 8",    value: "NM/MINT 8"    },
+    ],
+  };
+
+  function updateGradeOptions() {
+    const company = document.getElementById("gradingCompany").value;
+    const options = GRADE_OPTIONS[company] || [];
+    const menu = document.getElementById("grade-menu");
+    const rows = options.map(opt =>
+      `<label><input type="checkbox" value="${esc(opt.value)}" onchange="onGradeCheck(this)" />${opt.label}</label>`
+    );
+    rows.push(`<label><input type="checkbox" value="" onchange="onGradeCheck(this)" />Any grade</label>`);
+    menu.innerHTML = rows.join("");
+    // Client-filter/paginate platforms default to Any grade; CC defaults to first specific grade
+    const pf = activePlatform();
+    const toCheck = (pf.clientFilter || pf.paginate)
+      ? menu.querySelector('input[value=""]')
+      : menu.querySelector('input[type="checkbox"]');
+    if (toCheck) { toCheck.checked = true; updateGradeLabel(); }
+    if (pf.clientFilter) applyLiveFilters();
+  }
+
+  function onGradeCheck(cb) {
+    const allBoxes = [...document.querySelectorAll('#grade-menu input[type="checkbox"]')];
+    const anyBox = document.querySelector('#grade-menu input[value=""]');
+    if (cb.value === "") {
+      if (cb.checked) allBoxes.filter(c => c !== cb).forEach(c => c.checked = false);
+    } else {
+      if (cb.checked && anyBox) anyBox.checked = false;
+    }
+    if (!allBoxes.some(c => c.checked) && anyBox) anyBox.checked = true;
+    updateGradeLabel();
+    if (activePlatform().clientFilter) applyLiveFilters();
+  }
+
+  function getSelectedGrades() {
+    return [...document.querySelectorAll('#grade-menu input[type="checkbox"]:checked')]
+      .map(cb => cb.value).filter(v => v !== "");
+  }
+
+  function updateGradeLabel() {
+    const grades = getSelectedGrades();
+    const anyBox = document.querySelector('#grade-menu input[value=""]:checked');
+    const label = document.getElementById("grade-label");
+    if (!label) return;
+    if (anyBox || grades.length === 0) {
+      label.textContent = "Any grade";
+    } else if (grades.length === 1) {
+      const cb = document.querySelector(`#grade-menu input[value="${CSS.escape(grades[0])}"]`);
+      label.textContent = cb?.closest('label')?.textContent.trim() ?? grades[0];
+    } else {
+      label.textContent = `${grades.length} grades`;
+    }
+  }
+
+  function toggleGradeMenu() {
+    const menu = document.getElementById("grade-menu");
+    menu.style.display = menu.style.display === "none" ? "block" : "none";
+  }
+
+  document.addEventListener("click", e => {
+    const wrap = document.getElementById("grade-wrap");
+    if (wrap && !wrap.contains(e.target)) {
+      document.getElementById("grade-menu").style.display = "none";
+    }
+  });
+  // ─────────────────────────────────────────────────────────────────────
+
+  // Restore from cache on page refresh — must run after all const/let declarations
+  // are initialized (calling earlier causes TDZ ReferenceErrors that are silently swallowed)
+  updateGradeOptions();
+  if (sessionStorage.getItem("auth") === "1") loadCardCache();
+
+  window._row = () => allRows[0]; // debug: inspect first card's fields
+
+  function esc(s) {
+    return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+</script>
+</body>
+</html>
