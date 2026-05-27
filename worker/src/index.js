@@ -381,8 +381,9 @@ async function altPriceByCert(url, env) {
     }
 
     const [assetData, popsData] = await Promise.all([
-      altGql("AssetDetails", `query AssetDetails($id: ID!) { asset(id: $id) { id altValueInfo { currentAltValue } } }`, {
+      altGql("AssetDetails", `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) { asset(id: $id) { id altValueInfo(tsFilter: $tsFilter) { currentAltValue } } }`, {
         id: certObj.asset.id,
+        tsFilter: { gradeNumber: certObj.gradeNumber, gradingCompany: certObj.gradingCompany, autograph: null },
       }),
       altGql("AssetCardPops", `query AssetCardPops($id: ID!) { asset(id: $id) { id cardPops { gradingCompany gradeNumber count } } }`, {
         id: certObj.asset.id,

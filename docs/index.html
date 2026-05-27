@@ -435,7 +435,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.74</footer>
+<footer>v0.75</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1003,10 +1003,10 @@
     }
   }`;
 
-  const ASSET_QUERY = `query AssetDetails($id: ID!) {
+  const ASSET_QUERY = `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
     asset(id: $id) {
       id
-      altValueInfo { currentAltValue }
+      altValueInfo(tsFilter: $tsFilter) { currentAltValue }
       __typename
     }
   }`;
@@ -1056,7 +1056,7 @@
       const cert = certData.data?.cert;
       if (!cert?.asset?.id) return null;
       const [assetData, popsData] = await Promise.all([
-        altPost("AssetDetails", { id: cert.asset.id }),
+        altPost("AssetDetails", { id: cert.asset.id, tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany, autograph: null } }),
         altPost("AssetCardPops", { id: cert.asset.id }),
       ]);
       const cardPops = popsData.data?.asset?.cardPops ?? [];
