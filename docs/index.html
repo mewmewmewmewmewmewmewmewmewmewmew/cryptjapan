@@ -1040,7 +1040,9 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ operationName: operation, query: QUERY_MAP[operation] ?? ASSET_QUERY, variables }),
     });
-    return res.json();
+    const data = await res.json();
+    if (data.errors) console.warn(`[Alt/${operation}]`, JSON.stringify(data.errors));
+    return data;
   }
 
   async function fetchAltPrice(certNumber) {
