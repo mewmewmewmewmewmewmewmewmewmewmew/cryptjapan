@@ -102,9 +102,11 @@
     button#refresh-list-btn { margin-left: auto; }
     button#refresh-list-btn:hover:not(:disabled),
     button#refresh-alt-btn:hover:not(:disabled),
+    button#refresh-cl-btn:hover:not(:disabled),
     button#refresh-snkr-btn:hover:not(:disabled) { border-color: #555; }
     button#refresh-list-btn:disabled,
     button#refresh-alt-btn:disabled,
+    button#refresh-cl-btn:disabled,
     button#refresh-snkr-btn:disabled { opacity: 0.3; cursor: not-allowed; }
 
     .status {
@@ -343,6 +345,7 @@
   <span>CollectorCrypt Marketplace</span>
   <button id="refresh-list-btn" onclick="refreshCardList()" disabled>↻ Refresh List</button>
   <button id="refresh-alt-btn" onclick="refreshAlt()" disabled>↻ Refresh ALT</button>
+  <button id="refresh-cl-btn" onclick="refreshCl()" disabled>↻ Refresh CL</button>
   <button id="refresh-snkr-btn" onclick="refreshSnkr()" disabled>↻ Refresh SD</button>
 </header>
 
@@ -447,7 +450,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.76</footer>
+<footer>v0.77</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -642,6 +645,7 @@
           status.textContent = (cached.statusText || `${allRows.length} listings loaded`) + " (cached)";
           document.getElementById("refresh-list-btn").disabled = false;
           document.getElementById("refresh-alt-btn").disabled = false;
+          document.getElementById("refresh-cl-btn").disabled = false;
       document.getElementById("refresh-snkr-btn").disabled = false;
           applyLiveFilters();
           window.scrollTo(0, 0);
@@ -749,6 +753,7 @@
 
       document.getElementById("refresh-list-btn").disabled = false;
       document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-cl-btn").disabled = false;
       document.getElementById("refresh-snkr-btn").disabled = false;
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
@@ -1550,6 +1555,7 @@
       window.scrollTo(0, 0);
       document.getElementById("refresh-list-btn").disabled = false;
       document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-cl-btn").disabled = false;
       document.getElementById("refresh-snkr-btn").disabled = false;
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
         fetchClPrices(cards);
@@ -1668,6 +1674,7 @@
       window.scrollTo(0, 0);
       document.getElementById("refresh-list-btn").disabled = false;
       document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-cl-btn").disabled = false;
       document.getElementById("refresh-snkr-btn").disabled = false;
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
         fetchClPrices(cards);
@@ -1682,19 +1689,34 @@
   async function refreshAlt() {
     const btn = document.getElementById("refresh-alt-btn");
     btn.disabled = true;
-    for (const c of allRows) { if (c.gradingID) { altCache.delete(c.gradingID); clCache.delete(c.gradingID); } }
+    for (const c of allRows) { if (c.gradingID) altCache.delete(c.gradingID); }
     for (const c of allRows) {
       const cert = c.gradingID;
       const altCell = document.querySelector(`.alt-price[data-cert="${cert}"]`);
       if (altCell) altCell.innerHTML = '<span class="alt-loading">···</span>';
-      const clCell = document.querySelector(`.cl-price[data-cert="${cert}"]`);
-      if (clCell) clCell.innerHTML = '<span class="alt-loading">···</span>';
-      for (const cls of ["alt-delta","alt-pct","cl-delta","cl-pct"]) {
+      for (const cls of ["alt-delta","alt-pct"]) {
         const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
         if (el) el.textContent = "";
       }
     }
-    await Promise.all([fetchAltPrices(allRows), fetchClPrices(allRows)]);
+    await fetchAltPrices(allRows);
+    btn.disabled = false;
+  }
+
+  async function refreshCl() {
+    const btn = document.getElementById("refresh-cl-btn");
+    btn.disabled = true;
+    for (const c of allRows) { if (c.gradingID) clCache.delete(c.gradingID); }
+    for (const c of allRows) {
+      const cert = c.gradingID;
+      const clCell = document.querySelector(`.cl-price[data-cert="${cert}"]`);
+      if (clCell) clCell.innerHTML = '<span class="alt-loading">···</span>';
+      for (const cls of ["cl-delta","cl-pct"]) {
+        const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
+        if (el) el.textContent = "";
+      }
+    }
+    await fetchClPrices(allRows);
     btn.disabled = false;
   }
 
@@ -1776,6 +1798,7 @@
       document.getElementById("status").textContent = (cached.statusText || "") + " (cached)";
       document.getElementById("refresh-list-btn").disabled = false;
       document.getElementById("refresh-alt-btn").disabled = false;
+      document.getElementById("refresh-cl-btn").disabled = false;
       document.getElementById("refresh-snkr-btn").disabled = false;
       applyLiveFilters();
       // If any Japanese cards are missing SNKRDUNK prices (e.g. key changed after alt data loaded),

@@ -469,9 +469,16 @@ async function cardladderToken(env) {
   const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${CL_FIREBASE_KEY}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ email: env.CARDLADDER_EMAIL, password: env.CARDLADDER_PASSWORD, returnSecureToken: true }),
+    body: JSON.stringify({
+      email: (env.CARDLADDER_EMAIL || "").trim(),
+      password: (env.CARDLADDER_PASSWORD || "").trim(),
+      returnSecureToken: true,
+    }),
   });
-  if (!res.ok) throw new Error(`CardLadder auth failed: HTTP ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`CardLadder auth failed: HTTP ${res.status} ${body}`);
+  }
   const d = await res.json();
   clAuth = { token: d.idToken, refreshToken: d.refreshToken, exp: now + parseInt(d.expiresIn) * 1000 };
   return clAuth.token;
@@ -502,8 +509,12 @@ async function cardladderPrice(url, env) {
         },
         body: JSON.stringify({ data }),
       });
-      if (!res.ok) throw new Error(`${fn} HTTP ${res.status}`);
+      if (!res.ok) {
+        const errBody = await res.text();
+        throw new Error(`${fn} HTTP ${res.status} ${errBody}`);
+      }
       const body = await res.json();
+      if (body.error) throw new Error(`${fn} error: ${JSON.stringify(body.error)}`);
       return body.result ?? null;
     };
 
