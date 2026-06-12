@@ -450,7 +450,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.84</footer>
+<footer>v0.85</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1207,12 +1207,12 @@
     try {
       const res = await fetch(`${WORKER_URL}/cardladder-price?cert=${encodeURIComponent(certNumber)}&grader=${grader}`);
       const data = await res.json();
-      const result = data.gemRateId ? {
-        price: data.clPrice ?? null,
+      const result = data.clPrice != null ? {
+        price: data.clPrice,
         pop: data.pop ?? null,
         lastSalePrice: data.lastSalePrice ?? null,
         lastSaleDate: data.lastSaleDate ?? null,
-        confidence: data.confidence ?? null,
+        salesCount: data.salesCount ?? null,
       } : null;
       clCache.set(certNumber, result);
       return result;
@@ -1231,7 +1231,13 @@
       return;
     }
     const clPrice = Number(result.price);
-    const title = result.confidence != null ? `confidence ${result.confidence}/10${result.pop != null ? `, pop ${result.pop}` : ""}` : "";
+    const titleParts = [];
+    if (result.lastSalePrice != null && result.lastSaleDate) {
+      titleParts.push(`last sale $${Number(result.lastSalePrice).toFixed(2)} on ${result.lastSaleDate.slice(0, 10)}`);
+    }
+    if (result.salesCount != null) titleParts.push(`${result.salesCount} recent sales`);
+    if (result.pop != null) titleParts.push(`pop ${result.pop}`);
+    const title = titleParts.join(", ");
     priceCell.innerHTML = `<span class="cl-link" title="${esc(title)}">$${clPrice.toFixed(2)}</span>`;
     if (ccPriceUsdc != null) {
       const delta = clPrice - ccPriceUsdc;

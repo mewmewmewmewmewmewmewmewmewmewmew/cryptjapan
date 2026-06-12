@@ -2,7 +2,6 @@
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
-const CL_BASE = "https://us-central1-cardladder-71d53.cloudfunctions.net";
 // Public Firebase web client key from CardLadder's JS bundle (not a secret)
 const CL_FIREBASE_KEY = "AIzaSyBqbxgaaGlpeb1F6HRvEW319OcuCsbkAHM";
 
@@ -34,10 +33,6 @@ export default {
 
     if (path === "/cardladder-price") {
       return cardladderPrice(url, env);
-    }
-
-    if (path === "/cardladder-debug") {
-      return cardladderDebug(url, env);
     }
 
     if (path.startsWith("/alt/")) {
@@ -488,6 +483,12 @@ async function cardladderToken(env) {
   return clAuth.token;
 }
 
+// Project hash for CardLadder's Cloud Run v2 functions (region "uc" = us-central1).
+// httpcertinfo/httpcardestimate (the originally documented chain) no longer
+// exist; httpbuildcollectioncard (card info + pop) and httpprofilesales
+// (recent eBay sales) work directly from {cert, grader} without a gemRateId.
+const CL_HASH = "zzvl7ri3bq";
+
 async function cardladderPrice(url, env) {
   const cert = url.searchParams.get("cert") || "";
   const grader = (url.searchParams.get("grader") || "psa").toLowerCase();
@@ -504,7 +505,7 @@ async function cardladderPrice(url, env) {
   try {
     const token = await cardladderToken(env);
     const clPost = async (fn, data) => {
-      const res = await fetch(`${CL_BASE}/${fn}`, {
+      const res = await fetch(`https://${fn}-${CL_HASH}-uc.a.run.app`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -522,69 +523,29 @@ async function cardladderPrice(url, env) {
       return body.result ?? null;
     };
 
-    const info = await clPost("httpcertinfo", { cert, grader });
-    if (!info?.gemRateId) return json({ clPrice: null, gemRateId: null });
+    const [card, salesRes] = await Promise.all([
+      clPost("httpbuildcollectioncard", { cert, grader }),
+      clPost("httpprofilesales", { cert, grader }),
+    ]);
 
-    const est = await clPost("httpcardestimate", {
-      gemRateId: info.gemRateId,
-      condition: info.condition,
-      gradingCompany: grader,
-    });
+    const sales = salesRes?.sales ?? [];
+    if (!sales.length) {
+      return json({ clPrice: null, pop: card?.pop ?? null, description: card?.label ?? null });
+    }
+
+    const recent = sales.slice(0, 3);
+    const clPrice = recent.reduce((sum, s) => sum + Number(s.price), 0) / recent.length;
 
     return json({
-      clPrice: est?.estimatedValue ?? null,
-      pop: est?.population ?? null,
-      lastSalePrice: est?.lastSalePrice ?? null,
-      lastSaleDate: est?.lastSaleDate ?? null,
-      confidence: est?.confidence ?? null,
-      condition: info.condition ?? null,
-      description: info.cardDescription ?? null,
-      gemRateId: info.gemRateId,
+      clPrice: Math.round(clPrice * 100) / 100,
+      lastSalePrice: Number(sales[0].price),
+      lastSaleDate: sales[0].date,
+      pop: card?.pop ?? null,
+      description: card?.label ?? null,
+      salesCount: sales.length,
     });
   } catch (e) {
     return json({ clPrice: null, error: String(e) });
-  }
-}
-
-// Temporary diagnostic endpoint. httpprofilesales({cert,grader}) works without
-// gemRateId and returns real eBay sales. Dump the full sales array (date+price)
-// to check sort order and decide how to compute a "CL Price" from it.
-const CL_HASH = "zzvl7ri3bq";
-
-async function cardladderDebug(url, env) {
-  const cert = url.searchParams.get("cert") || "";
-  const grader = (url.searchParams.get("grader") || "psa").toLowerCase();
-
-  const json = obj => new Response(JSON.stringify(obj, null, 2), {
-    headers: { ...CORS, "Content-Type": "application/json" },
-  });
-
-  let token;
-  try {
-    token = await cardladderToken(env);
-  } catch (e) {
-    return json({ error: `auth failed: ${e.message}` });
-  }
-
-  try {
-    const res = await fetch(`https://httpprofilesales-${CL_HASH}-uc.a.run.app`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-        "Referer": "https://app.cardladder.com/",
-      },
-      body: JSON.stringify({ data: { cert, grader } }),
-    });
-    const body = await res.json();
-    const sales = body?.result?.sales ?? [];
-    return json({
-      status: res.status,
-      count: sales.length,
-      sales: sales.map(s => ({ date: s.date, price: s.price, platform: s.platform, listingType: s.listingType })),
-    });
-  } catch (e) {
-    return json({ error: String(e) });
   }
 }
 
