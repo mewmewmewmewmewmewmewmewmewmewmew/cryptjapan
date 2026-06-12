@@ -450,7 +450,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.86</footer>
+<footer>v0.87</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1199,14 +1199,11 @@
   }
 
   async function fetchClPrice(certNumber, grader) {
-    if (clCache.has(certNumber)) {
-      const cached = clCache.get(certNumber);
-      if (!cached || cached.price !== null) return cached;
-      // re-fetch if price is null (stale cache)
-    }
+    if (clCache.has(certNumber)) return clCache.get(certNumber);
     try {
       const res = await fetch(`${WORKER_URL}/cardladder-price?cert=${encodeURIComponent(certNumber)}&grader=${grader}`);
       const data = await res.json();
+      if (data.error) return null; // transient failure — don't cache, retry next load
       const result = data.clPrice != null ? {
         price: data.clPrice,
         pop: data.pop ?? null,
@@ -1214,10 +1211,10 @@
         lastSaleDate: data.lastSaleDate ?? null,
         salesCount: data.salesCount ?? null,
         avgCount: data.avgCount ?? null,
-      } : null;
+      } : { price: null, pop: data.pop ?? null, description: data.description ?? null };
       clCache.set(certNumber, result);
       return result;
-    } catch { return null; }
+    } catch { return null; } // network error — don't cache, retry next load
   }
 
   function updateClCell(certNumber, result, ccPriceUsdc) {
@@ -1268,7 +1265,7 @@
     }
   }
 
-  async function fetchClPrices(cards, concurrency = 6) {
+  async function fetchClPrices(cards, concurrency = 3) {
     const rate = await getSolPrice();
     const certPrices = new Map();
     for (const c of cards) {

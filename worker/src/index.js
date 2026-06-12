@@ -447,42 +447,55 @@ async function altPriceByCert(url, env) {
 // Firebase idToken cache — survives across requests within a worker isolate.
 // Tokens last 1 hour; refresh via refreshToken when possible, else re-sign-in.
 let clAuth = { token: null, refreshToken: null, exp: 0 };
+// Dedupe concurrent token requests within an isolate so a burst of price
+// lookups doesn't fire several signInWithPassword calls at once (Firebase
+// rate-limits repeated sign-ins for the same account).
+let clAuthPromise = null;
 
 async function cardladderToken(env) {
   const now = Date.now();
   if (clAuth.token && now < clAuth.exp - 60_000) return clAuth.token;
+  if (clAuthPromise) return clAuthPromise;
 
-  if (clAuth.refreshToken) {
-    try {
-      const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${CL_FIREBASE_KEY}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ grant_type: "refresh_token", refresh_token: clAuth.refreshToken }),
-      });
-      if (res.ok) {
-        const d = await res.json();
-        clAuth = { token: d.id_token, refreshToken: d.refresh_token, exp: now + parseInt(d.expires_in) * 1000 };
-        return clAuth.token;
-      }
-    } catch {}
-  }
+  clAuthPromise = (async () => {
+    if (clAuth.refreshToken) {
+      try {
+        const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${CL_FIREBASE_KEY}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ grant_type: "refresh_token", refresh_token: clAuth.refreshToken }),
+        });
+        if (res.ok) {
+          const d = await res.json();
+          clAuth = { token: d.id_token, refreshToken: d.refresh_token, exp: Date.now() + parseInt(d.expires_in) * 1000 };
+          return clAuth.token;
+        }
+      } catch {}
+    }
 
-  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${CL_FIREBASE_KEY}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      email: (env.CARDLADDER_EMAIL || "").trim(),
-      password: (env.CARDLADDER_PASSWORD || "").trim(),
-      returnSecureToken: true,
-    }),
-  });
-  if (!res.ok) {
-    const body = await res.text();
-    throw new Error(`CardLadder auth failed: HTTP ${res.status} ${body}`);
+    const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${CL_FIREBASE_KEY}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: (env.CARDLADDER_EMAIL || "").trim(),
+        password: (env.CARDLADDER_PASSWORD || "").trim(),
+        returnSecureToken: true,
+      }),
+    });
+    if (!res.ok) {
+      const body = await res.text();
+      throw new Error(`CardLadder auth failed: HTTP ${res.status} ${body}`);
+    }
+    const d = await res.json();
+    clAuth = { token: d.idToken, refreshToken: d.refreshToken, exp: Date.now() + parseInt(d.expiresIn) * 1000 };
+    return clAuth.token;
+  })();
+
+  try {
+    return await clAuthPromise;
+  } finally {
+    clAuthPromise = null;
   }
-  const d = await res.json();
-  clAuth = { token: d.idToken, refreshToken: d.refreshToken, exp: now + parseInt(d.expiresIn) * 1000 };
-  return clAuth.token;
 }
 
 // Project hash for CardLadder's Cloud Run v2 functions (region "uc" = us-central1).
@@ -506,7 +519,7 @@ async function cardladderPrice(url, env) {
 
   try {
     const token = await cardladderToken(env);
-    const clPost = async (fn, data) => {
+    const clPostOnce = async (fn, data) => {
       const res = await fetch(`https://${fn}-${CL_HASH}-uc.a.run.app`, {
         method: "POST",
         headers: {
@@ -523,6 +536,17 @@ async function cardladderPrice(url, env) {
       const body = await res.json();
       if (body.error) throw new Error(`${fn} error: ${JSON.stringify(body.error)}`);
       return body.result ?? null;
+    };
+    // CardLadder rate-limits under concurrent load (HTTP 429) — retry once
+    // after a short delay rather than surfacing a transient failure.
+    const clPost = async (fn, data) => {
+      try {
+        return await clPostOnce(fn, data);
+      } catch (e) {
+        if (!/HTTP 429/.test(String(e))) throw e;
+        await new Promise(r => setTimeout(r, 500));
+        return clPostOnce(fn, data);
+      }
     };
 
     const [card, salesRes] = await Promise.all([
