@@ -36,6 +36,10 @@ export default {
       return cardladderPrice(url, env);
     }
 
+    if (path === "/cardladder-debug") {
+      return cardladderDebug(url, env);
+    }
+
     if (path.startsWith("/alt/")) {
       return proxyAlt(request, path, env);
     }
@@ -540,6 +544,50 @@ async function cardladderPrice(url, env) {
   } catch (e) {
     return json({ clPrice: null, error: String(e) });
   }
+}
+
+// Temporary diagnostic endpoint to find the correct CardLadder Cloud Function
+// host/name for httpcertinfo, since the assumed us-central1/lowercase combo 404s.
+const CL_DEBUG_REGIONS = ["us-central1", "us-east1", "us-east4", "us-west1", "us-west2", "europe-west1"];
+const CL_DEBUG_NAMES = ["httpcertinfo", "httpCertInfo"];
+
+async function cardladderDebug(url, env) {
+  const cert = url.searchParams.get("cert") || "";
+  const grader = (url.searchParams.get("grader") || "psa").toLowerCase();
+
+  const json = obj => new Response(JSON.stringify(obj, null, 2), {
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
+
+  let token;
+  try {
+    token = await cardladderToken(env);
+  } catch (e) {
+    return json({ error: `auth failed: ${e.message}` });
+  }
+
+  const results = [];
+  for (const region of CL_DEBUG_REGIONS) {
+    for (const name of CL_DEBUG_NAMES) {
+      const base = `https://${region}-cardladder-71d53.cloudfunctions.net`;
+      try {
+        const res = await fetch(`${base}/${name}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${token}`,
+            "Referer": "https://app.cardladder.com/",
+          },
+          body: JSON.stringify({ data: { cert, grader } }),
+        });
+        const text = await res.text();
+        results.push({ region, name, status: res.status, body: text.slice(0, 300) });
+      } catch (e) {
+        results.push({ region, name, error: String(e) });
+      }
+    }
+  }
+  return json({ results });
 }
 
 async function phygitalsListings(workerUrl) {
