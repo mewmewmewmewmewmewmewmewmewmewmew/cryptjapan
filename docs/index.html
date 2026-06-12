@@ -450,7 +450,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.85</footer>
+<footer>v0.86</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1213,6 +1213,7 @@
         lastSalePrice: data.lastSalePrice ?? null,
         lastSaleDate: data.lastSaleDate ?? null,
         salesCount: data.salesCount ?? null,
+        avgCount: data.avgCount ?? null,
       } : null;
       clCache.set(certNumber, result);
       return result;
@@ -1232,6 +1233,7 @@
     }
     const clPrice = Number(result.price);
     const titleParts = [];
+    if (result.avgCount != null) titleParts.push(`avg of ${result.avgCount} sale${result.avgCount === 1 ? "" : "s"}`);
     if (result.lastSalePrice != null && result.lastSaleDate) {
       titleParts.push(`last sale $${Number(result.lastSalePrice).toFixed(2)} on ${result.lastSaleDate.slice(0, 10)}`);
     }

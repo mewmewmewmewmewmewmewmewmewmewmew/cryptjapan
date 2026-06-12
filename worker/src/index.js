@@ -18,6 +18,10 @@ const SNKRDUNK_HEADERS = {
   "Referer": "https://snkrdunk.com/",
 };
 
+// Shared time windows for "recent sales" averaging (SNKRDUNK + CardLadder)
+const ONE_WEEK_MS   = 7  * 24 * 60 * 60 * 1000;
+const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
+
 export default {
   async fetch(request, env) {
     if (request.method === "OPTIONS") {
@@ -224,8 +228,6 @@ async function snkrdunkPrice(url) {
   const cardTotalNorm = cardTotal ? parseInt(cardTotal, 10) : null;
   const hasMasterBall = hasMasterBallParam || keywords.toLowerCase().includes("master ball");
 
-  const ONE_WEEK_MS   = 7  * 24 * 60 * 60 * 1000;
-  const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
   const apiHeaders = { "Accept": "application/json", "User-Agent": SNKRDUNK_HEADERS["User-Agent"] };
   const pickImage = o => o?.primaryMedia?.imageUrl ?? o?.image ?? o?.imageUrl ?? o?.image_url ?? o?.thumbnail ?? o?.thumbnailUrl ?? o?.thumbnail_url ?? (Array.isArray(o?.images) ? o.images[0] : null) ?? null;
 
@@ -533,11 +535,25 @@ async function cardladderPrice(url, env) {
       return json({ clPrice: null, pop: card?.pop ?? null, description: card?.label ?? null });
     }
 
-    const recent = sales.slice(0, 3);
-    const clPrice = recent.reduce((sum, s) => sum + Number(s.price), 0) / recent.length;
+    // Same windowed-average approach as SNKRDUNK: prefer sales from the last
+    // week (with outlier filtering), widen to 3 weeks if too few, and for
+    // low-movement cards with nothing recent fall back to the single most
+    // recent sale rather than averaging stale sales from different eras.
+    const now = Date.now();
+    const withAge = sales.map(s => ({ price: Number(s.price), age: now - new Date(s.date).getTime() }));
+    const inWeekRaw = withAge.filter(s => s.age <= ONE_WEEK_MS);
+    const inThreeWeeks = withAge.filter(s => s.age <= THREE_WEEK_MS);
+    let inWeek = inWeekRaw;
+    if (inWeekRaw.length >= 2) {
+      const med = priceMedian(inWeekRaw.map(s => s.price));
+      inWeek = inWeekRaw.filter(s => s.price <= med * 3);
+    }
+    const useItems = (inWeek.length >= 2 ? inWeek : inThreeWeeks.length >= 1 ? inThreeWeeks : [withAge[0]]).slice(0, 3);
+    const clPrice = useItems.reduce((sum, s) => sum + s.price, 0) / useItems.length;
 
     return json({
       clPrice: Math.round(clPrice * 100) / 100,
+      avgCount: useItems.length,
       lastSalePrice: Number(sales[0].price),
       lastSaleDate: sales[0].date,
       pop: card?.pop ?? null,
