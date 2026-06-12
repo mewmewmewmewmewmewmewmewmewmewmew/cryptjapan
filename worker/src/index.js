@@ -547,16 +547,13 @@ async function cardladderPrice(url, env) {
 }
 
 // Temporary diagnostic endpoint to find the correct CardLadder Cloud Function
-// URL for httpcertinfo/httpcardestimate. The cloudfunctions.net pattern 404s
-// across every region/casing, but the spec's /search endpoint lives on a
-// Cloud Run v2 URL (https://search-zzvl7ri3bq-uc.a.run.app) — same project
-// hash likely applies to other v2 functions in this project.
-const CL_DEBUG_TARGETS = [
-  { label: "gcf us-central1 httpcertinfo", url: "https://us-central1-cardladder-71d53.cloudfunctions.net/httpcertinfo" },
-  { label: "cloudrun httpcertinfo", url: "https://httpcertinfo-zzvl7ri3bq-uc.a.run.app" },
-  { label: "cloudrun httpCertInfo", url: "https://httpCertInfo-zzvl7ri3bq-uc.a.run.app" },
-  { label: "cloudrun httpcardestimate", url: "https://httpcardestimate-zzvl7ri3bq-uc.a.run.app" },
-];
+// URL for httpcertinfo. httpcardestimate is confirmed live at
+// https://httpcardestimate-zzvl7ri3bq-uc.a.run.app (project hash zzvl7ri3bq,
+// region code "uc" = us-central1). httpcertinfo 404s at that same hash+region,
+// so try other region codes (same hash) and a few alternate names.
+const CL_HASH = "zzvl7ri3bq";
+const CL_REGION_CODES = ["uc", "ue1", "ue4", "uw1", "uw2", "ew1", "ew3", "an3"];
+const CL_ALT_NAMES = ["httpcardinfo", "certinfo", "getcertinfo", "httpgetcertinfo"];
 
 async function cardladderDebug(url, env) {
   const cert = url.searchParams.get("cert") || "";
@@ -573,8 +570,7 @@ async function cardladderDebug(url, env) {
     return json({ error: `auth failed: ${e.message}` });
   }
 
-  const results = [];
-  for (const { label, url: target } of CL_DEBUG_TARGETS) {
+  const post = async (target, data) => {
     try {
       const res = await fetch(target, {
         method: "POST",
@@ -583,14 +579,34 @@ async function cardladderDebug(url, env) {
           "Authorization": `Bearer ${token}`,
           "Referer": "https://app.cardladder.com/",
         },
-        body: JSON.stringify({ data: { cert, grader } }),
+        body: JSON.stringify({ data }),
       });
       const text = await res.text();
-      results.push({ label, url: target, status: res.status, body: text.slice(0, 400) });
+      return { url: target, status: res.status, body: text.slice(0, 400) };
     } catch (e) {
-      results.push({ label, url: target, error: String(e) });
+      return { url: target, error: String(e) };
     }
+  };
+
+  const results = [];
+
+  // Sanity check: httpcardestimate with the spec's real example payload
+  results.push({ check: "httpcardestimate real payload", ...await post("https://httpcardestimate-zzvl7ri3bq-uc.a.run.app", {
+    gemRateId: "92749c4df01134dd270f8334b7482bf16d0b4dae",
+    condition: "g10pristine",
+    gradingCompany: "cgc",
+  }) });
+
+  // httpcertinfo across region codes with the same project hash
+  for (const code of CL_REGION_CODES) {
+    results.push({ check: `httpcertinfo @ ${code}`, ...await post(`https://httpcertinfo-${CL_HASH}-${code}.a.run.app`, { cert, grader }) });
   }
+
+  // Alternate name guesses at us-central1
+  for (const name of CL_ALT_NAMES) {
+    results.push({ check: `${name} @ uc`, ...await post(`https://${name}-${CL_HASH}-uc.a.run.app`, { cert, grader }) });
+  }
+
   return json({ results });
 }
 
