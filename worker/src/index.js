@@ -504,6 +504,12 @@ async function cardladderToken(env) {
 // (recent eBay sales) work directly from {cert, grader} without a gemRateId.
 const CL_HASH = "zzvl7ri3bq";
 
+// When CardLadder returns its daily quota error, skip further CardLadder
+// calls within this isolate for a while rather than re-auth + re-fetch on
+// every card, since retries are guaranteed to fail until the quota resets.
+let clQuotaExceededUntil = 0;
+const isQuotaError = msg => /RESOURCE_EXHAUSTED|Daily request limit/i.test(msg);
+
 async function cardladderPrice(url, env) {
   const cert = url.searchParams.get("cert") || "";
   const grader = (url.searchParams.get("grader") || "psa").toLowerCase();
@@ -516,6 +522,10 @@ async function cardladderPrice(url, env) {
   const json = obj => new Response(JSON.stringify(obj), {
     headers: { ...CORS, "Content-Type": "application/json" },
   });
+
+  if (Date.now() < clQuotaExceededUntil) {
+    return json({ clPrice: null, error: "CardLadder daily request limit reached", quotaExceeded: true });
+  }
 
   try {
     const token = await cardladderToken(env);
@@ -538,12 +548,17 @@ async function cardladderPrice(url, env) {
       return body.result ?? null;
     };
     // CardLadder rate-limits under concurrent load (HTTP 429) — retry once
-    // after a short delay rather than surfacing a transient failure.
+    // after a short delay, unless it's the daily quota (won't recover on retry).
     const clPost = async (fn, data) => {
       try {
         return await clPostOnce(fn, data);
       } catch (e) {
-        if (!/HTTP 429/.test(String(e))) throw e;
+        const msg = String(e);
+        if (isQuotaError(msg)) {
+          clQuotaExceededUntil = Date.now() + 60 * 60 * 1000;
+          throw e;
+        }
+        if (!/HTTP 429/.test(msg)) throw e;
         await new Promise(r => setTimeout(r, 500));
         return clPostOnce(fn, data);
       }
@@ -585,7 +600,8 @@ async function cardladderPrice(url, env) {
       salesCount: sales.length,
     });
   } catch (e) {
-    return json({ clPrice: null, error: String(e) });
+    const msg = String(e);
+    return json({ clPrice: null, error: msg, quotaExceeded: isQuotaError(msg) });
   }
 }
 

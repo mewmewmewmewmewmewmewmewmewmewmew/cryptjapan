@@ -450,7 +450,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.87</footer>
+<footer>v0.88</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1203,6 +1203,12 @@
     try {
       const res = await fetch(`${WORKER_URL}/cardladder-price?cert=${encodeURIComponent(certNumber)}&grader=${grader}`);
       const data = await res.json();
+      if (data.quotaExceeded) {
+        // Daily quota won't recover until tomorrow — cache so we stop retrying.
+        const result = { price: null, quotaExceeded: true };
+        clCache.set(certNumber, result);
+        return result;
+      }
       if (data.error) return null; // transient failure — don't cache, retry next load
       const result = data.clPrice != null ? {
         price: data.clPrice,
@@ -1223,7 +1229,9 @@
     const pctCell = document.querySelector(`.cl-pct[data-cert="${certNumber}"]`);
     if (!priceCell) return;
     if (!result?.price) {
-      priceCell.textContent = "—";
+      priceCell.innerHTML = result?.quotaExceeded
+        ? `<span title="CardLadder daily request limit reached — try again tomorrow">—</span>`
+        : "—";
       if (deltaCell) deltaCell.textContent = "";
       if (pctCell) pctCell.textContent = "";
       return;
