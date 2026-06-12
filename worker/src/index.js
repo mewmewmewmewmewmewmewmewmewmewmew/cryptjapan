@@ -546,24 +546,11 @@ async function cardladderPrice(url, env) {
   }
 }
 
-// Temporary diagnostic endpoint to find the correct CardLadder Cloud Function
-// for cert -> gemRateId lookup. httpcardestimate is confirmed live at
-// https://httpcardestimate-zzvl7ri3bq-uc.a.run.app (project hash zzvl7ri3bq,
-// region code "uc" = us-central1) and returns real data. httpcertinfo doesn't
-// exist under any name/region variant, so try the other {cert,grader}-shaped
-// functions from the spec's "Other endpoints" table at the same hash+region.
+// Temporary diagnostic endpoint. httpbuildcollectioncard (cert -> card info)
+// and httpcardestimate (gemRateId -> price) are both confirmed live at
+// https://<name>-zzvl7ri3bq-uc.a.run.app. Dump the full httpbuildcollectioncard
+// response to check whether it includes gemRateId for chaining.
 const CL_HASH = "zzvl7ri3bq";
-const CL_CANDIDATE_NAMES = [
-  "httprefreshcert",
-  "httpbuildcollectioncard",
-  "httppopulationdata",
-  "httpcardimagedetection",
-  "httpindexfromdescription",
-  "httppsagetspecfromcert",
-  "httpprofilesales",
-  "http_cert_info",
-  "http-cert-info",
-];
 
 async function cardladderDebug(url, env) {
   const cert = url.searchParams.get("cert") || "";
@@ -580,30 +567,21 @@ async function cardladderDebug(url, env) {
     return json({ error: `auth failed: ${e.message}` });
   }
 
-  const post = async (target, data) => {
-    try {
-      const res = await fetch(target, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${token}`,
-          "Referer": "https://app.cardladder.com/",
-        },
-        body: JSON.stringify({ data }),
-      });
-      const text = await res.text();
-      return { url: target, status: res.status, body: text.slice(0, 400) };
-    } catch (e) {
-      return { url: target, error: String(e) };
-    }
-  };
-
-  const results = [];
-  for (const name of CL_CANDIDATE_NAMES) {
-    results.push({ check: name, ...await post(`https://${name}-${CL_HASH}-uc.a.run.app`, { cert, grader }) });
+  try {
+    const res = await fetch(`https://httpbuildcollectioncard-${CL_HASH}-uc.a.run.app`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": `Bearer ${token}`,
+        "Referer": "https://app.cardladder.com/",
+      },
+      body: JSON.stringify({ data: { cert, grader } }),
+    });
+    const body = await res.json();
+    return json({ status: res.status, body });
+  } catch (e) {
+    return json({ error: String(e) });
   }
-
-  return json({ results });
 }
 
 async function phygitalsListings(workerUrl) {
