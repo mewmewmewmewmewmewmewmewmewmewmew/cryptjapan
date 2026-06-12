@@ -546,10 +546,10 @@ async function cardladderPrice(url, env) {
   }
 }
 
-// Temporary diagnostic endpoint. httpbuildcollectioncard (cert -> card info)
-// and httpcardestimate (gemRateId -> price) are both confirmed live at
-// https://<name>-zzvl7ri3bq-uc.a.run.app. Dump the full httpbuildcollectioncard
-// response to check whether it includes gemRateId for chaining.
+// Temporary diagnostic endpoint. httpbuildcollectioncard (cert -> card info,
+// no gemRateId) and httpcardestimate (price) are confirmed live at
+// https://<name>-zzvl7ri3bq-uc.a.run.app. Try several request shapes against
+// httpcardestimate to see if it can work without a gemRateId.
 const CL_HASH = "zzvl7ri3bq";
 
 async function cardladderDebug(url, env) {
@@ -567,21 +567,34 @@ async function cardladderDebug(url, env) {
     return json({ error: `auth failed: ${e.message}` });
   }
 
-  try {
-    const res = await fetch(`https://httpbuildcollectioncard-${CL_HASH}-uc.a.run.app`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${token}`,
-        "Referer": "https://app.cardladder.com/",
-      },
-      body: JSON.stringify({ data: { cert, grader } }),
-    });
-    const body = await res.json();
-    return json({ status: res.status, body });
-  } catch (e) {
-    return json({ error: String(e) });
-  }
+  const post = async (target, data) => {
+    try {
+      const res = await fetch(target, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "Referer": "https://app.cardladder.com/",
+        },
+        body: JSON.stringify({ data }),
+      });
+      const text = await res.text();
+      return { url: target, status: res.status, body: text.slice(0, 600) };
+    } catch (e) {
+      return { url: target, error: String(e) };
+    }
+  };
+
+  const label = "2019 Pokemon Japanese S Promo #003 Rayquaza-Holo V Starter Sets";
+  const est = "https://httpcardestimate-" + CL_HASH + "-uc.a.run.app";
+
+  const results = [];
+  results.push({ check: "estimate cert+grader", ...await post(est, { cert, grader }) });
+  results.push({ check: "estimate desc+psa10", ...await post(est, { description: label, condition: "psa10", gradingCompany: grader }) });
+  results.push({ check: "estimate desc+g10", ...await post(est, { description: label, condition: "g10", gradingCompany: grader }) });
+  results.push({ check: "estimate cert+condition", ...await post(est, { cert, condition: "psa10", gradingCompany: grader }) });
+
+  return json({ results });
 }
 
 async function phygitalsListings(workerUrl) {
