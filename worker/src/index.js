@@ -547,9 +547,16 @@ async function cardladderPrice(url, env) {
 }
 
 // Temporary diagnostic endpoint to find the correct CardLadder Cloud Function
-// host/name for httpcertinfo, since the assumed us-central1/lowercase combo 404s.
-const CL_DEBUG_REGIONS = ["us-central1", "us-east1", "us-east4", "us-west1", "us-west2", "europe-west1"];
-const CL_DEBUG_NAMES = ["httpcertinfo", "httpCertInfo"];
+// URL for httpcertinfo/httpcardestimate. The cloudfunctions.net pattern 404s
+// across every region/casing, but the spec's /search endpoint lives on a
+// Cloud Run v2 URL (https://search-zzvl7ri3bq-uc.a.run.app) — same project
+// hash likely applies to other v2 functions in this project.
+const CL_DEBUG_TARGETS = [
+  { label: "gcf us-central1 httpcertinfo", url: "https://us-central1-cardladder-71d53.cloudfunctions.net/httpcertinfo" },
+  { label: "cloudrun httpcertinfo", url: "https://httpcertinfo-zzvl7ri3bq-uc.a.run.app" },
+  { label: "cloudrun httpCertInfo", url: "https://httpCertInfo-zzvl7ri3bq-uc.a.run.app" },
+  { label: "cloudrun httpcardestimate", url: "https://httpcardestimate-zzvl7ri3bq-uc.a.run.app" },
+];
 
 async function cardladderDebug(url, env) {
   const cert = url.searchParams.get("cert") || "";
@@ -567,24 +574,21 @@ async function cardladderDebug(url, env) {
   }
 
   const results = [];
-  for (const region of CL_DEBUG_REGIONS) {
-    for (const name of CL_DEBUG_NAMES) {
-      const base = `https://${region}-cardladder-71d53.cloudfunctions.net`;
-      try {
-        const res = await fetch(`${base}/${name}`, {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            "Authorization": `Bearer ${token}`,
-            "Referer": "https://app.cardladder.com/",
-          },
-          body: JSON.stringify({ data: { cert, grader } }),
-        });
-        const text = await res.text();
-        results.push({ region, name, status: res.status, body: text.slice(0, 300) });
-      } catch (e) {
-        results.push({ region, name, error: String(e) });
-      }
+  for (const { label, url: target } of CL_DEBUG_TARGETS) {
+    try {
+      const res = await fetch(target, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "Referer": "https://app.cardladder.com/",
+        },
+        body: JSON.stringify({ data: { cert, grader } }),
+      });
+      const text = await res.text();
+      results.push({ label, url: target, status: res.status, body: text.slice(0, 400) });
+    } catch (e) {
+      results.push({ label, url: target, error: String(e) });
     }
   }
   return json({ results });
