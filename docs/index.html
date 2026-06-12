@@ -246,6 +246,14 @@
     table.hide-snkrdunk .snkr-pct,
     table.hide-snkrdunk .th-snkrdunk { display: none; }
 
+    table.hide-cl .cl-price,
+    table.hide-cl .cl-delta,
+    table.hide-cl .cl-pct,
+    table.hide-cl .th-cl { display: none; }
+
+    .cl-link { color: #fbbf24; text-decoration: none; }
+    .cl-link:hover { text-decoration: underline; }
+
     .grade-select { position: relative; display: inline-block; }
     .grade-menu {
       position: absolute;
@@ -398,6 +406,7 @@
   <input type="number" id="price-min" placeholder="Min" min="0" oninput="applyLiveFilters()" />
   <input type="number" id="price-max" placeholder="Max" min="0" oninput="applyLiveFilters()" />
   <button id="toggle-alt" class="toggle-btn active" onclick="toggleSource('alt')">Alt</button>
+  <button id="toggle-cl" class="toggle-btn active" onclick="toggleSource('cl')">CardLadder</button>
   <button id="toggle-snkrdunk" class="toggle-btn active" onclick="toggleSource('snkrdunk')">SNKRDUNK</button>
 </div>
 
@@ -418,6 +427,9 @@
         <th class="th-alt" onclick="sortBy('altPrice')">Alt $</th>
         <th class="th-alt" onclick="sortBy('altDelta')">Alt Δ</th>
         <th class="th-alt" onclick="sortBy('altPct')">Alt %</th>
+        <th class="th-cl" onclick="sortBy('clPrice')">CL $</th>
+        <th class="th-cl" onclick="sortBy('clDelta')">CL Δ</th>
+        <th class="th-cl" onclick="sortBy('clPct')">CL %</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SD (PSA)</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkDelta')">SD Δ</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkPct')">SNKR %</th>
@@ -435,7 +447,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.75</footer>
+<footer>v0.76</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -723,6 +735,7 @@
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, 1, msg);
         fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+        fetchClPrices(cards);
       } else {
         allRows = cards;
         const msg = `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
@@ -730,6 +743,7 @@
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, pages, msg);
         fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+        fetchClPrices(cards);
         window.scrollTo(0, 0);
       }
 
@@ -770,6 +784,9 @@
       <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
       <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="alt-pct" data-cert="${esc(c.gradingID)}"></td>
+      <td class="cl-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="cl-delta" data-cert="${esc(c.gradingID)}"></td>
+      <td class="cl-pct" data-cert="${esc(c.gradingID)}"></td>
       <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}">${isJpn ? '<span class="alt-loading">···</span>' : '—'}</td>
       <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="snkr-pct" data-cert="${esc(c.gradingID)}"></td>
@@ -820,7 +837,7 @@
 
     if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
 
-    const colOrder = ["listedAt","cardYear","cardName","cardNumber","grade","gradingID","pop","price","altPrice","altDelta","altPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
+    const colOrder = ["listedAt","cardYear","cardName","cardNumber","grade","gradingID","pop","price","altPrice","altDelta","altPct","clPrice","clDelta","clPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
     const thIdx = colOrder.indexOf(col);
     if (thIdx >= 0) {
       ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
@@ -849,6 +866,12 @@
         av = a._altDelta ?? -Infinity; bv = b._altDelta ?? -Infinity;
       } else if (col === "altPct") {
         av = a._altPct ?? -Infinity; bv = b._altPct ?? -Infinity;
+      } else if (col === "clPrice") {
+        av = a._clPrice ?? -Infinity; bv = b._clPrice ?? -Infinity;
+      } else if (col === "clDelta") {
+        av = a._clDelta ?? -Infinity; bv = b._clDelta ?? -Infinity;
+      } else if (col === "clPct") {
+        av = a._clPct ?? -Infinity; bv = b._clPct ?? -Infinity;
       } else if (col === "snkrdunkPrice") {
         av = a._snkrdunkPrice ?? -Infinity; bv = b._snkrdunkPrice ?? -Infinity;
       } else if (col === "snkrdunkDelta") {
@@ -911,6 +934,7 @@
 
     renderTable(filtered);
     repopulateAltCells(allRows);
+    repopulateClCells(allRows);
     repopulateSnkrdunkCells(allRows);
   }
 
@@ -1147,6 +1171,122 @@
               c._altPrice = altPrice;
               c._altDelta = usdc != null ? altPrice - usdc : null;
               c._altPct   = usdc != null ? ((altPrice - usdc) / usdc) * 100 : null;
+            }
+          }
+        })
+      );
+    }
+    savePriceCache();
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── CardLadder price fetching ────────────────────────────────────────
+  const clCache = new Map(); // cert → result | null
+
+  // CardLadder grader param: psa/bgs/cgc/sgc — TAG/AGS unsupported
+  function clGrader(c) {
+    const g = (c.gradingCompany || "").toUpperCase();
+    if (!g || g.startsWith("PSA")) return "psa";
+    if (g.startsWith("BGS") || g.startsWith("BECK")) return "bgs";
+    if (g.startsWith("CGC")) return "cgc";
+    if (g.startsWith("SGC")) return "sgc";
+    return null;
+  }
+
+  async function fetchClPrice(certNumber, grader) {
+    if (clCache.has(certNumber)) {
+      const cached = clCache.get(certNumber);
+      if (!cached || cached.price !== null) return cached;
+      // re-fetch if price is null (stale cache)
+    }
+    try {
+      const res = await fetch(`${WORKER_URL}/cardladder-price?cert=${encodeURIComponent(certNumber)}&grader=${grader}`);
+      const data = await res.json();
+      const result = data.gemRateId ? {
+        price: data.clPrice ?? null,
+        pop: data.pop ?? null,
+        lastSalePrice: data.lastSalePrice ?? null,
+        lastSaleDate: data.lastSaleDate ?? null,
+        confidence: data.confidence ?? null,
+      } : null;
+      clCache.set(certNumber, result);
+      return result;
+    } catch { return null; }
+  }
+
+  function updateClCell(certNumber, result, ccPriceUsdc) {
+    const priceCell = document.querySelector(`.cl-price[data-cert="${certNumber}"]`);
+    const deltaCell = document.querySelector(`.cl-delta[data-cert="${certNumber}"]`);
+    const pctCell = document.querySelector(`.cl-pct[data-cert="${certNumber}"]`);
+    if (!priceCell) return;
+    if (!result?.price) {
+      priceCell.textContent = "—";
+      if (deltaCell) deltaCell.textContent = "";
+      if (pctCell) pctCell.textContent = "";
+      return;
+    }
+    const clPrice = Number(result.price);
+    const title = result.confidence != null ? `confidence ${result.confidence}/10${result.pop != null ? `, pop ${result.pop}` : ""}` : "";
+    priceCell.innerHTML = `<span class="cl-link" title="${esc(title)}">$${clPrice.toFixed(2)}</span>`;
+    if (ccPriceUsdc != null) {
+      const delta = clPrice - ccPriceUsdc;
+      const pct = (delta / ccPriceUsdc) * 100;
+      const sign = delta >= 0 ? "+" : "";
+      const cls = delta >= 0 ? "delta-pos" : "delta-neg";
+      if (deltaCell) deltaCell.innerHTML = `<span class="${cls}">${sign}$${Math.abs(delta).toFixed(2)}</span>`;
+      if (pctCell) pctCell.innerHTML = `<span class="${cls}">${sign}${Math.abs(pct).toFixed(1)}%</span>`;
+    }
+  }
+
+  function repopulateClCells(rows) {
+    for (const c of rows) {
+      if (!c.gradingID || !clCache.has(c.gradingID)) continue;
+      const result = clCache.get(c.gradingID);
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+      updateClCell(c.gradingID, result, usdc);
+      if (result?.price != null) {
+        const clPrice = Number(result.price);
+        c._clPrice = clPrice;
+        c._clDelta = usdc != null ? clPrice - usdc : null;
+        c._clPct = usdc != null ? ((clPrice - usdc) / usdc) * 100 : null;
+      }
+    }
+  }
+
+  async function fetchClPrices(cards, concurrency = 6) {
+    const rate = await getSolPrice();
+    const certPrices = new Map();
+    for (const c of cards) {
+      if (!c.gradingID) continue;
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && rate ? raw * rate : null;
+      if (usdc !== null) certPrices.set(c.gradingID, usdc);
+    }
+    const seen = new Set();
+    const entries = [];
+    for (const c of cards) {
+      if (!c.gradingID || seen.has(c.gradingID)) continue;
+      seen.add(c.gradingID);
+      const grader = clGrader(c);
+      if (!grader) { updateClCell(c.gradingID, null, null); continue; }
+      entries.push({ cert: c.gradingID, grader });
+    }
+    for (let i = 0; i < entries.length; i += concurrency) {
+      await Promise.all(
+        entries.slice(i, i + concurrency).map(async ({ cert, grader }) => {
+          const result = await fetchClPrice(cert, grader);
+          const usdc = certPrices.get(cert);
+          updateClCell(cert, result, usdc);
+          for (const c of allRows) {
+            if (c.gradingID !== cert) continue;
+            if (result?.price != null) {
+              const clPrice = Number(result.price);
+              c._clPrice = clPrice;
+              c._clDelta = usdc != null ? clPrice - usdc : null;
+              c._clPct   = usdc != null ? ((clPrice - usdc) / usdc) * 100 : null;
             }
           }
         })
@@ -1412,6 +1552,7 @@
       document.getElementById("refresh-alt-btn").disabled = false;
       document.getElementById("refresh-snkr-btn").disabled = false;
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+        fetchClPrices(cards);
     } catch (e) {
       status.textContent = `Beezie error: ${e.message}`;
     } finally {
@@ -1529,6 +1670,7 @@
       document.getElementById("refresh-alt-btn").disabled = false;
       document.getElementById("refresh-snkr-btn").disabled = false;
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+        fetchClPrices(cards);
     } catch (e) {
       status.textContent = `Phygitals error: ${e.message}`;
     } finally {
@@ -1540,17 +1682,19 @@
   async function refreshAlt() {
     const btn = document.getElementById("refresh-alt-btn");
     btn.disabled = true;
-    for (const c of allRows) { if (c.gradingID) altCache.delete(c.gradingID); }
+    for (const c of allRows) { if (c.gradingID) { altCache.delete(c.gradingID); clCache.delete(c.gradingID); } }
     for (const c of allRows) {
       const cert = c.gradingID;
       const altCell = document.querySelector(`.alt-price[data-cert="${cert}"]`);
       if (altCell) altCell.innerHTML = '<span class="alt-loading">···</span>';
-      for (const cls of ["alt-delta","alt-pct"]) {
+      const clCell = document.querySelector(`.cl-price[data-cert="${cert}"]`);
+      if (clCell) clCell.innerHTML = '<span class="alt-loading">···</span>';
+      for (const cls of ["alt-delta","alt-pct","cl-delta","cl-pct"]) {
         const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
         if (el) el.textContent = "";
       }
     }
-    await fetchAltPrices(allRows);
+    await Promise.all([fetchAltPrices(allRows), fetchClPrices(allRows)]);
     btn.disabled = false;
   }
 
@@ -1581,6 +1725,7 @@
   function savePriceCache() {
     try {
       sessionStorage.setItem("altCacheData", JSON.stringify([...altCache.entries()]));
+      sessionStorage.setItem("clCacheData", JSON.stringify([...clCache.entries()]));
       sessionStorage.setItem("snkrdunkCacheData", JSON.stringify([...snkrdunkCache.entries()]));
     } catch {}
   }
@@ -1616,6 +1761,8 @@
       try {
         const altEntries = JSON.parse(sessionStorage.getItem("altCacheData") || "[]");
         for (const [k, v] of altEntries) altCache.set(k, v);
+        const clEntries = JSON.parse(sessionStorage.getItem("clCacheData") || "[]");
+        for (const [k, v] of clEntries) clCache.set(k, v);
         const snkrEntries = JSON.parse(sessionStorage.getItem("snkrdunkCacheData") || "[]");
         for (const [k, v] of snkrEntries) snkrdunkCache.set(k, v);
       } catch {}
@@ -1638,6 +1785,8 @@
         !snkrdunkCache.has(snkrdunkKwKey(c))
       );
       if (needsSnkr) fetchSnkrdunkPrices(allRows);
+      const needsCl = allRows.some(c => c.gradingID && clGrader(c) && !clCache.has(c.gradingID));
+      if (needsCl) fetchClPrices(allRows);
     } catch {}
   }
 

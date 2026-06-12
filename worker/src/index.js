@@ -2,6 +2,9 @@
 const CC_BASE = "https://api.collectorcrypt.com";
 const ALT_BASE = "https://alt-platform-server.production.internal.onlyalt.com";
 const SNKRDUNK_BASE = "https://snkrdunk.com";
+const CL_BASE = "https://us-central1-cardladder-71d53.cloudfunctions.net";
+// Public Firebase web client key from CardLadder's JS bundle (not a secret)
+const CL_FIREBASE_KEY = "AIzaSyBqbxgaaGlpeb1F6HRvEW319OcuCsbkAHM";
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -27,6 +30,10 @@ export default {
 
     if (path === "/alt-price") {
       return altPriceByCert(url, env);
+    }
+
+    if (path === "/cardladder-price") {
+      return cardladderPrice(url, env);
     }
 
     if (path.startsWith("/alt/")) {
@@ -433,6 +440,94 @@ async function altPriceByCert(url, env) {
     return new Response(JSON.stringify({ altPrice: null, error: String(e) }), {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
+  }
+}
+
+// Firebase idToken cache — survives across requests within a worker isolate.
+// Tokens last 1 hour; refresh via refreshToken when possible, else re-sign-in.
+let clAuth = { token: null, refreshToken: null, exp: 0 };
+
+async function cardladderToken(env) {
+  const now = Date.now();
+  if (clAuth.token && now < clAuth.exp - 60_000) return clAuth.token;
+
+  if (clAuth.refreshToken) {
+    try {
+      const res = await fetch(`https://securetoken.googleapis.com/v1/token?key=${CL_FIREBASE_KEY}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ grant_type: "refresh_token", refresh_token: clAuth.refreshToken }),
+      });
+      if (res.ok) {
+        const d = await res.json();
+        clAuth = { token: d.id_token, refreshToken: d.refresh_token, exp: now + parseInt(d.expires_in) * 1000 };
+        return clAuth.token;
+      }
+    } catch {}
+  }
+
+  const res = await fetch(`https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${CL_FIREBASE_KEY}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ email: env.CARDLADDER_EMAIL, password: env.CARDLADDER_PASSWORD, returnSecureToken: true }),
+  });
+  if (!res.ok) throw new Error(`CardLadder auth failed: HTTP ${res.status}`);
+  const d = await res.json();
+  clAuth = { token: d.idToken, refreshToken: d.refreshToken, exp: now + parseInt(d.expiresIn) * 1000 };
+  return clAuth.token;
+}
+
+async function cardladderPrice(url, env) {
+  const cert = url.searchParams.get("cert") || "";
+  const grader = (url.searchParams.get("grader") || "psa").toLowerCase();
+  if (!cert) {
+    return new Response(JSON.stringify({ error: "cert param required" }), {
+      status: 400, headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  const json = obj => new Response(JSON.stringify(obj), {
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
+
+  try {
+    const token = await cardladderToken(env);
+    const clPost = async (fn, data) => {
+      const res = await fetch(`${CL_BASE}/${fn}`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${token}`,
+          "Referer": "https://app.cardladder.com/",
+        },
+        body: JSON.stringify({ data }),
+      });
+      if (!res.ok) throw new Error(`${fn} HTTP ${res.status}`);
+      const body = await res.json();
+      return body.result ?? null;
+    };
+
+    const info = await clPost("httpcertinfo", { cert, grader });
+    if (!info?.gemRateId) return json({ clPrice: null, gemRateId: null });
+
+    const est = await clPost("httpcardestimate", {
+      gemRateId: info.gemRateId,
+      condition: info.condition,
+      gradingCompany: grader,
+    });
+
+    return json({
+      clPrice: est?.estimatedValue ?? null,
+      pop: est?.population ?? null,
+      lastSalePrice: est?.lastSalePrice ?? null,
+      lastSaleDate: est?.lastSaleDate ?? null,
+      confidence: est?.confidence ?? null,
+      condition: info.condition ?? null,
+      description: info.cardDescription ?? null,
+      gemRateId: info.gemRateId,
+    });
+  } catch (e) {
+    return json({ clPrice: null, error: String(e) });
   }
 }
 
