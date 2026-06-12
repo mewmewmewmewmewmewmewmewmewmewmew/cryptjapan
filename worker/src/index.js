@@ -547,13 +547,23 @@ async function cardladderPrice(url, env) {
 }
 
 // Temporary diagnostic endpoint to find the correct CardLadder Cloud Function
-// URL for httpcertinfo. httpcardestimate is confirmed live at
+// for cert -> gemRateId lookup. httpcardestimate is confirmed live at
 // https://httpcardestimate-zzvl7ri3bq-uc.a.run.app (project hash zzvl7ri3bq,
-// region code "uc" = us-central1). httpcertinfo 404s at that same hash+region,
-// so try other region codes (same hash) and a few alternate names.
+// region code "uc" = us-central1) and returns real data. httpcertinfo doesn't
+// exist under any name/region variant, so try the other {cert,grader}-shaped
+// functions from the spec's "Other endpoints" table at the same hash+region.
 const CL_HASH = "zzvl7ri3bq";
-const CL_REGION_CODES = ["uc", "ue1", "ue4", "uw1", "uw2", "ew1", "ew3", "an3"];
-const CL_ALT_NAMES = ["httpcardinfo", "certinfo", "getcertinfo", "httpgetcertinfo"];
+const CL_CANDIDATE_NAMES = [
+  "httprefreshcert",
+  "httpbuildcollectioncard",
+  "httppopulationdata",
+  "httpcardimagedetection",
+  "httpindexfromdescription",
+  "httppsagetspecfromcert",
+  "httpprofilesales",
+  "http_cert_info",
+  "http-cert-info",
+];
 
 async function cardladderDebug(url, env) {
   const cert = url.searchParams.get("cert") || "";
@@ -589,22 +599,8 @@ async function cardladderDebug(url, env) {
   };
 
   const results = [];
-
-  // Sanity check: httpcardestimate with the spec's real example payload
-  results.push({ check: "httpcardestimate real payload", ...await post("https://httpcardestimate-zzvl7ri3bq-uc.a.run.app", {
-    gemRateId: "92749c4df01134dd270f8334b7482bf16d0b4dae",
-    condition: "g10pristine",
-    gradingCompany: "cgc",
-  }) });
-
-  // httpcertinfo across region codes with the same project hash
-  for (const code of CL_REGION_CODES) {
-    results.push({ check: `httpcertinfo @ ${code}`, ...await post(`https://httpcertinfo-${CL_HASH}-${code}.a.run.app`, { cert, grader }) });
-  }
-
-  // Alternate name guesses at us-central1
-  for (const name of CL_ALT_NAMES) {
-    results.push({ check: `${name} @ uc`, ...await post(`https://${name}-${CL_HASH}-uc.a.run.app`, { cert, grader }) });
+  for (const name of CL_CANDIDATE_NAMES) {
+    results.push({ check: name, ...await post(`https://${name}-${CL_HASH}-uc.a.run.app`, { cert, grader }) });
   }
 
   return json({ results });
