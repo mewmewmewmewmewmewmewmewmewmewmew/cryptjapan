@@ -510,6 +510,11 @@ const CL_HASH = "zzvl7ri3bq";
 let clQuotaExceededUntil = 0;
 const isQuotaError = msg => /RESOURCE_EXHAUSTED|Daily request limit/i.test(msg);
 
+// Successful CL responses are cached at the edge for 12h — sales data doesn't
+// move fast enough to matter, and every cache hit is CardLadder quota saved
+// across all users/sessions/isolates.
+const CL_CACHE_TTL_SECONDS = 12 * 60 * 60;
+
 async function cardladderPrice(url, env) {
   const cert = url.searchParams.get("cert") || "";
   const grader = (url.searchParams.get("grader") || "psa").toLowerCase();
@@ -523,9 +528,33 @@ async function cardladderPrice(url, env) {
     headers: { ...CORS, "Content-Type": "application/json" },
   });
 
+  const cache = caches.default;
+  const cacheKey = new Request(`https://cl-cache.internal/price?cert=${encodeURIComponent(cert)}&grader=${encodeURIComponent(grader)}`);
+  // fresh=1 (the UI's "Refresh CL" button) bypasses the cache read but still
+  // overwrites the cached entry with the new result.
+  const fresh = url.searchParams.get("fresh") === "1";
+  const cached = fresh ? null : await cache.match(cacheKey);
+  if (cached) {
+    return new Response(await cached.text(), {
+      headers: { ...CORS, "Content-Type": "application/json", "X-CL-Cache": "hit" },
+    });
+  }
+
   if (Date.now() < clQuotaExceededUntil) {
     return json({ clPrice: null, error: "CardLadder daily request limit reached", quotaExceeded: true });
   }
+
+  const jsonAndCache = async obj => {
+    const payload = JSON.stringify(obj);
+    try {
+      await cache.put(cacheKey, new Response(payload, {
+        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${CL_CACHE_TTL_SECONDS}` },
+      }));
+    } catch {}
+    return new Response(payload, {
+      headers: { ...CORS, "Content-Type": "application/json", "X-CL-Cache": "miss" },
+    });
+  };
 
   try {
     const token = await cardladderToken(env);
@@ -564,14 +593,14 @@ async function cardladderPrice(url, env) {
       }
     };
 
-    const [card, salesRes] = await Promise.all([
-      clPost("httpbuildcollectioncard", { cert, grader }),
-      clPost("httpprofilesales", { cert, grader }),
-    ]);
+    // Only httpprofilesales is needed — pop/description used to come from a
+    // second call (httpbuildcollectioncard) but the UI gets pop from ALT,
+    // so skipping it halves CardLadder quota spend per card.
+    const salesRes = await clPost("httpprofilesales", { cert, grader });
 
     const sales = salesRes?.sales ?? [];
     if (!sales.length) {
-      return json({ clPrice: null, pop: card?.pop ?? null, description: card?.label ?? null });
+      return jsonAndCache({ clPrice: null, salesCount: 0 });
     }
 
     // Same windowed-average approach as SNKRDUNK: prefer sales from the last
@@ -590,13 +619,11 @@ async function cardladderPrice(url, env) {
     const useItems = (inWeek.length >= 2 ? inWeek : inThreeWeeks.length >= 1 ? inThreeWeeks : [withAge[0]]).slice(0, 3);
     const clPrice = useItems.reduce((sum, s) => sum + s.price, 0) / useItems.length;
 
-    return json({
+    return jsonAndCache({
       clPrice: Math.round(clPrice * 100) / 100,
       avgCount: useItems.length,
       lastSalePrice: Number(sales[0].price),
       lastSaleDate: sales[0].date,
-      pop: card?.pop ?? null,
-      description: card?.label ?? null,
       salesCount: sales.length,
     });
   } catch (e) {

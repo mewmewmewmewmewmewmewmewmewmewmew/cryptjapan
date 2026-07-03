@@ -483,7 +483,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.89</footer>
+<footer>v0.90</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1232,26 +1232,26 @@
     return null;
   }
 
-  async function fetchClPrice(certNumber, grader) {
+  async function fetchClPrice(certNumber, grader, fresh = false) {
     if (clCache.has(certNumber)) return clCache.get(certNumber);
     try {
-      const res = await fetch(`${WORKER_URL}/cardladder-price?cert=${encodeURIComponent(certNumber)}&grader=${grader}`);
+      const res = await fetch(`${WORKER_URL}/cardladder-price?cert=${encodeURIComponent(certNumber)}&grader=${grader}${fresh ? "&fresh=1" : ""}`);
       const data = await res.json();
       if (data.quotaExceeded) {
         // Daily quota won't recover until tomorrow — cache so we stop retrying.
-        const result = { price: null, quotaExceeded: true };
+        const result = { price: null, quotaExceeded: true, _t: Date.now() };
         clCache.set(certNumber, result);
         return result;
       }
       if (data.error) return null; // transient failure — don't cache, retry next load
       const result = data.clPrice != null ? {
         price: data.clPrice,
-        pop: data.pop ?? null,
         lastSalePrice: data.lastSalePrice ?? null,
         lastSaleDate: data.lastSaleDate ?? null,
         salesCount: data.salesCount ?? null,
         avgCount: data.avgCount ?? null,
-      } : { price: null, pop: data.pop ?? null, description: data.description ?? null };
+        _t: Date.now(),
+      } : { price: null, _t: Date.now() };
       clCache.set(certNumber, result);
       return result;
     } catch { return null; } // network error — don't cache, retry next load
@@ -1277,7 +1277,6 @@
       titleParts.push(`last sale $${Number(result.lastSalePrice).toFixed(2)} on ${result.lastSaleDate.slice(0, 10)}`);
     }
     if (result.salesCount != null) titleParts.push(`${result.salesCount} recent sales`);
-    if (result.pop != null) titleParts.push(`pop ${result.pop}`);
     const title = titleParts.join(", ");
     priceCell.innerHTML = `<span class="cl-link" title="${esc(title)}">$${clPrice.toFixed(2)}</span>`;
     if (ccPriceUsdc != null) {
@@ -1307,7 +1306,7 @@
     }
   }
 
-  async function fetchClPrices(cards, concurrency = 3) {
+  async function fetchClPrices(cards, concurrency = 3, fresh = false) {
     if (!sourceEnabled("cl")) return; // CL columns hidden — don't spend CardLadder's daily quota
     const rate = await getSolPrice();
     const certPrices = new Map();
@@ -1330,7 +1329,7 @@
     for (let i = 0; i < entries.length; i += concurrency) {
       await Promise.all(
         entries.slice(i, i + concurrency).map(async ({ cert, grader }) => {
-          const result = await fetchClPrice(cert, grader);
+          const result = await fetchClPrice(cert, grader, fresh);
           const usdc = certPrices.get(cert);
           updateClCell(cert, result, usdc);
           for (const c of allRows) {
@@ -1758,7 +1757,7 @@
         if (el) el.textContent = "";
       }
     }
-    await fetchClPrices(allRows);
+    await fetchClPrices(allRows, 3, true);
     btn.disabled = false;
   }
 
@@ -1786,11 +1785,28 @@
     } catch {} // quota exceeded — skip silently
   }
 
+  // CL results persist in localStorage (24h TTL) rather than sessionStorage:
+  // CardLadder has a small daily quota, so re-spending it after every browser
+  // restart on certs we already looked up is pure waste. Quota-exceeded
+  // markers are session-only — the quota resets daily.
+  const CL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
   function savePriceCache() {
     try {
       sessionStorage.setItem("altCacheData", JSON.stringify([...altCache.entries()]));
-      sessionStorage.setItem("clCacheData", JSON.stringify([...clCache.entries()]));
       sessionStorage.setItem("snkrdunkCacheData", JSON.stringify([...snkrdunkCache.entries()]));
+      const clEntries = [...clCache.entries()].filter(([, v]) => v && !v.quotaExceeded);
+      localStorage.setItem("clCacheData", JSON.stringify(clEntries));
+    } catch {}
+  }
+
+  function loadClCache() {
+    try {
+      const entries = JSON.parse(localStorage.getItem("clCacheData") || "[]");
+      const cutoff = Date.now() - CL_CACHE_TTL_MS;
+      for (const [k, v] of entries) {
+        if (v && v._t && v._t > cutoff) clCache.set(k, v);
+      }
     } catch {}
   }
 
@@ -1825,8 +1841,6 @@
       try {
         const altEntries = JSON.parse(sessionStorage.getItem("altCacheData") || "[]");
         for (const [k, v] of altEntries) altCache.set(k, v);
-        const clEntries = JSON.parse(sessionStorage.getItem("clCacheData") || "[]");
-        for (const [k, v] of clEntries) clCache.set(k, v);
         const snkrEntries = JSON.parse(sessionStorage.getItem("snkrdunkCacheData") || "[]");
         for (const [k, v] of snkrEntries) snkrdunkCache.set(k, v);
       } catch {}
@@ -2019,6 +2033,7 @@
   // Restore from cache on page refresh — must run after all const/let declarations
   // are initialized (calling earlier causes TDZ ReferenceErrors that are silently swallowed)
   initSourceToggles();
+  loadClCache();
   updateGradeOptions();
   if (sessionStorage.getItem("auth") === "1") loadCardCache();
 
