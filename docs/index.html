@@ -224,7 +224,11 @@
     }
 
     .empty { text-align: center; padding: 60px; color: #444; }
-    .alt-loading { color: #333; font-size: 11px; }
+    .alt-loading { color: #555; font-size: 11px; animation: loading-pulse 1.2s ease-in-out infinite; }
+    @keyframes loading-pulse {
+      0%, 100% { opacity: 0.25; }
+      50% { opacity: 1; }
+    }
     .alt-link { color: #a78bfa; text-decoration: none; }
     .alt-link:hover { text-decoration: underline; }
     .card-link { color: #e8e8e8; text-decoration: none; }
@@ -483,7 +487,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.92</footer>
+<footer>v0.93</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1043,6 +1047,8 @@
     const d = new Date(dateStr);
     if (isNaN(d.getTime())) return "";
     const ms = Date.now() - d;
+    const mins = Math.floor(ms / 60000);
+    if (mins < 60) return `${Math.max(mins, 0)}m`;
     const hours = Math.floor(ms / 3600000);
     if (hours < 24) return `${hours}h`;
     const days = Math.floor(ms / 86400000);
