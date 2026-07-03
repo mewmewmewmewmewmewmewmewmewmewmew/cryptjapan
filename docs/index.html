@@ -39,12 +39,23 @@
     }
 
     .filters {
-      padding: 16px 24px;
+      padding: 12px 24px 14px;
       display: flex;
       flex-wrap: wrap;
+      align-items: flex-end;
       gap: 10px;
       border-bottom: 1px solid #1a1a1a;
       background: #111;
+    }
+
+    .filter-group { display: flex; flex-direction: column; gap: 4px; }
+    .fg-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: #555;
+      padding-left: 2px;
+      user-select: none;
     }
 
     .filters-live {
@@ -342,63 +353,84 @@
 
 <header>
   <h1>CC &lt;&gt; JP</h1>
-  <span>CollectorCrypt Marketplace</span>
-  <button id="refresh-list-btn" onclick="refreshCardList()" disabled>↻ Refresh List</button>
-  <button id="refresh-alt-btn" onclick="refreshAlt()" disabled>↻ Refresh ALT</button>
-  <button id="refresh-cl-btn" onclick="refreshCl()" disabled>↻ Refresh CL</button>
-  <button id="refresh-snkr-btn" onclick="refreshSnkr()" disabled>↻ Refresh SD</button>
+  <span>Marketplace Scanner</span>
+  <button id="refresh-list-btn" onclick="refreshCardList()" disabled title="Re-fetch listings">↻ List</button>
+  <button id="refresh-alt-btn" onclick="refreshAlt()" disabled title="Re-fetch ALT prices">↻ ALT</button>
+  <button id="refresh-cl-btn" onclick="refreshCl()" disabled title="Re-fetch CardLadder prices">↻ CL</button>
+  <button id="refresh-snkr-btn" onclick="refreshSnkr()" disabled title="Re-fetch SNKRDUNK prices">↻ SD</button>
 </header>
 
 <div class="filters">
-  <select id="source" onchange="onSourceChange()">
-    <option value="cc">Collector Crypt</option>
-    <option value="beezie">Beezie</option>
-    <option value="phygitals">Phygitals</option>
-  </select>
-
-  <select id="categories">
-    <option value="Pokemon,One Piece">Pokemon + One Piece</option>
-    <option value="Pokemon">Pokemon</option>
-    <option value="One Piece">One Piece</option>
-    <option value="Yu-Gi-Oh!">Yu-Gi-Oh!</option>
-    <option value="Magic The Gathering">Magic The Gathering</option>
-  </select>
-
-  <select id="gradingCompany" onchange="updateGradeOptions()">
-    <option value="PSA">PSA</option>
-    <option value="Beckett">BGS</option>
-    <option value="CGC">CGC</option>
-    <option value="TAG">TAG</option>
-    <option value="AGS">AGS</option>
-    <option value="">Any grader</option>
-  </select>
-
-  <div class="grade-select" id="grade-wrap">
-    <button type="button" id="grade-btn" onclick="toggleGradeMenu()">
-      <span id="grade-label">GEM-MT 10</span> <span style="font-size:10px;opacity:.5">▾</span>
-    </button>
-    <div class="grade-menu" id="grade-menu" style="display:none"></div>
+  <div class="filter-group">
+    <span class="fg-label">Marketplace</span>
+    <select id="source" onchange="onSourceChange()">
+      <option value="cc">Collector Crypt</option>
+      <option value="beezie">Beezie</option>
+      <option value="phygitals">Phygitals</option>
+    </select>
   </div>
 
-  <select id="language" onchange="if(activePlatform().clientFilter)applyLiveFilters()">
-    <option value="Japanese">Japanese</option>
-    <option value="English">English</option>
-    <option value="">Any language</option>
-  </select>
+  <div class="filter-group">
+    <span class="fg-label">Category</span>
+    <select id="categories">
+      <option value="Pokemon,One Piece">Pokemon + One Piece</option>
+      <option value="Pokemon">Pokemon</option>
+      <option value="One Piece">One Piece</option>
+      <option value="Yu-Gi-Oh!">Yu-Gi-Oh!</option>
+      <option value="Magic The Gathering">Magic The Gathering</option>
+    </select>
+  </div>
 
-  <select id="orderBy">
-    <option value="listedDateDesc">Newest first</option>
-    <option value="listedDateAsc">Oldest first</option>
-    <option value="priceAsc">Price: low to high</option>
-    <option value="priceDesc">Price: high to low</option>
-  </select>
+  <div class="filter-group">
+    <span class="fg-label">Grader</span>
+    <select id="gradingCompany" onchange="updateGradeOptions()">
+      <option value="PSA">PSA</option>
+      <option value="Beckett">BGS</option>
+      <option value="CGC">CGC</option>
+      <option value="TAG">TAG</option>
+      <option value="AGS">AGS</option>
+      <option value="">Any grader</option>
+    </select>
+  </div>
 
-  <select id="step" onchange="if(activePlatform().clientFilter||activePlatform().paginate){currentPage=1;applyLiveFilters()}">
-    <option value="24">24 per page</option>
-    <option value="48" selected>48 per page</option>
-    <option value="96">96 per page</option>
-    <option value="all">Show all</option>
-  </select>
+  <div class="filter-group">
+    <span class="fg-label">Grade</span>
+    <div class="grade-select" id="grade-wrap">
+      <button type="button" id="grade-btn" onclick="toggleGradeMenu()">
+        <span id="grade-label">GEM-MT 10</span> <span style="font-size:10px;opacity:.5">▾</span>
+      </button>
+      <div class="grade-menu" id="grade-menu" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Language</span>
+    <select id="language" onchange="if(activePlatform().clientFilter)applyLiveFilters()">
+      <option value="Japanese">Japanese</option>
+      <option value="English">English</option>
+      <option value="">Any language</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Sort</span>
+    <select id="orderBy">
+      <option value="listedDateDesc">Newest first</option>
+      <option value="listedDateAsc">Oldest first</option>
+      <option value="priceAsc">Price: low to high</option>
+      <option value="priceDesc">Price: high to low</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Per page</span>
+    <select id="step" onchange="if(activePlatform().clientFilter||activePlatform().paginate){currentPage=1;applyLiveFilters()}">
+      <option value="24">24</option>
+      <option value="48" selected>48</option>
+      <option value="96">96</option>
+      <option value="all">Show all</option>
+    </select>
+  </div>
 
   <button id="fetch-btn" onclick="fetchListings(true)">Fetch listings</button>
 </div>
@@ -408,15 +440,16 @@
   <span class="filter-label">Price $</span>
   <input type="number" id="price-min" placeholder="Min" min="0" oninput="applyLiveFilters()" />
   <input type="number" id="price-max" placeholder="Max" min="0" oninput="applyLiveFilters()" />
-  <button id="toggle-alt" class="toggle-btn active" onclick="toggleSource('alt')">Alt</button>
-  <button id="toggle-cl" class="toggle-btn active" onclick="toggleSource('cl')">CardLadder</button>
-  <button id="toggle-snkrdunk" class="toggle-btn active" onclick="toggleSource('snkrdunk')">SNKRDUNK</button>
+  <span class="filter-label">Sources</span>
+  <button id="toggle-alt" class="toggle-btn active" onclick="toggleSource('alt')" title="ALT price columns">ALT</button>
+  <button id="toggle-cl" class="toggle-btn" onclick="toggleSource('cl')" title="CardLadder price columns (off by default — CardLadder has a small daily request quota)">CL</button>
+  <button id="toggle-snkrdunk" class="toggle-btn active" onclick="toggleSource('snkrdunk')" title="SNKRDUNK price columns">SD</button>
 </div>
 
 <div class="status" id="status">Ready.</div>
 
 <div class="table-wrap">
-  <table id="results-table">
+  <table id="results-table" class="hide-cl">
     <thead>
       <tr>
         <th class="th-listed" onclick="sortBy('listedAt')">Listed</th>
@@ -424,18 +457,18 @@
         <th onclick="sortBy('cardName')">Card</th>
         <th onclick="sortBy('cardNumber')">#</th>
         <th onclick="sortBy('grade')">Grade</th>
-        <th onclick="sortBy('gradingID')">PSA Cert</th>
-        <th onclick="sortBy('pop')">PSA Pop</th>
+        <th onclick="sortBy('gradingID')">Cert</th>
+        <th onclick="sortBy('pop')">Pop</th>
         <th onclick="sortBy('price')">Price</th>
-        <th class="th-alt" onclick="sortBy('altPrice')">Alt $</th>
-        <th class="th-alt" onclick="sortBy('altDelta')">Alt Δ</th>
-        <th class="th-alt" onclick="sortBy('altPct')">Alt %</th>
+        <th class="th-alt" onclick="sortBy('altPrice')">ALT $</th>
+        <th class="th-alt" onclick="sortBy('altDelta')">ALT Δ</th>
+        <th class="th-alt" onclick="sortBy('altPct')">ALT %</th>
         <th class="th-cl" onclick="sortBy('clPrice')">CL $</th>
         <th class="th-cl" onclick="sortBy('clDelta')">CL Δ</th>
         <th class="th-cl" onclick="sortBy('clPct')">CL %</th>
-        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')">SD (PSA)</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPrice')" title="SNKRDUNK price for the row's PSA grade">SD $</th>
         <th class="th-snkrdunk" onclick="sortBy('snkrdunkDelta')">SD Δ</th>
-        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPct')">SNKR %</th>
+        <th class="th-snkrdunk" onclick="sortBy('snkrdunkPct')">SD %</th>
         <th style="width:40px"></th>
       </tr>
     </thead>
@@ -450,7 +483,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.88</footer>
+<footer>v0.89</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -608,6 +641,13 @@
     document.getElementById("next-btn").disabled = currentPage >= totalPages;
   }
 
+  function enableRefreshButtons() {
+    for (const id of ["refresh-list-btn", "refresh-alt-btn", "refresh-cl-btn", "refresh-snkr-btn"]) {
+      const btn = document.getElementById(id);
+      if (btn) btn.disabled = false;
+    }
+  }
+
   async function fetchCcListings(resetPage = false, forceRefresh = false) {
     if (resetPage) currentPage = 1;
     const btn = document.getElementById("fetch-btn");
@@ -643,10 +683,7 @@
           await getJpyRate();
           updatePagination(1);
           status.textContent = (cached.statusText || `${allRows.length} listings loaded`) + " (cached)";
-          document.getElementById("refresh-list-btn").disabled = false;
-          document.getElementById("refresh-alt-btn").disabled = false;
-          document.getElementById("refresh-cl-btn").disabled = false;
-      document.getElementById("refresh-snkr-btn").disabled = false;
+          enableRefreshButtons();
           applyLiveFilters();
           window.scrollTo(0, 0);
           btn.disabled = false;
@@ -751,10 +788,7 @@
         window.scrollTo(0, 0);
       }
 
-      document.getElementById("refresh-list-btn").disabled = false;
-      document.getElementById("refresh-alt-btn").disabled = false;
-      document.getElementById("refresh-cl-btn").disabled = false;
-      document.getElementById("refresh-snkr-btn").disabled = false;
+      enableRefreshButtons();
     } catch (e) {
       status.textContent = `Error: ${e.message}`;
     } finally {
@@ -1274,6 +1308,7 @@
   }
 
   async function fetchClPrices(cards, concurrency = 3) {
+    if (!sourceEnabled("cl")) return; // CL columns hidden — don't spend CardLadder's daily quota
     const rate = await getSolPrice();
     const certPrices = new Map();
     for (const c of cards) {
@@ -1566,12 +1601,9 @@
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
       status.textContent = `${cards.length} Beezie listings loaded`;
       window.scrollTo(0, 0);
-      document.getElementById("refresh-list-btn").disabled = false;
-      document.getElementById("refresh-alt-btn").disabled = false;
-      document.getElementById("refresh-cl-btn").disabled = false;
-      document.getElementById("refresh-snkr-btn").disabled = false;
+      enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
-        fetchClPrices(cards);
+      fetchClPrices(cards);
     } catch (e) {
       status.textContent = `Beezie error: ${e.message}`;
     } finally {
@@ -1685,12 +1717,9 @@
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
       status.textContent = `${cards.length} Phygitals listings loaded`;
       window.scrollTo(0, 0);
-      document.getElementById("refresh-list-btn").disabled = false;
-      document.getElementById("refresh-alt-btn").disabled = false;
-      document.getElementById("refresh-cl-btn").disabled = false;
-      document.getElementById("refresh-snkr-btn").disabled = false;
+      enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
-        fetchClPrices(cards);
+      fetchClPrices(cards);
     } catch (e) {
       status.textContent = `Phygitals error: ${e.message}`;
     } finally {
@@ -1809,10 +1838,7 @@
       if (cacheLoadAborted) return; // fetchListings was called while we were awaiting
       updatePagination(totalPages);
       document.getElementById("status").textContent = (cached.statusText || "") + " (cached)";
-      document.getElementById("refresh-list-btn").disabled = false;
-      document.getElementById("refresh-alt-btn").disabled = false;
-      document.getElementById("refresh-cl-btn").disabled = false;
-      document.getElementById("refresh-snkr-btn").disabled = false;
+      enableRefreshButtons();
       applyLiveFilters();
       // If any Japanese cards are missing SNKRDUNK prices (e.g. key changed after alt data loaded),
       // trigger a background fetch so they fill in without requiring a manual refresh.
@@ -1833,11 +1859,46 @@
     await fetchListings(true, true);
   }
 
+  // CL defaults to off: CardLadder has a small daily request quota, so its
+  // prices are only fetched while its columns are visible.
+  const SOURCE_TOGGLE_DEFAULTS = { alt: true, cl: false, snkrdunk: true };
+
+  function sourceEnabled(source) {
+    return document.getElementById(`toggle-${source}`)?.classList.contains("active") ?? false;
+  }
+
+  function syncClRefreshBtn() {
+    const btn = document.getElementById("refresh-cl-btn");
+    if (btn) btn.style.display = sourceEnabled("cl") ? "" : "none";
+  }
+
+  function initSourceToggles() {
+    let saved = {};
+    try { saved = JSON.parse(sessionStorage.getItem("sourceToggles") || "{}"); } catch {}
+    const table = document.getElementById("results-table");
+    for (const [source, def] of Object.entries(SOURCE_TOGGLE_DEFAULTS)) {
+      const on = saved[source] ?? def;
+      document.getElementById(`toggle-${source}`)?.classList.toggle("active", on);
+      table.classList.toggle(`hide-${source}`, !on);
+    }
+    syncClRefreshBtn();
+  }
+
   function toggleSource(source) {
     const btn = document.getElementById(`toggle-${source}`);
     const table = document.getElementById("results-table");
     btn.classList.toggle("active");
-    table.classList.toggle(`hide-${source}`, !btn.classList.contains("active"));
+    const on = btn.classList.contains("active");
+    table.classList.toggle(`hide-${source}`, !on);
+    try {
+      const saved = JSON.parse(sessionStorage.getItem("sourceToggles") || "{}");
+      saved[source] = on;
+      sessionStorage.setItem("sourceToggles", JSON.stringify(saved));
+    } catch {}
+    if (source === "cl") {
+      syncClRefreshBtn();
+      if (on && allRows.length) fetchClPrices(allRows);
+    }
   }
 
   window.addEventListener("beforeunload", savePriceCache);
@@ -1851,12 +1912,21 @@
   });
 
   // ── Grade multi-select ───────────────────────────────────────────────
+  // Values are the grade strings each platform's API expects (PSA/BGS/CGC
+  // official label formats). TAG and AGS have no per-grade filter support
+  // yet, so they fall back to "Any grade" only.
   const GRADE_OPTIONS = {
     PSA: [
       { label: "GEM-MT 10", value: "GEM-MT 10" },
       { label: "MINT 9",    value: "MINT 9"    },
       { label: "NM-MT 8",   value: "NM-MT 8"   },
       { label: "NM 7",      value: "NM 7"      },
+      { label: "EX-MT 6",   value: "EX-MT 6"   },
+      { label: "EX 5",      value: "EX 5"      },
+      { label: "VG-EX 4",   value: "VG-EX 4"   },
+      { label: "VG 3",      value: "VG 3"      },
+      { label: "GOOD 2",    value: "GOOD 2"    },
+      { label: "PR 1",      value: "PR 1"      },
     ],
     Beckett: [
       { label: "Black Label 10", value: "10-PRISTINE BLACK LABEL" },
@@ -1948,6 +2018,7 @@
 
   // Restore from cache on page refresh — must run after all const/let declarations
   // are initialized (calling earlier causes TDZ ReferenceErrors that are silently swallowed)
+  initSourceToggles();
   updateGradeOptions();
   if (sessionStorage.getItem("auth") === "1") loadCardCache();
 
