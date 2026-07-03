@@ -257,8 +257,13 @@ async function snkrdunkPrice(url) {
   };
 
   // Shared per-apparel fetch: returns null if skipped, otherwise { apparelName, apparelImage, gradeHistory }
+  // The used-listings and sales-history requests are independent, so they run
+  // in parallel; early-return paths simply abandon the history promise.
   const fetchApparel = async id => {
-    const usedRes = await fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=1&page=1&sizeId=0&isSaleOnly=false`, { headers: apiHeaders });
+    const usedPromise = fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=1&page=1&sizeId=0&isSaleOnly=false`, { headers: apiHeaders });
+    const histPromise = fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/sales-history?size_id=0&page=1&per_page=100`, { headers: apiHeaders });
+    histPromise.catch(() => {}); // suppress unhandled rejection when we return early
+    const usedRes = await usedPromise;
     if (!usedRes.ok) return null;
     const usedData = await usedRes.json();
     const apparelObj = usedData.apparelUsedItems?.[0]?.apparel ?? {};
@@ -274,7 +279,7 @@ async function snkrdunkPrice(url) {
       }
     }
 
-    const histRes = await fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/sales-history?size_id=0&page=1&per_page=100`, { headers: apiHeaders });
+    const histRes = await histPromise;
     if (!histRes.ok) return null;
     const histData = await histRes.json();
 

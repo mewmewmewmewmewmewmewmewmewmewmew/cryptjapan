@@ -436,10 +436,10 @@
 </div>
 
 <div class="filters-live">
-  <input type="text" id="live-search" placeholder="Search card, set or cert…" oninput="applyLiveFilters()" />
+  <input type="text" id="live-search" placeholder="Search card, set or cert…" oninput="debouncedLiveFilters()" />
   <span class="filter-label">Price $</span>
-  <input type="number" id="price-min" placeholder="Min" min="0" oninput="applyLiveFilters()" />
-  <input type="number" id="price-max" placeholder="Max" min="0" oninput="applyLiveFilters()" />
+  <input type="number" id="price-min" placeholder="Min" min="0" oninput="debouncedLiveFilters()" />
+  <input type="number" id="price-max" placeholder="Max" min="0" oninput="debouncedLiveFilters()" />
   <span class="filter-label">Sources</span>
   <button id="toggle-alt" class="toggle-btn active" onclick="toggleSource('alt')" title="ALT price columns">ALT</button>
   <button id="toggle-cl" class="toggle-btn" onclick="toggleSource('cl')" title="CardLadder price columns (off by default — CardLadder has a small daily request quota)">CL</button>
@@ -483,7 +483,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.90</footer>
+<footer>v0.91</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -927,6 +927,13 @@
     applyLiveFilters();
   }
 
+  // Typing in the search/price inputs re-renders the whole table; debounce so
+  // fast typing triggers one render instead of one per keystroke.
+  const debouncedLiveFilters = (() => {
+    let t;
+    return () => { clearTimeout(t); t = setTimeout(applyLiveFilters, 200); };
+  })();
+
   function applyLiveFilters() {
     const q = (document.getElementById("live-search")?.value || "").toLowerCase();
     const minVal = parseFloat(document.getElementById("price-min")?.value || "");
@@ -977,19 +984,33 @@
     repopulateSnkrdunkCells(allRows);
   }
 
+  // The repopulate passes run over ALL rows, but the update*Cell DOM writes
+  // are no-ops for rows not currently rendered (their cells don't exist).
+  // Collect the rendered certs in one DOM pass so we can skip the pointless
+  // per-cert document-wide selector scans; row-object field updates (used by
+  // sorting) still run for every row.
+  function renderedCertSet() {
+    const s = new Set();
+    for (const el of document.querySelectorAll('#results-body [data-cert]')) s.add(el.dataset.cert);
+    return s;
+  }
+
   function repopulateAltCells(rows) {
+    const rendered = renderedCertSet();
     for (const c of rows) {
       if (!c.gradingID || !altCache.has(c.gradingID)) continue;
       const result = altCache.get(c.gradingID);
       const cur = c.listing?.currency;
       const raw = Number(c.listing?.price ?? 0);
       const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
-      updateAltCell(c.gradingID, result, usdc);
-      if (result?.cardName) {
-        c._altCardName = result.cardName;
-        const nameCell = document.querySelector(`.card-name-cell[data-cert="${c.gradingID}"]`);
-        if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
+      if (rendered.has(c.gradingID)) {
+        updateAltCell(c.gradingID, result, usdc);
+        if (result?.cardName) {
+          const nameCell = document.querySelector(`.card-name-cell[data-cert="${c.gradingID}"]`);
+          if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
+        }
       }
+      if (result?.cardName) c._altCardName = result.cardName;
       if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
       if (result?.psaPop != null || result?.pop != null) c._altPop = result.psaPop ?? result.pop;
       if (result?.price != null) {
@@ -1044,13 +1065,14 @@
   }
 
   function repopulateSnkrdunkCells(rows) {
+    const rendered = renderedCertSet();
     for (const c of rows) {
       if (!c.gradingID) continue;
       if (c.language && c.language.toLowerCase() !== "japanese") continue;
       const key = snkrdunkKwKey(c);
       if (!snkrdunkCache.has(key)) continue;
       const result = snkrdunkCache.get(key);
-      updateSnkrdunkCell(c.gradingID, result);
+      if (rendered.has(c.gradingID)) updateSnkrdunkCell(c.gradingID, result);
       if (result?.price != null) c._snkrdunkPrice = result.price;
     }
   }
@@ -1290,13 +1312,14 @@
   }
 
   function repopulateClCells(rows) {
+    const rendered = renderedCertSet();
     for (const c of rows) {
       if (!c.gradingID || !clCache.has(c.gradingID)) continue;
       const result = clCache.get(c.gradingID);
       const cur = c.listing?.currency;
       const raw = Number(c.listing?.price ?? 0);
       const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
-      updateClCell(c.gradingID, result, usdc);
+      if (rendered.has(c.gradingID)) updateClCell(c.gradingID, result, usdc);
       if (result?.price != null) {
         const clPrice = Number(result.price);
         c._clPrice = clPrice;
