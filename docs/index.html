@@ -483,7 +483,7 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.91</footer>
+<footer>v0.92</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1088,6 +1088,24 @@
     }
   }`;
 
+  // Single-round-trip variant: pulls altValueInfo + cardPops through the cert's
+  // asset in one request. altValueInfo needs a tsFilter (grade + grader), which
+  // we guess from the marketplace row before the call and verify against the
+  // cert response — a wrong guess costs one extra AssetDetails call, and a
+  // schema rejection falls back to the legacy 3-call path.
+  const CERT_FULL_QUERY = `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
+    cert(certNumber: $certNumber) {
+      certNumber gradeNumber gradingCompany
+      asset {
+        id subject attributes { cardNumber }
+        altValueInfo(tsFilter: $tsFilter) { currentAltValue }
+        cardPops { gradingCompany gradeNumber count }
+        __typename
+      }
+      __typename
+    }
+  }`;
+
   const ASSET_QUERY = `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
     asset(id: $id) {
       id
@@ -1119,17 +1137,49 @@
   }
 
   const QUERY_MAP = { Cert: CERT_QUERY, AssetDetails: ASSET_QUERY, AssetCardPops: CARDPOPS_QUERY };
-  async function altPost(operation, variables) {
+  async function altPost(operation, variables, queryOverride) {
     const res = await fetch(`${WORKER_URL}/alt/${operation}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ operationName: operation, query: QUERY_MAP[operation] ?? ASSET_QUERY, variables }),
+      body: JSON.stringify({ operationName: operation, query: queryOverride ?? QUERY_MAP[operation] ?? ASSET_QUERY, variables }),
     });
     const data = await res.json();
     return data;
   }
 
-  async function fetchAltPrice(certNumber) {
+  // Build the tsFilter guess for the combined cert query from marketplace row
+  // data. ALT formats gradeNumber as "10.0" / "9.5" and uses BGS (not Beckett).
+  function altTsFilterGuess(card) {
+    const m = (card?.grade || "").match(/(\d+(?:\.\d+)?)/);
+    if (!m) return null;
+    const num = parseFloat(m[1]);
+    const gradeNumber = Number.isInteger(num) ? `${num}.0` : String(num);
+    const gcRaw = (card?.gradingCompany || "").toUpperCase();
+    const gradingCompany = gcRaw.startsWith("BECK") ? "BGS" : gcRaw;
+    if (!gradingCompany) return null;
+    return { gradeNumber, gradingCompany, autograph: null };
+  }
+
+  function buildAltResult(cert, price, cardPops) {
+    const popEntry = cardPops.find(p => p.gradingCompany === cert.gradingCompany && p.gradeNumber === cert.gradeNumber);
+    const gradeFloor = `${Math.floor(parseFloat(cert.gradeNumber))}.0`;
+    const psaEntry = cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === cert.gradeNumber)
+                  ?? cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === gradeFloor);
+    return {
+      price: price ?? null,
+      pop: popEntry?.count ?? null,
+      psaPop: psaEntry?.count ?? null,
+      assetId: cert.asset.id,
+      cardName: cert.asset.subject ?? null,
+      cardNumber: normalizeCardNum(cert.asset.attributes?.cardNumber ?? null),
+    };
+  }
+
+  // Live telemetry for the combined-query rollout — check in the console:
+  // single = 1 round trip, extra = guess mismatched (2 trips), legacy = fallback (3 trips)
+  window._altStats = { single: 0, extra: 0, legacy: 0 };
+
+  async function fetchAltPrice(certNumber, card) {
     if (altCache.has(certNumber)) {
       const cached = altCache.get(certNumber);
       if (!cached) return cached;
@@ -1137,6 +1187,36 @@
       // re-fetch if price is null (stale cache or first fetch after Alt API change)
     }
     try {
+      // Fast path: one combined round trip when we can guess the tsFilter
+      const guess = card ? altTsFilterGuess(card) : null;
+      if (guess) {
+        const full = await altPost("Cert", { certNumber, tsFilter: guess }, CERT_FULL_QUERY);
+        const cert = full.data?.cert;
+        if (cert?.asset?.id) {
+          const guessMatched = cert.gradeNumber === guess.gradeNumber && cert.gradingCompany === guess.gradingCompany;
+          let price;
+          if (guessMatched && !full.errors) {
+            price = cert.asset.altValueInfo?.currentAltValue ?? null;
+            window._altStats.single++;
+          } else {
+            // Guessed grade/grader didn't match the cert (or the value field
+            // errored) — re-fetch the value with the cert's real filter.
+            const assetData = await altPost("AssetDetails", { id: cert.asset.id, tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany, autograph: null } });
+            price = assetData.data?.asset?.altValueInfo?.currentAltValue ?? null;
+            window._altStats.extra++;
+          }
+          const cardPops = Array.isArray(cert.asset.cardPops) ? cert.asset.cardPops : [];
+          const result = buildAltResult(cert, price, cardPops);
+          altCache.set(certNumber, result);
+          return result;
+        }
+        // cert came back null with no errors: card isn't on ALT — same as legacy
+        if (!full.errors) return null;
+        // schema rejected the combined query — fall through to the legacy path
+      }
+
+      // Legacy path: 3 round trips (Cert, then AssetDetails + AssetCardPops)
+      window._altStats.legacy++;
       const certData = await altPost("Cert", { certNumber });
       const cert = certData.data?.cert;
       if (!cert?.asset?.id) return null;
@@ -1145,18 +1225,7 @@
         altPost("AssetCardPops", { id: cert.asset.id }),
       ]);
       const cardPops = popsData.data?.asset?.cardPops ?? [];
-      const popEntry = cardPops.find(p => p.gradingCompany === cert.gradingCompany && p.gradeNumber === cert.gradeNumber);
-      const gradeFloor = `${Math.floor(parseFloat(cert.gradeNumber))}.0`;
-      const psaEntry = cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === cert.gradeNumber)
-                    ?? cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === gradeFloor);
-      const result = {
-        price: assetData.data?.asset?.altValueInfo?.currentAltValue ?? null,
-        pop: popEntry?.count ?? null,
-        psaPop: psaEntry?.count ?? null,
-        assetId: cert.asset.id,
-        cardName: cert.asset.subject ?? null,
-        cardNumber: normalizeCardNum(cert.asset.attributes?.cardNumber ?? null),
-      };
+      const result = buildAltResult(cert, assetData.data?.asset?.altValueInfo?.currentAltValue ?? null, cardPops);
       altCache.set(certNumber, result);
       return result;
     } catch { return null; }
@@ -1211,11 +1280,15 @@
       const usdc = cur === "USDC" ? raw : cur === "SOL" && rate ? raw * rate : null;
       if (usdc !== null) certPrices.set(c.gradingID, usdc);
     }
-    const certs = [...new Set(cards.map(c => c.gradingID).filter(Boolean))];
+    const certCards = new Map(); // cert → row (for the combined-query tsFilter guess)
+    for (const c of cards) {
+      if (c.gradingID && !certCards.has(c.gradingID)) certCards.set(c.gradingID, c);
+    }
+    const certs = [...certCards.keys()];
     for (let i = 0; i < certs.length; i += concurrency) {
       await Promise.all(
         certs.slice(i, i + concurrency).map(async cert => {
-          const result = await fetchAltPrice(cert);
+          const result = await fetchAltPrice(cert, certCards.get(cert));
           const usdc = certPrices.get(cert);
           updateAltCell(cert, result, usdc);
           for (const c of allRows) {
