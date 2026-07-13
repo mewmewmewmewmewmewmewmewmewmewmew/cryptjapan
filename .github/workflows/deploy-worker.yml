@@ -23,9 +23,15 @@ jobs:
           echo "${{ secrets.ALT_TOKEN }}" | npx wrangler@latest secret put ALT_TOKEN
           echo "${{ secrets.CARDLADDER_EMAIL }}" | npx wrangler@latest secret put CARDLADDER_EMAIL
           echo "${{ secrets.CARDLADDER_PASSWORD }}" | npx wrangler@latest secret put CARDLADDER_PASSWORD
+          # Only set GEMRATE_API_KEY when the repo secret is present, so an
+          # absent secret doesn't overwrite a manually-set key with "".
+          if [ -n "$GEMRATE_API_KEY" ]; then
+            echo "$GEMRATE_API_KEY" | npx wrangler@latest secret put GEMRATE_API_KEY
+          fi
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
           CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          GEMRATE_API_KEY: ${{ secrets.GEMRATE_API_KEY }}
 
       - name: Deploy Worker
         working-directory: worker

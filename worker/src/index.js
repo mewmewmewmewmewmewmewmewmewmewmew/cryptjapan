@@ -454,20 +454,28 @@ async function altPriceByCert(url, env) {
 }
 
 // Per-card population by cert number (for the Google Sheets integration).
-// Resolves the cert via ALT, then returns PSA 8/9/10 counts plus the full
-// per-grader pop list. bgsBlackLabel is null until we have a source that
-// separates Black Label from Pristine 10 (ALT records both as BGS "10.0").
-// Pop data moves slowly, so successful responses are edge-cached for 24h.
+// Uses GemRate's Universal Cert Lookup, which resolves one cert into a
+// cross-grader grade breakdown in a single call — including PSA 8/9/10 and,
+// crucially, BGS Black Label (g10b) separated from BGS Pristine (g10p),
+// which ALT can't distinguish. Requires the GEMRATE_API_KEY worker secret.
+// Pop data moves slowly (GemRate itself lags 2-12h), so successful responses
+// are edge-cached for 24h.
 async function cardPopsByCert(url, env) {
   const cert = url.searchParams.get("cert") || "";
+  const grader = (url.searchParams.get("grader") || "psa").toLowerCase();
   if (!cert) {
     return new Response(JSON.stringify({ error: "cert param required" }), {
       status: 400, headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
+  if (!env.GEMRATE_API_KEY) {
+    return new Response(JSON.stringify({ error: "GEMRATE_API_KEY not configured" }), {
+      status: 500, headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
 
   const cache = caches.default;
-  const cacheKey = new Request(`https://pops-cache.internal/pops?cert=${encodeURIComponent(cert)}`);
+  const cacheKey = new Request(`https://pops-cache.internal/pops?grader=${encodeURIComponent(grader)}&cert=${encodeURIComponent(cert)}`);
   const hit = await cache.match(cacheKey);
   if (hit) {
     return new Response(await hit.text(), {
@@ -475,39 +483,41 @@ async function cardPopsByCert(url, env) {
     });
   }
 
-  const altGql = async (operation, query, variables) => {
-    const res = await fetch(`${ALT_BASE}/graphql/${operation}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.ALT_TOKEN}` },
-      body: JSON.stringify({ operationName: operation, query, variables }),
-    });
-    return res.json();
-  };
-
   try {
-    const certData = await altGql("Cert", `query Cert($certNumber: String!) { cert(certNumber: $certNumber) { certNumber gradeNumber gradingCompany asset { id subject attributes { cardNumber } cardPops { gradingCompany gradeNumber count } } } }`, { certNumber: cert });
-    const certObj = certData.data?.cert;
-    if (!certObj?.asset?.id) {
-      return new Response(JSON.stringify({ error: "cert not found", cert }), {
+    const res = await fetch("https://api.gemrate.com/universal-cert-lookup", {
+      method: "POST",
+      headers: {
+        "Accept": "application/json",
+        "Content-Type": "application/json",
+        "X-API-KEY": env.GEMRATE_API_KEY,
+      },
+      body: JSON.stringify({ grader, cert }),
+    });
+    if (!res.ok) {
+      const detail = await res.text();
+      return new Response(JSON.stringify({ error: `GemRate HTTP ${res.status}`, detail, cert }), {
         headers: { ...CORS, "Content-Type": "application/json" },
       });
     }
-
-    const pops = certObj.asset.cardPops ?? [];
-    const psaCount = grade => pops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === `${grade}.0`)?.count ?? 0;
+    const data = await res.json();
+    const summary = data.grade_summary ?? [];
+    // GemRate keys: PSA uses g8/g9/g10; Beckett uses g10b (Black Label) and
+    // g10p (Pristine 10). Grader names in the response are lowercase.
+    const breakdownFor = g => summary.find(s => (s.grader || "").toLowerCase() === g)?.grade_breakdown ?? {};
+    const psa = breakdownFor("psa");
+    const bgs = breakdownFor("beckett");
 
     const payload = JSON.stringify({
-      cert: certObj.certNumber,
-      cardName: certObj.asset.subject ?? null,
-      cardNumber: certObj.asset.attributes?.cardNumber ?? null,
-      grade: certObj.gradeNumber,
-      grader: certObj.gradingCompany,
-      psa8: psaCount(8),
-      psa9: psaCount(9),
-      psa10: psaCount(10),
-      bgs10: pops.find(p => p.gradingCompany === "BGS" && p.gradeNumber === "10.0")?.count ?? 0,
-      bgsBlackLabel: null,
-      pops,
+      cert: data.cert_info?.cert ?? cert,
+      grader: data.cert_info?.grader ?? grader,
+      description: data.cert_info?.description ?? null,
+      gemrate_id: data.cert_info?.gemrate_id ?? null,
+      psa8: psa.g8 ?? 0,
+      psa9: psa.g9 ?? 0,
+      psa10: psa.g10 ?? 0,
+      bgsBlackLabel: bgs.g10b ?? 0,
+      bgsPristine: bgs.g10p ?? 0,
+      grade_summary: summary,
     });
     try {
       await cache.put(cacheKey, new Response(payload, {
@@ -518,7 +528,7 @@ async function cardPopsByCert(url, env) {
       headers: { ...CORS, "Content-Type": "application/json", "X-Pops-Cache": "miss" },
     });
   } catch (e) {
-    return new Response(JSON.stringify({ error: String(e) }), {
+    return new Response(JSON.stringify({ error: String(e), cert }), {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
