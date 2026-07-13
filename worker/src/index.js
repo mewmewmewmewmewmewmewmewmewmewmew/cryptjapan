@@ -455,9 +455,9 @@ async function altPriceByCert(url, env) {
 
 // Per-card population by cert number (for the Google Sheets integration).
 // Resolves the cert via ALT, then returns PSA 8/9/10 counts plus the full
-// per-grader pop list. bgsBlackLabel is null until we have a source that
-// separates Black Label from Pristine 10 (ALT records both as BGS "10.0").
-// Pop data moves slowly, so successful responses are edge-cached for 24h.
+// per-grader pop list. ALT encodes BGS Black Label as a synthetic "10.5"
+// grade (10.0 = Pristine 10, 10.5 = Black Label), so bgsBlackLabel reads
+// straight from that. Pop data moves slowly, so responses are edge-cached 24h.
 async function cardPopsByCert(url, env) {
   const cert = url.searchParams.get("cert") || "";
   if (!cert) {
@@ -494,7 +494,8 @@ async function cardPopsByCert(url, env) {
     }
 
     const pops = certObj.asset.cardPops ?? [];
-    const psaCount = grade => pops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === `${grade}.0`)?.count ?? 0;
+    const countOf = (company, grade) => pops.find(p => p.gradingCompany === company && p.gradeNumber === grade)?.count ?? 0;
+    const psaCount = grade => countOf("PSA", `${grade}.0`);
 
     const payload = JSON.stringify({
       cert: certObj.certNumber,
@@ -505,8 +506,10 @@ async function cardPopsByCert(url, env) {
       psa8: psaCount(8),
       psa9: psaCount(9),
       psa10: psaCount(10),
-      bgs10: pops.find(p => p.gradingCompany === "BGS" && p.gradeNumber === "10.0")?.count ?? 0,
-      bgsBlackLabel: null,
+      // ALT encodes the top BGS tier as a synthetic "10.5" grade: 10.0 is the
+      // regular Pristine 10, 10.5 is the Black Label (all four 10 subgrades).
+      bgs10: countOf("BGS", "10.0"),
+      bgsBlackLabel: countOf("BGS", "10.5"),
       pops,
     });
     try {
