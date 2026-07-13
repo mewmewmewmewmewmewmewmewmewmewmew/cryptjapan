@@ -35,6 +35,10 @@ export default {
       return altPriceByCert(url, env);
     }
 
+    if (path === "/card-pops") {
+      return cardPopsByCert(url, env);
+    }
+
     if (path === "/cardladder-price") {
       return cardladderPrice(url, env);
     }
@@ -444,6 +448,77 @@ async function altPriceByCert(url, env) {
     }), { headers: { ...CORS, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ altPrice: null, error: String(e) }), {
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+}
+
+// Per-card population by cert number (for the Google Sheets integration).
+// Resolves the cert via ALT, then returns PSA 8/9/10 counts plus the full
+// per-grader pop list. bgsBlackLabel is null until we have a source that
+// separates Black Label from Pristine 10 (ALT records both as BGS "10.0").
+// Pop data moves slowly, so successful responses are edge-cached for 24h.
+async function cardPopsByCert(url, env) {
+  const cert = url.searchParams.get("cert") || "";
+  if (!cert) {
+    return new Response(JSON.stringify({ error: "cert param required" }), {
+      status: 400, headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  const cache = caches.default;
+  const cacheKey = new Request(`https://pops-cache.internal/pops?cert=${encodeURIComponent(cert)}`);
+  const hit = await cache.match(cacheKey);
+  if (hit) {
+    return new Response(await hit.text(), {
+      headers: { ...CORS, "Content-Type": "application/json", "X-Pops-Cache": "hit" },
+    });
+  }
+
+  const altGql = async (operation, query, variables) => {
+    const res = await fetch(`${ALT_BASE}/graphql/${operation}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.ALT_TOKEN}` },
+      body: JSON.stringify({ operationName: operation, query, variables }),
+    });
+    return res.json();
+  };
+
+  try {
+    const certData = await altGql("Cert", `query Cert($certNumber: String!) { cert(certNumber: $certNumber) { certNumber gradeNumber gradingCompany asset { id subject attributes { cardNumber } cardPops { gradingCompany gradeNumber count } } } }`, { certNumber: cert });
+    const certObj = certData.data?.cert;
+    if (!certObj?.asset?.id) {
+      return new Response(JSON.stringify({ error: "cert not found", cert }), {
+        headers: { ...CORS, "Content-Type": "application/json" },
+      });
+    }
+
+    const pops = certObj.asset.cardPops ?? [];
+    const psaCount = grade => pops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === `${grade}.0`)?.count ?? 0;
+
+    const payload = JSON.stringify({
+      cert: certObj.certNumber,
+      cardName: certObj.asset.subject ?? null,
+      cardNumber: certObj.asset.attributes?.cardNumber ?? null,
+      grade: certObj.gradeNumber,
+      grader: certObj.gradingCompany,
+      psa8: psaCount(8),
+      psa9: psaCount(9),
+      psa10: psaCount(10),
+      bgs10: pops.find(p => p.gradingCompany === "BGS" && p.gradeNumber === "10.0")?.count ?? 0,
+      bgsBlackLabel: null,
+      pops,
+    });
+    try {
+      await cache.put(cacheKey, new Response(payload, {
+        headers: { "Content-Type": "application/json", "Cache-Control": "s-maxage=86400" },
+      }));
+    } catch {}
+    return new Response(payload, {
+      headers: { ...CORS, "Content-Type": "application/json", "X-Pops-Cache": "miss" },
+    });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: String(e) }), {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
