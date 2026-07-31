@@ -646,6 +646,11 @@ async function cardPopsByCert(url, env) {
   }
 }
 
+// Upstream calls get a hard deadline: without one, a hung CardLadder request
+// blocks a whole client-side batch indefinitely (Promise.all waits for the
+// slowest), which is what made long lists appear to hang forever.
+const CL_TIMEOUT_MS = 8000;
+
 // Firebase idToken cache — survives across requests within a worker isolate.
 // Tokens last 1 hour; refresh via refreshToken when possible, else re-sign-in.
 let clAuth = { token: null, refreshToken: null, exp: 0 };
@@ -666,6 +671,7 @@ async function cardladderToken(env) {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ grant_type: "refresh_token", refresh_token: clAuth.refreshToken }),
+          signal: AbortSignal.timeout(CL_TIMEOUT_MS),
         });
         if (res.ok) {
           const d = await res.json();
@@ -683,6 +689,7 @@ async function cardladderToken(env) {
         password: (env.CARDLADDER_PASSWORD || "").trim(),
         returnSecureToken: true,
       }),
+      signal: AbortSignal.timeout(CL_TIMEOUT_MS),
     });
     if (!res.ok) {
       const body = await res.text();
@@ -769,6 +776,7 @@ async function cardladderPrice(url, env) {
           "Referer": "https://app.cardladder.com/",
         },
         body: JSON.stringify({ data }),
+        signal: AbortSignal.timeout(CL_TIMEOUT_MS),
       });
       if (!res.ok) {
         const errBody = await res.text();

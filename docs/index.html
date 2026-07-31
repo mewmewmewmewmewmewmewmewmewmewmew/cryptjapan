@@ -692,7 +692,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v0.95</footer>
+<footer>v0.96</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -985,7 +985,7 @@
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, 1, msg);
         fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
-        fetchClPrices(cards);
+        fetchClForVisible();
       } else {
         allRows = cards;
         const msg = `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
@@ -993,7 +993,7 @@
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, pages, msg);
         fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
-        fetchClPrices(cards);
+        fetchClForVisible();
         window.scrollTo(0, 0);
       }
 
@@ -1188,10 +1188,39 @@
     }
 
     renderTable(filtered);
+    visibleRows = filtered;
     repopulateAltCells(allRows);
     repopulateClCells(allRows);
     repopulateSnkrdunkCells(allRows);
+    scheduleClForVisible();
   }
+
+  // ── CardLadder: fetch only what's on screen ──────────────────────────
+  // CardLadder has a tight daily quota and is slow, so fetching every row of a
+  // long list both takes forever and exhausts the quota before finishing.
+  // Only the rendered page is fetched; paging or filtering pulls the rest.
+  let visibleRows = [];
+
+  function fetchClForVisible() {
+    if (!sourceEnabled("cl") || !visibleRows.length) return;
+    const pending = [];
+    const seen = new Set();
+    for (const c of visibleRows) {
+      const cert = c.gradingID;
+      if (!cert || seen.has(cert) || clCache.has(cert) || !clGrader(c)) continue;
+      seen.add(cert);
+      pending.push(c);
+    }
+    if (pending.length) fetchClPrices(pending);
+  }
+
+  // applyLiveFilters runs on every keystroke and sort; coalesce the triggers.
+  let clVisibleTimer = null;
+  function scheduleClForVisible() {
+    clearTimeout(clVisibleTimer);
+    clVisibleTimer = setTimeout(fetchClForVisible, 250);
+  }
+  // ─────────────────────────────────────────────────────────────────────
 
   // The repopulate passes run over ALL rows, but the update*Cell DOM writes
   // are no-ops for rows not currently rendered (their cells don't exist).
@@ -1572,10 +1601,28 @@
     return null;
   }
 
-  async function fetchClPrice(certNumber, grader, fresh = false) {
-    if (clCache.has(certNumber)) return clCache.get(certNumber);
+  // In-flight requests, so overlapping triggers (paging, filtering, an explicit
+  // refresh) never spend two CardLadder requests on the same cert.
+  const clInFlight = new Map();
+
+  function fetchClPrice(certNumber, grader, fresh = false) {
+    if (clCache.has(certNumber)) return Promise.resolve(clCache.get(certNumber));
+    const existing = clInFlight.get(certNumber);
+    if (existing) return existing;
+    const p = clFetchOne(certNumber, grader, fresh)
+      .finally(() => clInFlight.delete(certNumber));
+    clInFlight.set(certNumber, p);
+    return p;
+  }
+
+  async function clFetchOne(certNumber, grader, fresh) {
     try {
-      const res = await fetch(`${WORKER_URL}/cardladder-price?cert=${encodeURIComponent(certNumber)}&grader=${grader}${fresh ? "&fresh=1" : ""}`);
+      // Bounded so one stalled lookup can't hold up its whole batch; an
+      // aborted call just stays uncached and is retried later.
+      const res = await fetch(
+        `${WORKER_URL}/cardladder-price?cert=${encodeURIComponent(certNumber)}&grader=${grader}${fresh ? "&fresh=1" : ""}`,
+        { signal: AbortSignal.timeout(15000) }
+      );
       const data = await res.json();
       if (data.quotaExceeded) {
         // Daily quota won't recover until tomorrow — cache so we stop retrying.
@@ -1951,7 +1998,7 @@
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
-      fetchClPrices(cards);
+      fetchClForVisible();
     } catch (e) {
       status.textContent = `Beezie error: ${e.message}`;
     } finally {
@@ -2067,7 +2114,7 @@
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
-      fetchClPrices(cards);
+      fetchClForVisible();
     } catch (e) {
       status.textContent = `Phygitals error: ${e.message}`;
     } finally {
@@ -2096,6 +2143,8 @@
   async function refreshCl() {
     const btn = document.getElementById("refresh-cl-btn");
     btn.disabled = true;
+    // Drop cached values for every row so other pages re-fetch when visited,
+    // but only spend requests on the page actually being looked at.
     for (const c of allRows) { if (c.gradingID) clCache.delete(c.gradingID); }
     for (const c of allRows) {
       const cert = c.gradingID;
@@ -2106,7 +2155,9 @@
         if (el) el.textContent = "";
       }
     }
-    await fetchClPrices(allRows, 3, true);
+    const targets = (visibleRows.length ? visibleRows : allRows)
+      .filter(c => c.gradingID && clGrader(c));
+    await fetchClPrices(targets, 3, true);
     btn.disabled = false;
   }
 
@@ -2211,7 +2262,7 @@
       );
       if (needsSnkr) fetchSnkrdunkPrices(allRows);
       const needsCl = allRows.some(c => c.gradingID && clGrader(c) && !clCache.has(c.gradingID));
-      if (needsCl) fetchClPrices(allRows);
+      if (needsCl) fetchClForVisible();
     } catch {}
   }
 
@@ -2260,7 +2311,7 @@
     } catch {}
     if (source === "cl") {
       syncClRefreshBtn();
-      if (on && allRows.length) fetchClPrices(allRows);
+      if (on && allRows.length) fetchClForVisible();
     }
   }
 
