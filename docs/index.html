@@ -347,11 +347,60 @@
     }
 
     .empty { text-align: center; padding: 72px; color: var(--text-faint); }
-    .alt-loading { color: var(--text-faint); font-size: 11px; animation: loading-pulse 1.2s ease-in-out infinite; }
-    @keyframes loading-pulse {
-      0%, 100% { opacity: 0.3; }
-      50% { opacity: 1; }
+    /* Skeleton bar for cells whose data is still in flight. Replaces the old
+       faint "···", which read too much like the "—" used for no-data. */
+    .alt-loading {
+      display: inline-block;
+      width: 52px;
+      height: 11px;
+      border-radius: 3px;
+      vertical-align: middle;
+      font-size: 0;
+      color: transparent;
+      background-image: linear-gradient(90deg, var(--surface-3) 20%, var(--border-strong) 45%, var(--surface-3) 70%);
+      background-size: 300% 100%;
+      animation: shimmer 1.5s linear infinite;
     }
+    @keyframes shimmer {
+      0%   { background-position: 150% 0; }
+      100% { background-position: -150% 0; }
+    }
+
+    /* Fixed pill showing which sources are still fetching, and how far along. */
+    #load-progress {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 14px;
+      background: var(--surface-1);
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      box-shadow: var(--shadow-pop);
+      font-size: 12px;
+      color: var(--text);
+      opacity: 0;
+      transform: translateY(6px);
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    #load-progress.visible { opacity: 1; transform: translateY(0); }
+    #load-progress .spinner {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: 2px solid var(--border-strong);
+      border-top-color: var(--accent);
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #load-progress .lp-item { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+    #load-progress .lp-item::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--lp-dot, var(--text-faint)); }
+    #load-progress .lp-alt { --lp-dot: var(--alt); }
+    #load-progress .lp-cl { --lp-dot: var(--cl); }
+    #load-progress .lp-sd { --lp-dot: var(--sd); }
     .alt-link { color: var(--alt); text-decoration: none; }
     .alt-link:hover { text-decoration: underline; }
     .card-link { color: var(--text); text-decoration: none; font-weight: 500; }
@@ -641,7 +690,9 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<footer>v0.94</footer>
+<div id="load-progress"></div>
+
+<footer>v0.95</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1429,6 +1480,36 @@
     }
   }
 
+  // ── Load progress pill ───────────────────────────────────────────────
+  // Individual cells show a skeleton bar, but that only tells you a given
+  // cell is pending. This says which sources are still running overall.
+  const loadProgress = { ALT: null, CL: null, SD: null };
+
+  function renderLoadProgress() {
+    const el = document.getElementById("load-progress");
+    if (!el) return;
+    const active = Object.entries(loadProgress).filter(([, v]) => v && v.done < v.total);
+    if (!active.length) { el.classList.remove("visible"); return; }
+    el.innerHTML = `<span class="spinner"></span>` + active
+      .map(([src, v]) => `<span class="lp-item lp-${src.toLowerCase()}">${src} ${v.done}/${v.total}</span>`)
+      .join("");
+    el.classList.add("visible");
+  }
+
+  function progressStart(src, total) {
+    loadProgress[src] = total > 0 ? { done: 0, total } : null;
+    renderLoadProgress();
+  }
+  function progressTick(src) {
+    const v = loadProgress[src];
+    if (v) { v.done++; renderLoadProgress(); }
+  }
+  function progressEnd(src) {
+    loadProgress[src] = null;
+    renderLoadProgress();
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
   async function fetchAltPrices(cards, concurrency = 8) {
     const rate = await getSolPrice();
     await getJpyRate();
@@ -1445,10 +1526,13 @@
       if (c.gradingID && !certCards.has(c.gradingID)) certCards.set(c.gradingID, c);
     }
     const certs = [...certCards.keys()];
+    progressStart("ALT", certs.length);
+    try {
     for (let i = 0; i < certs.length; i += concurrency) {
       await Promise.all(
         certs.slice(i, i + concurrency).map(async cert => {
           const result = await fetchAltPrice(cert, certCards.get(cert));
+          progressTick("ALT");
           const usdc = certPrices.get(cert);
           updateAltCell(cert, result, usdc);
           for (const c of allRows) {
@@ -1470,6 +1554,7 @@
         })
       );
     }
+    } finally { progressEnd("ALT"); }
     savePriceCache();
   }
   // ─────────────────────────────────────────────────────────────────────
@@ -1582,10 +1667,13 @@
       if (!grader) { updateClCell(c.gradingID, null, null); continue; }
       entries.push({ cert: c.gradingID, grader });
     }
+    progressStart("CL", entries.length);
+    try {
     for (let i = 0; i < entries.length; i += concurrency) {
       await Promise.all(
         entries.slice(i, i + concurrency).map(async ({ cert, grader }) => {
           const result = await fetchClPrice(cert, grader, fresh);
+          progressTick("CL");
           const usdc = certPrices.get(cert);
           updateClCell(cert, result, usdc);
           for (const c of allRows) {
@@ -1600,6 +1688,7 @@
         })
       );
     }
+    } finally { progressEnd("CL"); }
     savePriceCache();
   }
   // ─────────────────────────────────────────────────────────────────────
@@ -1746,6 +1835,8 @@
     }
 
     const entries = [...kwGroups.values()];
+    progressStart("SD", entries.length);
+    try {
     for (let i = 0; i < entries.length; i += concurrency) {
       await Promise.all(
         entries.slice(i, i + concurrency).map(async ({ kw, psaGrade, mb, year, kwKey, grpCards }) => {
@@ -1762,6 +1853,7 @@
             } catch { result = null; }
             snkrdunkCache.set(kwKey, result);
           }
+          progressTick("SD");
           for (const c of grpCards) {
             updateSnkrdunkCell(c.gradingID, result);
             const row = allRows.find(r => r.gradingID === c.gradingID);
@@ -1770,6 +1862,7 @@
         })
       );
     }
+    } finally { progressEnd("SD"); }
     savePriceCache();
   }
   // ─────────────────────────────────────────────────────────────────────
