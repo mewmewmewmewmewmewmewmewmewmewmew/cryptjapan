@@ -75,16 +75,74 @@ export default {
   },
 };
 
+// The worker owns the GraphQL text for every ALT operation it will run.
+// This endpoint signs requests with our ALT token, so it must never forward a
+// caller-supplied query — otherwise anyone who knows the worker URL could run
+// arbitrary queries against ALT as us. Callers may only pick an operation by
+// name and pass variables; the query itself is fixed here.
+const ALT_QUERIES = {
+  Cert: `query Cert($certNumber: String!) {
+    cert(certNumber: $certNumber) {
+      certNumber gradeNumber gradingCompany
+      asset { id subject attributes { cardNumber } __typename }
+      __typename
+    }
+  }`,
+  // Single-round-trip variant, selected when the caller passes a tsFilter.
+  CertFull: `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
+    cert(certNumber: $certNumber) {
+      certNumber gradeNumber gradingCompany
+      asset {
+        id subject attributes { cardNumber }
+        altValueInfo(tsFilter: $tsFilter) { currentAltValue }
+        cardPops { gradingCompany gradeNumber count }
+        __typename
+      }
+      __typename
+    }
+  }`,
+  AssetDetails: `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
+    asset(id: $id) {
+      id
+      altValueInfo(tsFilter: $tsFilter) { currentAltValue }
+      __typename
+    }
+  }`,
+  AssetCardPops: `query AssetCardPops($id: ID!) {
+    asset(id: $id) {
+      id
+      cardPops { gradingCompany gradeNumber count }
+    }
+  }`,
+};
+
 async function proxyAlt(request, path, env) {
   const operation = path.slice(5); // strip "/alt/"
-  const body = await request.text();
+  if (!Object.prototype.hasOwnProperty.call(ALT_QUERIES, operation) || operation === "CertFull") {
+    return new Response(JSON.stringify({ error: `unsupported operation: ${operation}` }), {
+      status: 403, headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  let variables = {};
+  try {
+    variables = (JSON.parse(await request.text()) || {}).variables ?? {};
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid JSON body" }), {
+      status: 400, headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  // Cert has two shapes; pick the richer one only when a tsFilter is supplied.
+  const queryKey = operation === "Cert" && variables.tsFilter ? "CertFull" : operation;
+
   const upstream = await fetch(`${ALT_BASE}/graphql/${operation}`, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       "Authorization": `Bearer ${env.ALT_TOKEN}`,
     },
-    body,
+    body: JSON.stringify({ operationName: operation, query: ALT_QUERIES[queryKey], variables }),
   });
   const data = await upstream.text();
   return new Response(data, {
@@ -93,33 +151,71 @@ async function proxyAlt(request, path, env) {
   });
 }
 
-async function solPrice() {
-  const res = await fetch(
-    "https://api.coinbase.com/v2/prices/SOL-USD/spot",
-    { headers: { "Accept": "application/json" } }
-  );
-  const data = await res.json();
-  const price = parseFloat(data?.data?.amount ?? null);
-  return new Response(JSON.stringify({ usd: isNaN(price) ? null : price }), {
-    headers: { ...CORS, "Content-Type": "application/json" },
+// Shared edge-cache helper. Every client currently hits upstream itself for
+// rates and SNKRDUNK lookups; caching at the edge collapses that to one call
+// per TTL across all users, sessions and isolates.
+// Returns the cached body if present, else runs produce(), caches it when
+// ttlFor() gives a positive TTL, and returns it.
+async function cachedJson(keyUrl, ttlFor, produce) {
+  const cache = caches.default;
+  const cacheKey = new Request(keyUrl);
+  const hit = await cache.match(cacheKey);
+  if (hit) {
+    return new Response(await hit.text(), {
+      headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "hit" },
+    });
+  }
+  const body = await produce();
+  let ttl = 0;
+  try { ttl = ttlFor(JSON.parse(body)); } catch { ttl = 0; }
+  if (ttl > 0) {
+    try {
+      await cache.put(cacheKey, new Response(body, {
+        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ttl}` },
+      }));
+    } catch {}
+  }
+  return new Response(body, {
+    headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "miss" },
   });
 }
 
+async function solPrice() {
+  return cachedJson(
+    "https://rate-cache.internal/sol",
+    d => (d.usd != null ? 300 : 0), // 5 min; never cache a failed lookup
+    async () => {
+      try {
+        const res = await fetch(
+          "https://api.coinbase.com/v2/prices/SOL-USD/spot",
+          { headers: { "Accept": "application/json" } }
+        );
+        const data = await res.json();
+        const price = parseFloat(data?.data?.amount ?? null);
+        return JSON.stringify({ usd: isNaN(price) ? null : price });
+      } catch {
+        return JSON.stringify({ usd: null });
+      }
+    }
+  );
+}
+
 async function jpyRate() {
-  try {
-    const res = await fetch("https://api.frankfurter.app/latest?from=JPY&to=USD", {
-      headers: { "Accept": "application/json" },
-    });
-    const data = await res.json();
-    const rate = data?.rates?.USD ?? null;
-    return new Response(JSON.stringify({ usdPerJpy: rate }), {
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
-  } catch {
-    return new Response(JSON.stringify({ usdPerJpy: null }), {
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
-  }
+  return cachedJson(
+    "https://rate-cache.internal/jpy",
+    d => (d.usdPerJpy != null ? 3600 : 0), // 1 hour; the feed updates daily
+    async () => {
+      try {
+        const res = await fetch("https://api.frankfurter.app/latest?from=JPY&to=USD", {
+          headers: { "Accept": "application/json" },
+        });
+        const data = await res.json();
+        return JSON.stringify({ usdPerJpy: data?.rates?.USD ?? null });
+      } catch {
+        return JSON.stringify({ usdPerJpy: null });
+      }
+    }
+  );
 }
 
 function parseSnkrdunkAge(dateStr) {
@@ -151,7 +247,30 @@ function priceMedian(prices) {
   return s.length % 2 === 0 ? (s[mid - 1] + s[mid]) / 2 : s[mid];
 }
 
+// A single SNKRDUNK lookup costs a search-page fetch plus up to ~10 candidate
+// cards x 2 API calls each, so it is by far the heaviest thing this worker
+// does. Cache on the search inputs (not the request URL — altPriceByCert calls
+// this internally with a different host) so repeat lookups across users and
+// sessions are free, and we stay polite toward snkrdunk.com.
 async function snkrdunkPrice(url) {
+  const p = url.searchParams;
+  const keyParams = new URLSearchParams({
+    keywords: p.get("keywords") || "",
+    grade: p.get("grade") || "",
+    masterball: p.get("masterball") || "",
+    setnum: p.get("setnum") || "",
+    year: p.get("year") || "",
+  });
+  return cachedJson(
+    `https://snkr-cache.internal/price?${keyParams}`,
+    // Found a card: 6h. Found nothing: 1h, so a newly listed card can appear
+    // without waiting out the full window.
+    d => (d.price != null || d.apparelId != null ? 21600 : 3600),
+    async () => (await snkrdunkPriceUncached(url)).text()
+  );
+}
+
+async function snkrdunkPriceUncached(url) {
   const keywords = url.searchParams.get("keywords") || "";
   const grade = (url.searchParams.get("grade") || "").replace(/\s+/g, ""); // "PSA 10" → "PSA10"
   const hasMasterBallParam = url.searchParams.get("masterball") === "1";
