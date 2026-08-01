@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CC &lt;&gt; JP</title>
+  <title>Marketplace Scanner</title>
   <script>
     // Apply saved theme before paint to avoid a flash; default follows the OS.
     (function () {
@@ -440,6 +440,8 @@
     #toggle-snkrdunk { --dot: var(--sd); }
     .toggle-btn.active { color: var(--text); border-color: var(--border-strong); background: var(--surface-1); }
     .toggle-btn.active::before { opacity: 1; }
+    .toggle-btn:disabled { opacity: .35; cursor: not-allowed; }
+    .toggle-btn:disabled:hover { border-color: var(--border); }
 
     td.date-col { font-size: 11px; color: var(--text-muted); padding: 10px 8px; white-space: nowrap; }
     th.th-listed { padding-left: 8px; padding-right: 8px; }
@@ -548,7 +550,7 @@
 
 <div id="lock-screen">
   <form onsubmit="unlock(event)">
-    <h2>CC &lt;&gt; JP</h2>
+    <h2>Marketplace Scanner</h2>
     <input type="password" id="pw-input" placeholder="Password" autofocus />
     <div id="lock-error"></div>
     <button type="submit">Enter</button>
@@ -556,8 +558,7 @@
 </div>
 
 <header>
-  <h1>CC &lt;&gt; JP</h1>
-  <span class="tag">Marketplace Scanner</span>
+  <h1>Marketplace Scanner</h1>
   <div class="header-actions">
     <button id="refresh-list-btn" onclick="refreshCardList()" disabled title="Re-fetch listings">↻ List</button>
     <button id="refresh-alt-btn" onclick="refreshAlt()" disabled title="Re-fetch ALT prices">↻ ALT</button>
@@ -612,7 +613,7 @@
 
   <div class="filter-group">
     <span class="fg-label">Language</span>
-    <select id="language" onchange="if(activePlatform().clientFilter)applyLiveFilters()">
+    <select id="language" onchange="onLanguageChange()">
       <option value="Japanese">Japanese</option>
       <option value="English">English</option>
       <option value="">Any language</option>
@@ -692,7 +693,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v0.96</footer>
+<footer>v0.97</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -811,6 +812,7 @@
       document.getElementById("step").value = s.step;
       document.getElementById("orderBy").value = s.orderBy;
     }
+    syncSdAvailability(); // language may have changed with the platform
     updateGradeOptions(); // rebuild menu for company + set platform default grade
     if (s?.grades?.length > 0) {
       const menu = document.getElementById("grade-menu");
@@ -1858,6 +1860,7 @@
   }
 
   async function fetchSnkrdunkPrices(cards, concurrency = 4) {
+    if (sdUnavailable()) return; // English filter — no row can have an SD price
     await getJpyRate();
 
     // Deduplicate by computed keywords+grade — multiple CC listings of the same card
@@ -2224,6 +2227,7 @@
         const el = document.getElementById(id);
         if (el && f[param] != null) el.value = f[param];
       }
+      syncSdAvailability(); // restored language may disable SNKRDUNK
       // Rebuild grade options for the restored company, then restore selections
       updateGradeOptions();
       if (f.grade != null) {
@@ -2286,6 +2290,36 @@
     if (btn) btn.style.display = sourceEnabled("cl") ? "" : "none";
   }
 
+  // SNKRDUNK is a Japanese marketplace, so it can only ever price Japanese
+  // cards. Filtering to English means no row can have an SD result — hide the
+  // columns and skip the lookups entirely rather than showing a dead column.
+  function sdUnavailable() {
+    return (document.getElementById("language")?.value || "").toLowerCase() === "english";
+  }
+
+  // Keeps the SD toggle's own "active" state as the record of user intent, and
+  // only overrides what's shown, so the preference survives switching language.
+  function syncSdAvailability() {
+    const blocked = sdUnavailable();
+    const table = document.getElementById("results-table");
+    const toggle = document.getElementById("toggle-snkrdunk");
+    const refresh = document.getElementById("refresh-snkr-btn");
+    if (table) table.classList.toggle("hide-snkrdunk", blocked || !sourceEnabled("snkrdunk"));
+    if (toggle) {
+      toggle.disabled = blocked;
+      toggle.title = blocked
+        ? "Unavailable for English cards — SNKRDUNK only lists Japanese cards"
+        : "SNKRDUNK price columns";
+    }
+    if (refresh) refresh.style.display = blocked ? "none" : "";
+  }
+
+  function onLanguageChange() {
+    syncSdAvailability();
+    if (activePlatform().clientFilter) applyLiveFilters();
+    if (!sdUnavailable() && allRows.length) fetchSnkrdunkPrices(allRows);
+  }
+
   function initSourceToggles() {
     let saved = {};
     try { saved = JSON.parse(sessionStorage.getItem("sourceToggles") || "{}"); } catch {}
@@ -2296,6 +2330,7 @@
       table.classList.toggle(`hide-${source}`, !on);
     }
     syncClRefreshBtn();
+    syncSdAvailability();
   }
 
   function toggleSource(source) {
@@ -2313,6 +2348,7 @@
       syncClRefreshBtn();
       if (on && allRows.length) fetchClForVisible();
     }
+    if (source === "snkrdunk") syncSdAvailability();
   }
 
   window.addEventListener("beforeunload", savePriceCache);
