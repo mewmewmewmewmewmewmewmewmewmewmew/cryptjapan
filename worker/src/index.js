@@ -18,6 +18,20 @@ const SNKRDUNK_HEADERS = {
   "Referer": "https://snkrdunk.com/",
 };
 
+// Upstream deadlines. ALT's is deliberately generous: SNKRDUNK builds its
+// search keywords from ALT's clean card name, so a timed-out ALT lookup
+// silently degrades SD match quality. Only cut off a genuine hang.
+const ALT_TIMEOUT_MS = 15000;
+const SD_TIMEOUT_MS = 8000;
+
+// Key-order-independent JSON, so equivalent variables share a cache entry.
+function stableStringify(v) {
+  if (v === null || typeof v !== "object") return JSON.stringify(v);
+  if (Array.isArray(v)) return "[" + v.map(stableStringify).join(",") + "]";
+  return "{" + Object.keys(v).sort()
+    .map(k => JSON.stringify(k) + ":" + stableStringify(v[k])).join(",") + "}";
+}
+
 // Shared time windows for "recent sales" averaging (SNKRDUNK + CardLadder)
 const ONE_WEEK_MS   = 7  * 24 * 60 * 60 * 1000;
 const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
@@ -116,6 +130,15 @@ const ALT_QUERIES = {
   }`,
 };
 
+// A cert's card identity never changes, so it caches for a week; anything
+// carrying value/population data moves slowly, so hours.
+const ALT_CACHE_TTL = {
+  Cert: 7 * 24 * 3600,
+  CertFull: 6 * 3600,
+  AssetDetails: 6 * 3600,
+  AssetCardPops: 6 * 3600,
+};
+
 async function proxyAlt(request, path, env) {
   const operation = path.slice(5); // strip "/alt/"
   if (!Object.prototype.hasOwnProperty.call(ALT_QUERIES, operation) || operation === "CertFull") {
@@ -136,6 +159,17 @@ async function proxyAlt(request, path, env) {
   // Cert has two shapes; pick the richer one only when a tsFilter is supplied.
   const queryKey = operation === "Cert" && variables.tsFilter ? "CertFull" : operation;
 
+  const cache = caches.default;
+  const cacheKey = new Request(
+    `https://alt-cache.internal/${queryKey}?v=${encodeURIComponent(stableStringify(variables))}`
+  );
+  const hit = await cache.match(cacheKey);
+  if (hit) {
+    return new Response(await hit.text(), {
+      headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "hit" },
+    });
+  }
+
   const upstream = await fetch(`${ALT_BASE}/graphql/${operation}`, {
     method: "POST",
     headers: {
@@ -143,11 +177,34 @@ async function proxyAlt(request, path, env) {
       "Authorization": `Bearer ${env.ALT_TOKEN}`,
     },
     body: JSON.stringify({ operationName: operation, query: ALT_QUERIES[queryKey], variables }),
+    signal: AbortSignal.timeout(ALT_TIMEOUT_MS),
   });
   const data = await upstream.text();
+
+  // Only cache a genuine result — never an error or an empty lookup, so a
+  // transient failure can't get frozen in for the whole TTL.
+  if (upstream.ok) {
+    let cacheable = false;
+    try {
+      const parsed = JSON.parse(data);
+      cacheable = !parsed.errors && parsed.data &&
+        Object.values(parsed.data).some(v => v != null);
+    } catch {}
+    if (cacheable) {
+      try {
+        await cache.put(cacheKey, new Response(data, {
+          headers: {
+            "Content-Type": "application/json",
+            "Cache-Control": `s-maxage=${ALT_CACHE_TTL[queryKey] ?? 21600}`,
+          },
+        }));
+      } catch {}
+    }
+  }
+
   return new Response(data, {
     status: upstream.status,
-    headers: { ...CORS, "Content-Type": "application/json" },
+    headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "miss" },
   });
 }
 
@@ -296,7 +353,7 @@ async function snkrdunkPriceUncached(url) {
   try {
     const searchRes = await fetch(
       `${SNKRDUNK_BASE}/search?keywords=${encodeURIComponent(searchKeywords)}`,
-      { headers: SNKRDUNK_HEADERS }
+      { headers: SNKRDUNK_HEADERS, signal: AbortSignal.timeout(SD_TIMEOUT_MS) }
     );
     if (!searchRes.ok) return none;
     html = await searchRes.text();
@@ -383,8 +440,9 @@ async function snkrdunkPriceUncached(url) {
   // The used-listings and sales-history requests are independent, so they run
   // in parallel; early-return paths simply abandon the history promise.
   const fetchApparel = async id => {
-    const usedPromise = fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=1&page=1&sizeId=0&isSaleOnly=false`, { headers: apiHeaders });
-    const histPromise = fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/sales-history?size_id=0&page=1&per_page=100`, { headers: apiHeaders });
+    const sdOpts = { headers: apiHeaders, signal: AbortSignal.timeout(SD_TIMEOUT_MS) };
+    const usedPromise = fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/used?perPage=1&page=1&sizeId=0&isSaleOnly=false`, sdOpts);
+    const histPromise = fetch(`${SNKRDUNK_BASE}/v1/apparels/${id}/sales-history?size_id=0&page=1&per_page=100`, sdOpts);
     histPromise.catch(() => {}); // suppress unhandled rejection when we return early
     const usedRes = await usedPromise;
     if (!usedRes.ok) return null;
@@ -431,9 +489,20 @@ async function snkrdunkPriceUncached(url) {
   // Pass 1 — ランキング section: check items left-to-right, with year filtering.
   // SNKRDUNK's own ranking is the strongest relevance signal. The first ranking item
   // that passes validation wins — even if it has no grade-matching sales (N/A).
-  for (const id of rankingIds) {
+  // Candidate lookups were fully serial, so a card that isn't matched early
+  // cost one round trip per candidate. The top-ranked candidate is still
+  // fetched alone (the common case, so no extra load on SNKRDUNK); only if it
+  // fails do we fetch the rest concurrently. Selection order is unchanged.
+  const fetchApparelSafe = async id => { try { return await fetchApparel(id); } catch { return null; } };
+
+  let restOfRanking = null;
+  for (let i = 0; i < rankingIds.length; i++) {
+    const id = rankingIds[i];
     try {
-      const r = await fetchApparel(id);
+      if (i === 1 && !restOfRanking) {
+        restOfRanking = await Promise.all(rankingIds.slice(1).map(fetchApparelSafe));
+      }
+      const r = i === 0 ? await fetchApparelSafe(id) : restOfRanking[i - 1];
       if (!r) continue;
       if (expectedYear && r.releasedAt) {
         if (new Date(r.releasedAt).getFullYear() !== expectedYear) continue;
@@ -454,9 +523,15 @@ async function snkrdunkPriceUncached(url) {
 
   let verifiedPriced = null, verifiedNa = null, unverifiedPriced = null, unverifiedNa = null;
 
-  for (const id of remainingIds) {
-    try {
-      const r = await fetchApparel(id);
+  // Fetched 4-wide but still evaluated strictly in rank order, so the chosen
+  // result is identical to the old one-at-a-time walk.
+  outer:
+  for (let start = 0; start < remainingIds.length; start += 4) {
+    const chunk = remainingIds.slice(start, start + 4);
+    const chunkResults = await Promise.all(chunk.map(fetchApparelSafe));
+    for (let j = 0; j < chunk.length; j++) {
+      const id = chunk[j];
+      const r = chunkResults[j];
       if (!r) continue;
 
       let yearVerified = false;
@@ -468,17 +543,16 @@ async function snkrdunkPriceUncached(url) {
       if (r.gradeHistory.length > 0) {
         const { avg, count } = calcAvg(r.gradeHistory);
         const result = { price: avg, apparelId: Number(id), name: r.apparelName, image: r.apparelImage, salesCount: count, priceType: "avg" };
-        if (yearVerified) { verifiedPriced = result; break; }
+        if (yearVerified) { verifiedPriced = result; break outer; }
         if (!unverifiedPriced) unverifiedPriced = result;
-        if (!expectedYear) break;
+        if (!expectedYear) break outer;
         continue;
       }
 
       const naResult = { price: null, apparelId: Number(id), name: r.apparelName, image: r.apparelImage, priceType: "na" };
       if (yearVerified) { if (!verifiedNa) verifiedNa = naResult; }
       else { if (!unverifiedNa) unverifiedNa = naResult; }
-
-    } catch { continue; }
+    }
   }
 
   const best = expectedYear
@@ -503,6 +577,7 @@ async function altPriceByCert(url, env) {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.ALT_TOKEN}` },
       body: JSON.stringify({ operationName: operation, query, variables }),
+      signal: AbortSignal.timeout(ALT_TIMEOUT_MS),
     });
     return res.json();
   };
@@ -599,6 +674,7 @@ async function cardPopsByCert(url, env) {
       method: "POST",
       headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.ALT_TOKEN}` },
       body: JSON.stringify({ operationName: operation, query, variables }),
+      signal: AbortSignal.timeout(ALT_TIMEOUT_MS),
     });
     return res.json();
   };
