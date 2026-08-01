@@ -581,7 +581,6 @@
   <div class="filter-group">
     <span class="fg-label">Category</span>
     <select id="categories">
-      <option value="Pokemon,One Piece">Pokemon + One Piece</option>
       <option value="Pokemon">Pokemon</option>
       <option value="One Piece">One Piece</option>
       <option value="Yu-Gi-Oh!">Yu-Gi-Oh!</option>
@@ -693,7 +692,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v0.97</footer>
+<footer>v0.98</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -2225,7 +2224,11 @@
       const filterMap = { categories: "categories", gradingCompany: "gradingCompany", language: "language", orderBy: "orderBy", step: "step" };
       for (const [param, id] of Object.entries(filterMap)) {
         const el = document.getElementById(id);
-        if (el && f[param] != null) el.value = f[param];
+        if (!el || f[param] == null) continue;
+        el.value = f[param];
+        // A saved value whose <option> no longer exists leaves the select
+        // blank; fall back to the first option instead of an empty filter.
+        if (el.value !== f[param] && el.options.length) el.selectedIndex = 0;
       }
       syncSdAvailability(); // restored language may disable SNKRDUNK
       // Rebuild grade options for the restored company, then restore selections
