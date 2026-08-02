@@ -712,7 +712,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v0.99</footer>
+<footer>v1.00</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1045,7 +1045,7 @@
     return `<tr data-nft="${esc(c.nftAddress)}">
       <td class="date-col">${formatListedDate(c)}</td>
       <td class="year-col">${itemYear(c) || "—"}</td>
-      <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link"${cardImg ? ` data-img="${esc(cardImg)}"` : ""}>${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
+      <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"${cardImg ? ` data-img="${esc(cardImg)}"` : ""}><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
       <td class="num-col">${esc(cardNumDisplay)}</td>
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+(?:\.\d+)?)$/)?.[1] || c.grade).replace(/\.0$/, ""))}</td>
       <td>${certDisplay}</td>
@@ -1882,10 +1882,13 @@
     const deltaCell = document.querySelector(`.snkrdunk-delta[data-cert="${certNumber}"]`);
     const pctCell = document.querySelector(`.snkr-pct[data-cert="${certNumber}"]`);
     if (!cell) return;
+    // Hovering anywhere in the cell shows the preview, not just the link text.
+    if (result?.image) cell.setAttribute("data-img", result.image);
+    else cell.removeAttribute("data-img");
     if (!result?.price) {
       if (result?.priceType === "na" && result?.apparelId) {
         const naUrl = `https://snkrdunk.com/apparels/${result.apparelId}`;
-        cell.innerHTML = `<a href="${naUrl}" target="_blank" rel="noopener" style="color:#555"${result.image ? ` data-img="${esc(result.image)}"` : ""}>N/A</a>`;
+        cell.innerHTML = `<a href="${naUrl}" target="_blank" rel="noopener" style="color:#555">N/A</a>`;
       } else {
         cell.textContent = "—";
       }
@@ -1898,7 +1901,7 @@
     const url = `https://snkrdunk.com/apparels/${result.apparelId}`;
     const label = result.priceType === "ask" ? " ask" : "";
     const usdPart = usdSnkr != null ? `$${usdSnkr.toFixed(0)}${label} ` : "";
-    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener"${result.image ? ` data-img="${esc(result.image)}"` : ""}>${usdPart}<span class="price-sub">(¥${jpy.toLocaleString()})</span></a>`;
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener">${usdPart}<span class="price-sub">(¥${jpy.toLocaleString()})</span></a>`;
     if (usdSnkr != null) {
       const row = allRows.find(c => c.gradingID === certNumber);
       if (row) {
