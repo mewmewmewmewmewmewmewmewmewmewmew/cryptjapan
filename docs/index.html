@@ -350,11 +350,6 @@
     #hover-preview {
       position: fixed;
       z-index: 500;
-      border-radius: 10px;
-      border: 1px solid var(--border-strong);
-      background: var(--surface-1);
-      box-shadow: var(--shadow-pop);
-      padding: 4px;
       opacity: 0;
       visibility: hidden;
       pointer-events: none;
@@ -373,7 +368,13 @@
     #hover-preview.kind-sd { min-width: 130px; min-height: 130px; }
     #hover-preview.kind-sd #hover-preview-img { max-width: 252px; max-height: 352px; display: block; }
 
-    #hover-preview-img { border-radius: 6px; transition: opacity .1s ease; }
+    /* No panel chrome — the image floats on its own. The shadow follows the
+       image silhouette so it stays readable over the table in both themes. */
+    #hover-preview-img {
+      border-radius: 6px;
+      transition: opacity .1s ease;
+      filter: drop-shadow(0 6px 18px rgba(0,0,0,.45));
+    }
     /* While the next image loads, show a spinner rather than the previous card. */
     #hover-preview.loading #hover-preview-img { opacity: 0; }
     #hover-preview .hp-spinner {
@@ -735,7 +736,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.01</footer>
+<footer>v1.02</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
