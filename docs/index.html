@@ -350,8 +350,6 @@
     #hover-preview {
       position: fixed;
       z-index: 500;
-      max-width: 260px;
-      max-height: 360px;
       border-radius: 10px;
       border: 1px solid var(--border-strong);
       background: var(--surface-1);
@@ -361,8 +359,33 @@
       visibility: hidden;
       pointer-events: none;
       transition: opacity .12s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
     }
     #hover-preview.visible { opacity: 1; visibility: visible; }
+
+    /* Marketplace card scans vary in resolution and crop, so give them a fixed
+       card-shaped footprint and letterbox within it — every preview then reads
+       at the same size. SNKRDUNK product shots keep their natural proportions. */
+    #hover-preview.kind-card { width: 248px; height: 344px; }
+    #hover-preview.kind-card #hover-preview-img { width: 100%; height: 100%; object-fit: contain; }
+    #hover-preview.kind-sd { min-width: 130px; min-height: 130px; }
+    #hover-preview.kind-sd #hover-preview-img { max-width: 252px; max-height: 352px; display: block; }
+
+    #hover-preview-img { border-radius: 6px; transition: opacity .1s ease; }
+    /* While the next image loads, show a spinner rather than the previous card. */
+    #hover-preview.loading #hover-preview-img { opacity: 0; }
+    #hover-preview .hp-spinner {
+      display: none;
+      position: absolute;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      border: 2px solid var(--border-strong);
+      border-top-color: var(--accent);
+      animation: spin .7s linear infinite;
+    }
+    #hover-preview.loading .hp-spinner { display: block; }
 
     .empty { text-align: center; padding: 72px; color: var(--text-faint); }
     /* Skeleton bar for cells whose data is still in flight. Replaces the old
@@ -708,11 +731,11 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<img id="hover-preview" alt="" />
+<div id="hover-preview"><div class="hp-spinner"></div><img id="hover-preview-img" alt="" /></div>
 
 <div id="load-progress"></div>
 
-<footer>v1.00</footer>
+<footer>v1.01</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1045,7 +1068,7 @@
     return `<tr data-nft="${esc(c.nftAddress)}">
       <td class="date-col">${formatListedDate(c)}</td>
       <td class="year-col">${itemYear(c) || "—"}</td>
-      <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"${cardImg ? ` data-img="${esc(cardImg)}"` : ""}><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
+      <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"${cardImg ? ` data-img="${esc(cardImg)}" data-img-kind="card"` : ""}><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
       <td class="num-col">${esc(cardNumDisplay)}</td>
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+(?:\.\d+)?)$/)?.[1] || c.grade).replace(/\.0$/, ""))}</td>
       <td>${certDisplay}</td>
@@ -1883,8 +1906,13 @@
     const pctCell = document.querySelector(`.snkr-pct[data-cert="${certNumber}"]`);
     if (!cell) return;
     // Hovering anywhere in the cell shows the preview, not just the link text.
-    if (result?.image) cell.setAttribute("data-img", result.image);
-    else cell.removeAttribute("data-img");
+    if (result?.image) {
+      cell.setAttribute("data-img", result.image);
+      cell.setAttribute("data-img-kind", "sd");
+    } else {
+      cell.removeAttribute("data-img");
+      cell.removeAttribute("data-img-kind");
+    }
     if (!result?.price) {
       if (result?.priceType === "na" && result?.apparelId) {
         const naUrl = `https://snkrdunk.com/apparels/${result.apparelId}`;
@@ -2424,22 +2452,23 @@
   // Any element carrying data-img gets a preview. The image is only requested
   // on first hover, so a page of listings costs nothing until you point at one.
   (function initHoverPreview() {
-    const el = document.getElementById("hover-preview");
-    if (!el) return;
+    const panel = document.getElementById("hover-preview");
+    const img = document.getElementById("hover-preview-img");
+    if (!panel || !img) return;
     let current = null;
 
-    const hide = () => { el.classList.remove("visible"); current = null; };
+    const hide = () => { panel.classList.remove("visible"); current = null; };
 
     function place(e) {
       const pad = 18;
-      const w = el.offsetWidth || 240;
-      const h = el.offsetHeight || 330;
+      const w = panel.offsetWidth || 248;
+      const h = panel.offsetHeight || 344;
       let x = e.clientX + pad;
       let y = e.clientY + pad;
       if (x + w + pad > window.innerWidth) x = e.clientX - w - pad;   // flip left near the edge
       if (y + h + pad > window.innerHeight) y = window.innerHeight - h - pad;
-      el.style.left = Math.max(pad, x) + "px";
-      el.style.top = Math.max(pad, y) + "px";
+      panel.style.left = Math.max(pad, x) + "px";
+      panel.style.top = Math.max(pad, y) + "px";
     }
 
     document.addEventListener("mouseover", e => {
@@ -2447,10 +2476,21 @@
       if (!target) return;
       const src = target.dataset.img;
       if (!src) return;
-      if (src !== current) { current = src; el.src = src; }
+      if (src !== current) {
+        current = src;
+        panel.classList.toggle("kind-sd", target.dataset.imgKind === "sd");
+        panel.classList.toggle("kind-card", target.dataset.imgKind !== "sd");
+        // Drop the previous image immediately so it can't sit there looking
+        // like this row's card while the new one is still downloading.
+        panel.classList.add("loading");
+        img.removeAttribute("src");
+        img.src = src;
+      }
       place(e);
-      el.classList.add("visible");
+      panel.classList.add("visible");
     });
+
+    img.addEventListener("load", () => panel.classList.remove("loading"));
 
     document.addEventListener("mousemove", e => {
       if (!current) return;
@@ -2459,7 +2499,7 @@
     });
 
     // A broken or hotlink-blocked image shouldn't leave an empty panel behind.
-    el.addEventListener("error", hide);
+    img.addEventListener("error", hide);
     document.addEventListener("scroll", hide, true);
     window.addEventListener("blur", hide);
   })();
