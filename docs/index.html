@@ -346,6 +346,24 @@
       border-top-right-radius: 6px;
     }
 
+    /* Card image preview that tracks the cursor on hover. */
+    #hover-preview {
+      position: fixed;
+      z-index: 500;
+      max-width: 260px;
+      max-height: 360px;
+      border-radius: 10px;
+      border: 1px solid var(--border-strong);
+      background: var(--surface-1);
+      box-shadow: var(--shadow-pop);
+      padding: 4px;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity .12s ease;
+    }
+    #hover-preview.visible { opacity: 1; visibility: visible; }
+
     .empty { text-align: center; padding: 72px; color: var(--text-faint); }
     /* Skeleton bar for cells whose data is still in flight. Replaces the old
        faint "···", which read too much like the "—" used for no-data. */
@@ -690,9 +708,11 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
+<img id="hover-preview" alt="" />
+
 <div id="load-progress"></div>
 
-<footer>v0.98</footer>
+<footer>v0.99</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1021,10 +1041,11 @@
     const cardDisplayName = c.cardName || c.name || "";
     const cardNumStr = (c.itemName || "").match(/#(\d+)/)?.[1] ?? "";
     const cardNumDisplay = cardNumStr ? cardNumStr.padStart(3, "0") : "—";
+    const cardImg = c._image ?? pickCardImage(c);
     return `<tr data-nft="${esc(c.nftAddress)}">
       <td class="date-col">${formatListedDate(c)}</td>
       <td class="year-col">${itemYear(c) || "—"}</td>
-      <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
+      <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link"${cardImg ? ` data-img="${esc(cardImg)}"` : ""}>${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
       <td class="num-col">${esc(cardNumDisplay)}</td>
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+(?:\.\d+)?)$/)?.[1] || c.grade).replace(/\.0$/, ""))}</td>
       <td>${certDisplay}</td>
@@ -1361,6 +1382,46 @@
       cardPops { gradingCompany gradeNumber count }
     }
   }`;
+
+  // Marketplace payloads differ in where they put the card photo, so probe the
+  // plausible shapes rather than hard-coding one field. Returns null when a
+  // listing has no usable image, in which case no preview is offered.
+  const IMG_KEYS = ["image", "imageUrl", "image_url", "frontImage", "frontImageUrl",
+    "front_image", "frontScan", "thumbnail", "thumbnailUrl", "thumbnail_url", "img", "photo"];
+  const IMG_ARRAYS = ["images", "media", "photos"];
+  const IMG_CONTAINERS = ["metadata", "primaryMedia", "asset", "nft", "card"];
+
+  function toImageUrl(v) {
+    if (typeof v !== "string") return null;
+    if (v.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + v.slice(7).replace(/^ipfs\//, "");
+    return /^https?:\/\//.test(v) ? v : null;
+  }
+
+  function pickCardImage(o, depth = 0) {
+    if (!o || typeof o !== "object" || depth > 2) return null;
+    for (const k of IMG_KEYS) {
+      const direct = toImageUrl(o[k]);
+      if (direct) return direct;
+      if (o[k] && typeof o[k] === "object") {
+        const nested = pickCardImage(o[k], depth + 1);
+        if (nested) return nested;
+      }
+    }
+    for (const k of IMG_ARRAYS) {
+      const arr = o[k];
+      if (Array.isArray(arr) && arr.length) {
+        const first = toImageUrl(arr[0]) || pickCardImage(arr[0], depth + 1);
+        if (first) return first;
+      }
+    }
+    for (const k of IMG_CONTAINERS) {
+      if (o[k]) {
+        const nested = pickCardImage(o[k], depth + 1);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
 
   // "069"→"069", "120/SV-P"→"SV-P 120", "294XYP"→"XY-P 294", "RC32"→"RC32"
   function normalizeCardNum(raw) {
@@ -1824,7 +1885,7 @@
     if (!result?.price) {
       if (result?.priceType === "na" && result?.apparelId) {
         const naUrl = `https://snkrdunk.com/apparels/${result.apparelId}`;
-        cell.innerHTML = `<a href="${naUrl}" target="_blank" rel="noopener" style="color:#555">N/A</a>`;
+        cell.innerHTML = `<a href="${naUrl}" target="_blank" rel="noopener" style="color:#555"${result.image ? ` data-img="${esc(result.image)}"` : ""}>N/A</a>`;
       } else {
         cell.textContent = "—";
       }
@@ -1837,7 +1898,7 @@
     const url = `https://snkrdunk.com/apparels/${result.apparelId}`;
     const label = result.priceType === "ask" ? " ask" : "";
     const usdPart = usdSnkr != null ? `$${usdSnkr.toFixed(0)}${label} ` : "";
-    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener">${usdPart}<span class="price-sub">(¥${jpy.toLocaleString()})</span></a>`;
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener"${result.image ? ` data-img="${esc(result.image)}"` : ""}>${usdPart}<span class="price-sub">(¥${jpy.toLocaleString()})</span></a>`;
     if (usdSnkr != null) {
       const row = allRows.find(c => c.gradingID === certNumber);
       if (row) {
@@ -1897,7 +1958,7 @@
               const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(kw)}&grade=${encodeURIComponent(psaGrade)}&masterball=${mb ? "1" : ""}${year ? `&year=${year}` : ""}`);
               const data = await res.json();
               result = (data.price != null || data.apparelId != null)
-                ? { price: data.price ?? null, apparelId: data.apparelId, priceType: data.priceType }
+                ? { price: data.price ?? null, apparelId: data.apparelId, priceType: data.priceType, image: data.image ?? null }
                 : null;
             } catch { result = null; }
             snkrdunkCache.set(kwKey, result);
@@ -1948,6 +2009,7 @@
       listing: { price: priceUsdc, currency: "USDC", createdAt: createdAtIso, updatedAt: createdAtIso },
       _source: "beezie",
       _cardUrl: cardUrl,
+      _image: pickCardImage(item),
       _altCardName: pokemonName,
     };
   }
@@ -2042,6 +2104,7 @@
       listing:        { price: priceUsdc, currency: "USDC", createdAt: isoDate, updatedAt: isoDate },
       _source:        "phygitals",
       _cardUrl:       cardUrl,
+      _image:         pickCardImage(item),
       _altCardName:   "",
     };
   }
@@ -2353,6 +2416,51 @@
     }
     if (source === "snkrdunk") syncSdAvailability();
   }
+
+  // ── Cursor-following card image preview ──────────────────────────────
+  // Any element carrying data-img gets a preview. The image is only requested
+  // on first hover, so a page of listings costs nothing until you point at one.
+  (function initHoverPreview() {
+    const el = document.getElementById("hover-preview");
+    if (!el) return;
+    let current = null;
+
+    const hide = () => { el.classList.remove("visible"); current = null; };
+
+    function place(e) {
+      const pad = 18;
+      const w = el.offsetWidth || 240;
+      const h = el.offsetHeight || 330;
+      let x = e.clientX + pad;
+      let y = e.clientY + pad;
+      if (x + w + pad > window.innerWidth) x = e.clientX - w - pad;   // flip left near the edge
+      if (y + h + pad > window.innerHeight) y = window.innerHeight - h - pad;
+      el.style.left = Math.max(pad, x) + "px";
+      el.style.top = Math.max(pad, y) + "px";
+    }
+
+    document.addEventListener("mouseover", e => {
+      const target = e.target.closest?.("[data-img]");
+      if (!target) return;
+      const src = target.dataset.img;
+      if (!src) return;
+      if (src !== current) { current = src; el.src = src; }
+      place(e);
+      el.classList.add("visible");
+    });
+
+    document.addEventListener("mousemove", e => {
+      if (!current) return;
+      if (!e.target.closest?.("[data-img]")) { hide(); return; }
+      place(e);
+    });
+
+    // A broken or hotlink-blocked image shouldn't leave an empty panel behind.
+    el.addEventListener("error", hide);
+    document.addEventListener("scroll", hide, true);
+    window.addEventListener("blur", hide);
+  })();
+  // ─────────────────────────────────────────────────────────────────────
 
   window.addEventListener("beforeunload", savePriceCache);
 
