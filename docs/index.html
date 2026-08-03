@@ -757,7 +757,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.06</footer>
+<footer>v1.07</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1056,7 +1056,7 @@
         status.textContent = msg;
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, 1, msg);
-        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
         fetchClForVisible();
       } else {
         allRows = cards;
@@ -1066,7 +1066,7 @@
         status.textContent = msg;
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, pages, msg);
-        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
         fetchClForVisible();
         window.scrollTo(0, 0);
       }
@@ -1144,13 +1144,32 @@
     return term ? cards.filter(c => matchesSearchTerm(c, term)) : cards;
   }
 
+  // Collector Crypt and Phygitals don't expose a card name, so at fetch time
+  // the only text to match is the listing title — and that embeds the set,
+  // which lets a Vileplume from the "Mew EN-151" set answer to "mew". ALT
+  // supplies the real card name moments later, so re-run the match then and
+  // drop the rows that never genuinely matched. Rows ALT couldn't identify
+  // keep their title-based result, since there's nothing better to judge on.
+  function refineSearchWithAltNames(cards, fetchedCount) {
+    const term = marketplaceSearchTerm();
+    if (!term) return cards;
+    const kept = filterBySearch(cards, term);
+    if (kept.length === cards.length) return cards;
+    allRows = kept;
+    applyLiveFilters();
+    const status = document.getElementById("status");
+    if (status) status.textContent = listingsMsg(kept.length, fetchedCount, term);
+    return kept;
+  }
+
   // Says plainly whether the marketplace honoured the search server-side.
   function listingsMsg(shown, fetched, term, label = "listings") {
     if (!term) return `${shown.toLocaleString()} ${label} loaded`;
     const note = fetched > shown
       ? ` — filtered locally from ${fetched.toLocaleString()} fetched`
       : "";
-    return `${shown.toLocaleString()} ${label} for "${term}"${note}`;
+    const q = /["']/.test(term) ? term : `"${term}"`;
+    return `${shown.toLocaleString()} ${label} for ${q}${note}`;
   }
   // ─────────────────────────────────────────────────────────────────────
 
@@ -2202,7 +2221,7 @@
       status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Beezie listings");
       window.scrollTo(0, 0);
       enableRefreshButtons();
-      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
       fetchClForVisible();
     } catch (e) {
       status.textContent = `Beezie error: ${e.message}`;
@@ -2323,7 +2342,7 @@
       status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Phygitals listings");
       window.scrollTo(0, 0);
       enableRefreshButtons();
-      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
+      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
       fetchClForVisible();
     } catch (e) {
       status.textContent = `Phygitals error: ${e.message}`;
@@ -2469,6 +2488,9 @@
       document.getElementById("status").textContent = (cached.statusText || "") + " (cached)";
       enableRefreshButtons();
       applyLiveFilters();
+      // The cache holds the pre-ALT (title-matched) set, so re-refine now that
+      // restored ALT names are back on the rows.
+      refineSearchWithAltNames(allRows, allRows.length);
       // If any Japanese cards are missing SNKRDUNK prices (e.g. key changed after alt data loaded),
       // trigger a background fetch so they fill in without requiring a manual refresh.
       const needsSnkr = allRows.some(c =>
