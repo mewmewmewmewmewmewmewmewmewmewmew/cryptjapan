@@ -757,7 +757,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.07</footer>
+<footer>v1.08</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1659,8 +1659,10 @@
           altCache.set(certNumber, result);
           return result;
         }
-        // cert came back null with no errors: card isn't on ALT — same as legacy
-        if (!full.errors) return null;
+        // Cert came back null with no errors: this cert isn't indexed by ALT
+        // (CGC certs never are). Cache the miss — without it every such card
+        // re-queried ALT on every load and failed every time.
+        if (!full.errors) { altCache.set(certNumber, null); return null; }
         // schema rejected the combined query — fall through to the legacy path
       }
 
@@ -1668,7 +1670,7 @@
       window._altStats.legacy++;
       const certData = await altPost("Cert", { certNumber });
       const cert = certData.data?.cert;
-      if (!cert?.asset?.id) return null;
+      if (!cert?.asset?.id) { altCache.set(certNumber, null); return null; }
       const [assetData, popsData] = await Promise.all([
         altPost("AssetDetails", { id: cert.asset.id, tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany, autograph: null } }),
         altPost("AssetCardPops", { id: cert.asset.id }),
