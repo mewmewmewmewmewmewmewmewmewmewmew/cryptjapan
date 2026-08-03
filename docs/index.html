@@ -697,7 +697,8 @@
 
   <div class="filter-group">
     <span class="fg-label">Search marketplace</span>
-    <input type="text" id="marketplace-search" placeholder="e.g. mew"
+    <input type="text" id="marketplace-search" placeholder="e.g. mew -mewtwo"
+           title='Substring by default. Use "mew" for a whole-word match, and -term to exclude.'
            onkeydown="if (event.key === 'Enter') fetchListings(true)" />
   </div>
 
@@ -756,7 +757,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.03</footer>
+<footer>v1.04</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -941,10 +942,12 @@
       language: document.getElementById("language").value,
       orderBy: document.getElementById("orderBy").value,
       step: stepVal,
-      search: searchTerm,
+      search: apiSearchTerm(searchTerm),
     };
     // filterState stores "all" as step so the cache key is meaningful
-    const filterState = { ...baseParams, step: stepSel, grade: selectedGrades.join(",") || "" };
+    // cache on the raw query: "mew" and mew -promo hit the API identically but
+    // must not share a cached result set
+    const filterState = { ...baseParams, step: stepSel, grade: selectedGrades.join(",") || "", search: searchTerm };
 
     // For show-all, use cached card list if filters match and not force-refreshing
     if (showAll && !forceRefresh) {
@@ -1086,10 +1089,39 @@
     return (document.getElementById("marketplace-search")?.value || "").trim();
   }
 
+  // The marketplaces only do substring matching, so "mew" necessarily also
+  // returns "mewtwo". We can't change that, but we already re-filter locally,
+  // so precision is free here:
+  //   mew           substring, as before
+  //   "mew"         whole word only — matches Mew ex, not Mewtwo
+  //   mew -mewtwo   exclude anything containing mewtwo
+  function parseSearchQuery(raw) {
+    const include = [], exclude = [];
+    for (let tok of raw.match(/-?"[^"]*"|\S+/g) || []) {
+      const negated = tok.startsWith("-") && tok.length > 1;
+      if (negated) tok = tok.slice(1);
+      const exact = tok.length > 1 && tok.startsWith('"') && tok.endsWith('"');
+      if (exact) tok = tok.slice(1, -1);
+      const text = tok.trim().toLowerCase();
+      if (text) (negated ? exclude : include).push({ text, exact });
+    }
+    return { include, exclude };
+  }
+
+  // What the marketplace API receives: positive terms only, syntax stripped,
+  // since it won't understand quotes or exclusions.
+  function apiSearchTerm(raw) {
+    return parseSearchQuery(raw).include.map(t => t.text).join(" ");
+  }
+
   function matchesSearchTerm(c, term) {
-    const t = term.toLowerCase();
-    return [c.itemName, c.cardName, c.name, c.set, c.gradingID]
-      .some(v => String(v ?? "").toLowerCase().includes(t));
+    const { include, exclude } = parseSearchQuery(term);
+    const hay = [c.itemName, c.cardName, c.name, c.set, c.gradingID]
+      .map(v => String(v ?? "").toLowerCase()).join(" ");
+    const hit = ({ text, exact }) => exact
+      ? new RegExp(`(^|[^a-z0-9])${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(hay)
+      : hay.includes(text);
+    return include.every(hit) && !exclude.some(hit);
   }
 
   function filterBySearch(cards, term) {
@@ -2122,7 +2154,7 @@
     const lang = document.getElementById("language")?.value;
     if (lang) filters.push({ filterName: "language", value: lang });
     const searchTerm = marketplaceSearchTerm();
-    if (searchTerm) filters.push({ filterName: "name", value: searchTerm });
+    if (searchTerm) filters.push({ filterName: "name", value: apiSearchTerm(searchTerm) });
 
     const pageSize = 40;
     let page = 0;
@@ -2253,7 +2285,7 @@
           .replace(/{/g, '%7B').replace(/}/g, '%7D')
           .replace(/"/g, '%22').replace(/ /g, '+');
         const collRaw = JSON.stringify(collAddresses).replace(/"/g, '%22');
-        const qs = `searchTerm=${encodeURIComponent(searchTerm)}&sortBy=price-low-high&itemsPerPage=${pageSize}&page=${page}&metadataConditions=${metaRaw}&priceRange=[%22%22,%22%22]&fmvRange=[%22%22,%22%22]&listedStatus=listed&collectionAddresses=${collRaw}`;
+        const qs = `searchTerm=${encodeURIComponent(apiSearchTerm(searchTerm))}&sortBy=price-low-high&itemsPerPage=${pageSize}&page=${page}&metadataConditions=${metaRaw}&priceRange=[%22%22,%22%22]&fmvRange=[%22%22,%22%22]&listedStatus=listed&collectionAddresses=${collRaw}`;
         const res = await fetch(`${WORKER_URL}/phygitals/listings?${qs}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
