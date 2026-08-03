@@ -154,6 +154,20 @@
     }
 
     .filter-group { display: flex; flex-direction: column; gap: 5px; }
+    .filters input {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      outline: none;
+      width: 160px;
+      transition: border-color .12s, box-shadow .12s;
+    }
+    .filters input::placeholder { color: var(--text-faint); }
+    .filters input:hover { border-color: var(--border-strong); }
+    .filters input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
     .fg-label {
       font-size: 10px;
       font-weight: 600;
@@ -681,6 +695,12 @@
     </select>
   </div>
 
+  <div class="filter-group">
+    <span class="fg-label">Search marketplace</span>
+    <input type="text" id="marketplace-search" placeholder="e.g. mew"
+           onkeydown="if (event.key === 'Enter') fetchListings(true)" />
+  </div>
+
   <button id="fetch-btn" onclick="fetchListings(true)">Fetch listings</button>
 </div>
 
@@ -736,7 +756,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.02</footer>
+<footer>v1.03</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -913,6 +933,7 @@
     const stepVal = showAll ? "96" : stepSel;
 
     const selectedGrades = getSelectedGrades();
+    const searchTerm = marketplaceSearchTerm();
     const baseParams = {
       cardType: "Card",
       categories: document.getElementById("categories").value,
@@ -920,6 +941,7 @@
       language: document.getElementById("language").value,
       orderBy: document.getElementById("orderBy").value,
       step: stepVal,
+      search: searchTerm,
     };
     // filterState stores "all" as step so the cache key is meaningful
     const filterState = { ...baseParams, step: stepSel, grade: selectedGrades.join(",") || "" };
@@ -928,7 +950,7 @@
     if (showAll && !forceRefresh) {
       try {
         const cached = JSON.parse(localStorage.getItem("cardListCache") || "null");
-        const filterKeys = ["categories","gradingCompany","grade","language","orderBy"];
+        const filterKeys = ["categories","gradingCompany","grade","language","orderBy","search"];
         const fresh = !cached?.savedAt || Date.now() - cached.savedAt <= 3600_000;
         if (fresh && cached?.rows?.length && cached.filters?.step === "all" &&
             filterKeys.every(k => cached.filters[k] === filterState[k])) {
@@ -981,7 +1003,8 @@
 
     try {
       const firstData = await fetchPage(showAll ? 1 : currentPage);
-      let cards = (firstData.filterNFtCard || []).filter(c => c.listing);
+      let fetchedCount = (firstData.filterNFtCard || []).length;
+      let cards = filterBySearch((firstData.filterNFtCard || []).filter(c => c.listing), searchTerm);
       const total = firstData.findTotal ?? cards.length;
       const pages = firstData.totalPages ?? 1;
 
@@ -1004,7 +1027,8 @@
           );
           for (const d of remaining) {
             if (!d) continue;
-            const newCards = (d.filterNFtCard || []).filter(c => c.listing);
+            fetchedCount += (d.filterNFtCard || []).length;
+            const newCards = filterBySearch((d.filterNFtCard || []).filter(c => c.listing), searchTerm);
             cards = cards.concat(newCards);
             allRows = cards;
             tbody.insertAdjacentHTML("beforeend", newCards.map(buildRowHtml).join(""));
@@ -1025,7 +1049,7 @@
           renderTable(cards);
         }
 
-        const msg = `${cards.length.toLocaleString()} listings loaded`;
+        const msg = listingsMsg(cards.length, fetchedCount, searchTerm);
         status.textContent = msg;
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, 1, msg);
@@ -1033,7 +1057,9 @@
         fetchClForVisible();
       } else {
         allRows = cards;
-        const msg = `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
+        const msg = searchTerm
+          ? listingsMsg(cards.length, fetchedCount, searchTerm) + ` — page ${currentPage} of ${pages}`
+          : `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
         status.textContent = msg;
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, pages, msg);
@@ -1049,6 +1075,36 @@
       btn.disabled = false;
     }
   }
+
+  // ── Marketplace-side search ──────────────────────────────────────────
+  // Sent to each marketplace's own API so only matching cards are fetched,
+  // which also cuts the per-card ALT/SD/CardLadder lookups by the same factor.
+  // The site URL param and the API param don't always agree (Phygitals' site
+  // says search= but its API wants searchTerm=), so results are also filtered
+  // locally — that way a wrong guess costs speed, never correctness.
+  function marketplaceSearchTerm() {
+    return (document.getElementById("marketplace-search")?.value || "").trim();
+  }
+
+  function matchesSearchTerm(c, term) {
+    const t = term.toLowerCase();
+    return [c.itemName, c.cardName, c.name, c.set, c.gradingID]
+      .some(v => String(v ?? "").toLowerCase().includes(t));
+  }
+
+  function filterBySearch(cards, term) {
+    return term ? cards.filter(c => matchesSearchTerm(c, term)) : cards;
+  }
+
+  // Says plainly whether the marketplace honoured the search server-side.
+  function listingsMsg(shown, fetched, term, label = "listings") {
+    if (!term) return `${shown.toLocaleString()} ${label} loaded`;
+    const note = fetched > shown
+      ? ` — filtered locally from ${fetched.toLocaleString()} fetched`
+      : "";
+    return `${shown.toLocaleString()} ${label} for "${term}"${note}`;
+  }
+  // ─────────────────────────────────────────────────────────────────────
 
   function buildRowHtml(c) {
     const l = c.listing;
@@ -2065,10 +2121,13 @@
     }
     const lang = document.getElementById("language")?.value;
     if (lang) filters.push({ filterName: "language", value: lang });
+    const searchTerm = marketplaceSearchTerm();
+    if (searchTerm) filters.push({ filterName: "name", value: searchTerm });
 
     const pageSize = 40;
     let page = 0;
     let cards = [];
+    let fetchedCount = 0;
     try {
       await getSolPrice();
       await getJpyRate();
@@ -2081,7 +2140,9 @@
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const rawItems = data.dropItems || [];
-        cards = cards.concat(rawItems.filter(item => item.SellOrder).map(normalizeBeezieCard));
+        fetchedCount += rawItems.length;
+        cards = cards.concat(filterBySearch(
+          rawItems.filter(item => item.SellOrder).map(normalizeBeezieCard), searchTerm));
         status.textContent = `${cards.length} Beezie listings…`;
         if (rawItems.length < pageSize) break;
         page++;
@@ -2090,7 +2151,7 @@
       currentPage = 1;
       applyLiveFilters();
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
-      status.textContent = `${cards.length} Beezie listings loaded`;
+      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Beezie listings");
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
@@ -2142,6 +2203,7 @@
   }
 
   async function fetchPhygitalsListings() {
+    const searchTerm = marketplaceSearchTerm();
     const btn = document.getElementById("fetch-btn");
     const status = document.getElementById("status");
     btn.disabled = true;
@@ -2179,6 +2241,7 @@
     const pageSize = 48;
     let page = 0;
     let cards = [];
+    let fetchedCount = 0;
     try {
       await getSolPrice();
       await getJpyRate();
@@ -2190,12 +2253,14 @@
           .replace(/{/g, '%7B').replace(/}/g, '%7D')
           .replace(/"/g, '%22').replace(/ /g, '+');
         const collRaw = JSON.stringify(collAddresses).replace(/"/g, '%22');
-        const qs = `searchTerm=&sortBy=price-low-high&itemsPerPage=${pageSize}&page=${page}&metadataConditions=${metaRaw}&priceRange=[%22%22,%22%22]&fmvRange=[%22%22,%22%22]&listedStatus=listed&collectionAddresses=${collRaw}`;
+        const qs = `searchTerm=${encodeURIComponent(searchTerm)}&sortBy=price-low-high&itemsPerPage=${pageSize}&page=${page}&metadataConditions=${metaRaw}&priceRange=[%22%22,%22%22]&fmvRange=[%22%22,%22%22]&listedStatus=listed&collectionAddresses=${collRaw}`;
         const res = await fetch(`${WORKER_URL}/phygitals/listings?${qs}`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         const rawItems = data.listings ?? data.data ?? data.items ?? [];
-        const newCards = rawItems.map(normalizePhygitalsCard).filter(c => c.listing?.price != null);
+        fetchedCount += rawItems.length;
+        const newCards = filterBySearch(
+          rawItems.map(normalizePhygitalsCard).filter(c => c.listing?.price != null), searchTerm);
         cards = cards.concat(newCards);
         status.textContent = `${cards.length} Phygitals listings…`;
         const total = data.amount ?? data.total ?? data.totalCount ?? data.totalItems ?? 0;
@@ -2207,7 +2272,7 @@
       currentPage = 1;
       applyLiveFilters();
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
-      status.textContent = `${cards.length} Phygitals listings loaded`;
+      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Phygitals listings");
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(cards));
@@ -2316,14 +2381,14 @@
       if (cached.savedAt && Date.now() - cached.savedAt > 3600_000) return; // 1-hour TTL
       // Restore filter selects
       const f = cached.filters || {};
-      const filterMap = { categories: "categories", gradingCompany: "gradingCompany", language: "language", orderBy: "orderBy", step: "step" };
+      const filterMap = { categories: "categories", gradingCompany: "gradingCompany", language: "language", orderBy: "orderBy", step: "step", search: "marketplace-search" };
       for (const [param, id] of Object.entries(filterMap)) {
         const el = document.getElementById(id);
         if (!el || f[param] == null) continue;
         el.value = f[param];
         // A saved value whose <option> no longer exists leaves the select
         // blank; fall back to the first option instead of an empty filter.
-        if (el.value !== f[param] && el.options.length) el.selectedIndex = 0;
+        if (el.value !== f[param] && el.options?.length) el.selectedIndex = 0;
       }
       syncSdAvailability(); // restored language may disable SNKRDUNK
       // Rebuild grade options for the restored company, then restore selections
