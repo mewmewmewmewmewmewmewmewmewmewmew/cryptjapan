@@ -53,10 +53,6 @@ export default {
       return cardPopsByCert(url, env);
     }
 
-    if (path === "/cgc-cert") {
-      return cgcCert(url);
-    }
-
     if (path === "/cardladder-price") {
       return cardladderPrice(url, env);
     }
@@ -646,119 +642,6 @@ async function altPriceByCert(url, env) {
     }), { headers: { ...CORS, "Content-Type": "application/json" } });
   } catch (e) {
     return new Response(JSON.stringify({ altPrice: null, error: String(e) }), {
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
-  }
-}
-
-// ALT doesn't index CGC certs, so those cards arrive with no usable name and
-// the marketplace title is all we have — which embeds the set and makes search
-// unreliable. CGC's own cert page renders the details as <dt>/<dd> pairs, so
-// key off the visible labels rather than CSS classes: the labels are the part
-// least likely to change. A cert's card identity never changes, so a hit is
-// cached at the edge for 30 days — roughly one request per cert, ever.
-const CGC_TIMEOUT_MS = 8000;
-const CGC_CACHE_TTL = 30 * 24 * 3600;
-
-// Card and set names carry accents ("Pok&eacute;mon"), so cover the Latin-1
-// named entities as well as the structural ones.
-const HTML_ENTITIES = {
-  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
-  aacute: "á", eacute: "é", iacute: "í", oacute: "ó", uacute: "ú",
-  agrave: "à", egrave: "è", igrave: "ì", ograve: "ò", ugrave: "ù",
-  acirc: "â", ecirc: "ê", icirc: "î", ocirc: "ô", ucirc: "û",
-  auml: "ä", euml: "ë", iuml: "ï", ouml: "ö", uuml: "ü",
-  ntilde: "ñ", atilde: "ã", otilde: "õ", ccedil: "ç",
-  aring: "å", oslash: "ø", aelig: "æ", szlig: "ß",
-  Aacute: "Á", Eacute: "É", Iacute: "Í", Oacute: "Ó", Uacute: "Ú",
-  Auml: "Ä", Ouml: "Ö", Uuml: "Ü", Ntilde: "Ñ", Ccedil: "Ç",
-};
-function decodeEntities(str) {
-  return str
-    .replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
-    .replace(/&([a-z]+);/gi, (m, n) => HTML_ENTITIES[n] ?? HTML_ENTITIES[n.toLowerCase()] ?? m);
-}
-
-const stripTags = html => decodeEntities(html.replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim();
-
-async function cgcCert(url) {
-  const cert = (url.searchParams.get("cert") || "").trim();
-  if (!cert) {
-    return new Response(JSON.stringify({ error: "cert param required" }), {
-      status: 400, headers: { ...CORS, "Content-Type": "application/json" },
-    });
-  }
-
-  const cache = caches.default;
-  const cacheKey = new Request(`https://cgc-cache.internal/cert?cert=${encodeURIComponent(cert)}`);
-  const hit = await cache.match(cacheKey);
-  if (hit) {
-    return new Response(await hit.text(), {
-      headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "hit" },
-    });
-  }
-
-  try {
-    const res = await fetch(`https://www.cgccards.com/certlookup/${encodeURIComponent(cert)}/`, {
-      headers: {
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "en-US,en;q=0.9",
-        "User-Agent": SNKRDUNK_HEADERS["User-Agent"],
-        "Referer": "https://www.cgccards.com/",
-      },
-      signal: AbortSignal.timeout(CGC_TIMEOUT_MS),
-    });
-    if (!res.ok) {
-      return new Response(JSON.stringify({ error: `CGC HTTP ${res.status}`, cert }), {
-        headers: { ...CORS, "Content-Type": "application/json" },
-      });
-    }
-    const html = await res.text();
-
-    const fields = {};
-    for (const m of html.matchAll(/<dt[^>]*>([\s\S]*?)<\/dt>\s*<dd[^>]*>([\s\S]*?)<\/dd>/gi)) {
-      const label = stripTags(m[1]);
-      const value = stripTags(m[2]);
-      if (label && value && !(label in fields)) fields[label] = value;
-    }
-
-    const cardName = fields["Card Name"] ?? null;
-    if (!cardName) {
-      // Unknown cert, a changed page shape, or a bot challenge — none of which
-      // should be cached. Include a sample so the three are distinguishable.
-      const looksChallenged = /captcha|are you a robot|cf-challenge|just a moment|checking your browser/i.test(html);
-      return new Response(JSON.stringify({
-        error: looksChallenged ? "blocked by bot protection" : "card name not found",
-        cert,
-        fields,
-        htmlBytes: html.length,
-        sample: stripTags(html).slice(0, 300),
-      }), { headers: { ...CORS, "Content-Type": "application/json" } });
-    }
-
-    const payload = JSON.stringify({
-      cert,
-      cardName,
-      cardNumber: fields["Card Number"] ?? null,
-      set: fields["Card Set"] ?? null,
-      year: fields["Year"] ?? null,
-      game: fields["Game"] ?? null,
-      language: fields["Language"] ?? null,
-      variant: fields["Variant 1"] ?? null,
-      grade: fields["Grade"] ?? null,
-      collectibleId: (html.match(/collectible\/(\d+)/) || [])[1] ?? null,
-    });
-    try {
-      await cache.put(cacheKey, new Response(payload, {
-        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${CGC_CACHE_TTL}` },
-      }));
-    } catch {}
-    return new Response(payload, {
-      headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "miss" },
-    });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: String(e), cert }), {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
