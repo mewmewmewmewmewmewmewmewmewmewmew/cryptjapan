@@ -757,7 +757,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.04</footer>
+<footer>v1.05</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1114,14 +1114,30 @@
     return parseSearchQuery(raw).include.map(t => t.text).join(" ");
   }
 
+  // The listing title bundles year, number, grade and set together
+  // ("2023 #170 Squirtle PSA 10 Mew EN-151"), so matching it makes a Squirtle
+  // from the 151 set answer to "mew". Positive terms match the card's own name
+  // instead; itemName is only a fallback for sources that don't provide one.
+  function cardNameText(c) {
+    const named = [c._altCardName, c.cardName, c.name].find(v => String(v ?? "").trim());
+    return String(named ?? c.itemName ?? "").toLowerCase();
+  }
+
+  // Exclusions still match the whole listing, so -promo can drop a card on set
+  // or title text as well as on its name.
+  function listingText(c) {
+    return [c.itemName, c.cardName, c.name, c.set, c.gradingID]
+      .map(v => String(v ?? "").toLowerCase()).join(" ");
+  }
+
   function matchesSearchTerm(c, term) {
     const { include, exclude } = parseSearchQuery(term);
-    const hay = [c.itemName, c.cardName, c.name, c.set, c.gradingID]
-      .map(v => String(v ?? "").toLowerCase()).join(" ");
-    const hit = ({ text, exact }) => exact
+    const hit = ({ text, exact }, hay) => exact
       ? new RegExp(`(^|[^a-z0-9])${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(hay)
       : hay.includes(text);
-    return include.every(hit) && !exclude.some(hit);
+    const name = cardNameText(c);
+    const full = listingText(c);
+    return include.every(t => hit(t, name)) && !exclude.some(t => hit(t, full));
   }
 
   function filterBySearch(cards, term) {
