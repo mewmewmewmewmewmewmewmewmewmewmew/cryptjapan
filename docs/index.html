@@ -686,12 +686,12 @@
   </div>
 
   <div class="filter-group">
-    <span class="fg-label">Per page</span>
-    <select id="step" onchange="if(activePlatform().clientFilter||activePlatform().paginate){currentPage=1;applyLiveFilters()}">
-      <option value="24">24</option>
-      <option value="48" selected>48</option>
-      <option value="96">96</option>
-      <option value="all">Show all</option>
+    <span class="fg-label">Load</span>
+    <select id="step" title="How many listings to pull. Applies on the next fetch.">
+      <option value="24">Latest 24</option>
+      <option value="48" selected>Latest 48</option>
+      <option value="96">Latest 96</option>
+      <option value="all">All listings</option>
     </select>
   </div>
 
@@ -757,7 +757,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.08</footer>
+<footer>v1.09</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -1012,7 +1012,7 @@
       const pages = firstData.totalPages ?? 1;
 
       await getSolPrice();
-      updatePagination(showAll ? 1 : pages);
+      updatePagination(1); // a fixed number of listings is loaded, not a page of them
 
       if (showAll) {
         allRows = cards;
@@ -1085,6 +1085,15 @@
   // The site URL param and the API param don't always agree (Phygitals' site
   // says search= but its API wants searchTerm=), so results are also filtered
   // locally — that way a wrong guess costs speed, never correctness.
+  // How many listings to pull. Beezie and Phygitals used to page through their
+  // entire catalogue regardless of this setting and only paginate afterwards,
+  // which is what made a scan take so long; they now stop once they have this
+  // many.
+  function loadLimit() {
+    const v = document.getElementById("step")?.value;
+    return !v || v === "all" ? Infinity : parseInt(v, 10);
+  }
+
   function marketplaceSearchTerm() {
     return (document.getElementById("marketplace-search")?.value || "").trim();
   }
@@ -1344,17 +1353,7 @@
     if (pf.clientFilter) {
       filtered = pf.clientFilter(filtered);
     }
-    if (pf.clientFilter || pf.paginate) {
-      const stepVal = document.getElementById("step")?.value;
-      const step = stepVal === "all" || !stepVal ? 0 : parseInt(stepVal);
-      if (step > 0) {
-        const pages = Math.max(1, Math.ceil(filtered.length / step));
-        updatePagination(pages);
-        filtered = filtered.slice((currentPage - 1) * step, currentPage * step);
-      } else {
-        updatePagination(1);
-      }
-    }
+    if (pf.clientFilter || pf.paginate) updatePagination(1);
 
     renderTable(filtered);
     visibleRows = filtered;
@@ -2200,7 +2199,8 @@
     try {
       await getSolPrice();
       await getJpyRate();
-      while (page <= 50) {
+      const limit = loadLimit();
+      while (page <= 50 && cards.length < limit) {
         const res = await fetch(`${WORKER_URL}/beezie/listings`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -2216,6 +2216,7 @@
         if (rawItems.length < pageSize) break;
         page++;
       }
+      if (cards.length > limit) cards = cards.slice(0, limit);
       allRows = cards;
       currentPage = 1;
       applyLiveFilters();
@@ -2314,7 +2315,8 @@
     try {
       await getSolPrice();
       await getJpyRate();
-      while (page <= 100) {
+      const limit = loadLimit();
+      while (page <= 100 && cards.length < limit) {
         // Build query string to match Phygitals URL format:
         // metadataConditions: encode only {, }, " and space (as +); leave :, ,, [ ] literal
         // priceRange/fmvRange: ["",""] with encoded quotes; collectionAddresses: encode only quotes
@@ -2337,6 +2339,7 @@
         if (rawItems.length < pageSize || page >= totalPages - 1) break;
         page++;
       }
+      if (cards.length > limit) cards = cards.slice(0, limit);
       allRows = cards;
       currentPage = 1;
       applyLiveFilters();
