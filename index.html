@@ -1,0 +1,2837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Marketplace Scanner</title>
+  <script>
+    // Apply saved theme before paint to avoid a flash; default follows the OS.
+    (function () {
+      try {
+        var t = localStorage.getItem("theme");
+        if (t === "dark" || t === "light") document.documentElement.setAttribute("data-theme", t);
+      } catch (e) {}
+      function effectiveTheme() {
+        var set = document.documentElement.getAttribute("data-theme");
+        if (set) return set;
+        return window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+      }
+      window.toggleTheme = function () {
+        var next = effectiveTheme() === "dark" ? "light" : "dark";
+        document.documentElement.setAttribute("data-theme", next);
+        try { localStorage.setItem("theme", next); } catch (e) {}
+        var btn = document.getElementById("theme-toggle");
+        if (btn) btn.textContent = next === "dark" ? "☀" : "☾";
+      };
+      document.addEventListener("DOMContentLoaded", function () {
+        var btn = document.getElementById("theme-toggle");
+        if (btn) btn.textContent = effectiveTheme() === "dark" ? "☀" : "☾";
+      });
+    })();
+  </script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    html { overflow-x: auto; }
+
+    :root {
+      color-scheme: light dark;
+      --bg: #eef1f5;
+      --surface-1: #ffffff;
+      --surface-2: #f3f6f9;
+      --surface-3: #e8edf3;
+      --border: #dde3ea;
+      --border-strong: #c3ccd8;
+      --text: #1b2431;
+      --text-muted: #5a6573;
+      --text-faint: #8b96a3;
+      --accent: #2f6fed;
+      --accent-hover: #1e5fe0;
+      --accent-weak: rgba(47,111,237,0.12);
+      --accent-on: #ffffff;
+      --pos: #0b8f5c; --pos-bg: rgba(11,143,92,0.10);
+      --neg: #d23b3b; --neg-bg: rgba(210,59,59,0.10);
+      --alt: #7c3aed; --cl: #b7791f; --sd: #0e7fc0;
+      --money: #0b8f5c;
+      --row-alt: #f7f9fb;
+      --radius: 8px;
+      --shadow-pop: 0 10px 28px rgba(20,30,45,0.14);
+      --shadow-sticky: 0 6px 12px -6px rgba(20,30,45,0.18);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root:not([data-theme="light"]) {
+        --bg: #0d1117;
+        --surface-1: #141b24;
+        --surface-2: #1a212c;
+        --surface-3: #232d3a;
+        --border: #263041;
+        --border-strong: #38455d;
+        --text: #e7ecf3;
+        --text-muted: #9aa7b8;
+        --text-faint: #6b7789;
+        --accent: #5c8cff;
+        --accent-hover: #7ba3ff;
+        --accent-weak: rgba(92,140,255,0.16);
+        --accent-on: #0a1120;
+        --pos: #3ddc97; --pos-bg: rgba(61,220,151,0.12);
+        --neg: #ff6b6b; --neg-bg: rgba(255,107,107,0.12);
+        --alt: #b39bff; --cl: #f5c451; --sd: #57c2f5;
+        --money: #3ddc97;
+        --row-alt: #10161f;
+        --shadow-pop: 0 12px 32px rgba(0,0,0,0.55);
+        --shadow-sticky: 0 6px 14px -6px rgba(0,0,0,0.6);
+      }
+    }
+
+    :root[data-theme="dark"] {
+      --bg: #0d1117;
+      --surface-1: #141b24;
+      --surface-2: #1a212c;
+      --surface-3: #232d3a;
+      --border: #263041;
+      --border-strong: #38455d;
+      --text: #e7ecf3;
+      --text-muted: #9aa7b8;
+      --text-faint: #6b7789;
+      --accent: #5c8cff;
+      --accent-hover: #7ba3ff;
+      --accent-weak: rgba(92,140,255,0.16);
+      --accent-on: #0a1120;
+      --pos: #3ddc97; --pos-bg: rgba(61,220,151,0.12);
+      --neg: #ff6b6b; --neg-bg: rgba(255,107,107,0.12);
+      --alt: #b39bff; --cl: #f5c451; --sd: #57c2f5;
+      --money: #3ddc97;
+      --row-alt: #10161f;
+      --shadow-pop: 0 12px 32px rgba(0,0,0,0.55);
+      --shadow-sticky: 0 6px 14px -6px rgba(0,0,0,0.6);
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      min-width: 1080px;
+      display: flex;
+      flex-direction: column;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    header {
+      padding: 14px 22px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-1);
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    header h1 {
+      font-size: 16px;
+      font-weight: 700;
+      letter-spacing: -0.2px;
+      color: var(--text);
+    }
+
+    header .tag {
+      font-size: 12px;
+      color: var(--text-muted);
+      padding-left: 10px;
+      border-left: 1px solid var(--border);
+    }
+
+    .header-actions { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+
+    .filters {
+      padding: 12px 22px 14px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      gap: 12px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-1);
+    }
+
+    .filter-group { display: flex; flex-direction: column; gap: 5px; }
+    .filters input {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      outline: none;
+      width: 160px;
+      transition: border-color .12s, box-shadow .12s;
+    }
+    .filters input::placeholder { color: var(--text-faint); }
+    .filters input:hover { border-color: var(--border-strong); }
+    .filters input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
+    .fg-label {
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-faint);
+      padding-left: 1px;
+      user-select: none;
+    }
+
+    .filters-live {
+      padding: 10px 22px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      border-bottom: 1px solid var(--border);
+      background: var(--surface-2);
+    }
+
+    .filters-live input {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      outline: none;
+      transition: border-color .12s, box-shadow .12s;
+    }
+
+    .filters-live input::placeholder { color: var(--text-faint); }
+    .filters-live input:hover { border-color: var(--border-strong); }
+    .filters-live input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
+    #live-search { width: 240px; }
+    #price-min, #price-max { width: 92px; -moz-appearance: textfield; }
+    #price-min::-webkit-outer-spin-button, #price-min::-webkit-inner-spin-button,
+    #price-max::-webkit-outer-spin-button, #price-max::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+    .filter-label { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .5px; color: var(--text-faint); }
+
+    select, button {
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      font-size: 13px;
+      cursor: pointer;
+      outline: none;
+      transition: border-color .12s, background .12s, color .12s, box-shadow .12s;
+    }
+
+    select:hover, button:hover { border-color: var(--border-strong); }
+    select:focus-visible, button:focus-visible, input:focus-visible,
+    a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+    button#fetch-btn {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: var(--accent-on);
+      font-weight: 600;
+      padding: 8px 20px;
+    }
+
+    button#fetch-btn:hover { background: var(--accent-hover); border-color: var(--accent-hover); }
+    button#fetch-btn:disabled { opacity: .5; cursor: not-allowed; }
+
+    .header-actions button {
+      padding: 7px 11px;
+      font-size: 12px;
+      color: var(--text-muted);
+      background: var(--surface-2);
+    }
+    .header-actions button:hover:not(:disabled) { color: var(--text); border-color: var(--border-strong); }
+    .header-actions button:disabled { opacity: .4; cursor: not-allowed; }
+    #theme-toggle { min-width: 34px; font-size: 14px; }
+
+    .status {
+      padding: 9px 22px;
+      font-size: 12.5px;
+      color: var(--text-muted);
+      min-height: 34px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+    }
+
+    .table-wrap {
+      flex: 1;
+      padding: 0 22px 90px;
+      background: var(--bg);
+    }
+
+    table {
+      width: 100%;
+      min-width: 1080px;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 13px;
+    }
+
+    thead th {
+      position: sticky; top: 0; z-index: 5;
+      text-align: left;
+      padding: 11px 12px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border-strong);
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: .4px;
+      white-space: nowrap;
+      cursor: pointer;
+      user-select: none;
+      box-shadow: var(--shadow-sticky);
+    }
+
+    thead th:hover { color: var(--text); }
+    th.th-alt { color: var(--alt); }
+    th.th-cl { color: var(--cl); }
+    th.th-snkrdunk { color: var(--sd); }
+    thead th.sort-asc, thead th.sort-desc { color: var(--accent); }
+    thead th.sort-asc::after { content: " ↑"; }
+    thead th.sort-desc::after { content: " ↓"; }
+
+    tbody tr { transition: background 0.1s; }
+    tbody td { border-bottom: 1px solid var(--border); }
+    tbody tr:nth-child(even) td { background: var(--row-alt); }
+    tbody tr:hover td { background: var(--surface-3); }
+    tbody tr.selected td { background: var(--accent-weak); }
+    tbody tr.selected td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+
+    td {
+      padding: 10px 12px;
+      vertical-align: middle;
+      max-width: 320px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      color: var(--text);
+    }
+
+    td.price {
+      font-variant-numeric: tabular-nums;
+      color: var(--money);
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    td.currency { color: var(--text-faint); font-size: 11px; }
+
+    td a { color: var(--accent); text-decoration: none; }
+    td a:hover { text-decoration: underline; }
+
+    .badge {
+      display: inline-block;
+      padding: 2px 7px;
+      border-radius: 5px;
+      font-size: 11px;
+      font-weight: 600;
+      background: var(--accent-weak);
+      color: var(--accent);
+    }
+
+    .badge.me { background: var(--accent-weak); color: var(--alt); }
+
+    .pagination {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 16px 22px 80px;
+      font-size: 13px;
+      color: var(--text-muted);
+    }
+
+    .pagination button { padding: 7px 15px; }
+    .pagination button:hover:not(:disabled) { border-color: var(--border-strong); }
+    .pagination button:disabled { opacity: .4; cursor: not-allowed; }
+
+    footer {
+      position: fixed;
+      bottom: 0;
+      left: 0;
+      padding: 6px 12px;
+      font-size: 10px;
+      color: var(--text-faint);
+      background: var(--surface-1);
+      border-top: 1px solid var(--border);
+      border-right: 1px solid var(--border);
+      border-top-right-radius: 6px;
+    }
+
+    /* Card image preview that tracks the cursor on hover. */
+    #hover-preview {
+      position: fixed;
+      z-index: 500;
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity .12s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    #hover-preview.visible { opacity: 1; visibility: visible; }
+
+    /* Marketplace card scans vary in resolution and crop, so give them a fixed
+       card-shaped footprint and letterbox within it — every preview then reads
+       at the same size. SNKRDUNK product shots keep their natural proportions. */
+    #hover-preview.kind-card { width: 248px; height: 344px; }
+    #hover-preview.kind-card #hover-preview-img { width: 100%; height: 100%; object-fit: contain; }
+    #hover-preview.kind-sd { min-width: 130px; min-height: 130px; }
+    #hover-preview.kind-sd #hover-preview-img { max-width: 252px; max-height: 352px; display: block; }
+
+    /* No panel chrome — the image floats on its own. The shadow follows the
+       image silhouette so it stays readable over the table in both themes. */
+    #hover-preview-img {
+      border-radius: 6px;
+      transition: opacity .1s ease;
+      filter: drop-shadow(0 6px 18px rgba(0,0,0,.45));
+    }
+    /* While the next image loads, show a spinner rather than the previous card. */
+    #hover-preview.loading #hover-preview-img { opacity: 0; }
+    #hover-preview .hp-spinner {
+      display: none;
+      position: absolute;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      border: 2px solid var(--border-strong);
+      border-top-color: var(--accent);
+      animation: spin .7s linear infinite;
+    }
+    #hover-preview.loading .hp-spinner { display: block; }
+
+    .empty { text-align: center; padding: 72px; color: var(--text-faint); }
+    /* Skeleton bar for cells whose data is still in flight. Replaces the old
+       faint "···", which read too much like the "—" used for no-data. */
+    .alt-loading {
+      display: inline-block;
+      width: 52px;
+      height: 11px;
+      border-radius: 3px;
+      vertical-align: middle;
+      font-size: 0;
+      color: transparent;
+      background-image: linear-gradient(90deg, var(--surface-3) 20%, var(--border-strong) 45%, var(--surface-3) 70%);
+      background-size: 300% 100%;
+      animation: shimmer 1.5s linear infinite;
+    }
+    @keyframes shimmer {
+      0%   { background-position: 150% 0; }
+      100% { background-position: -150% 0; }
+    }
+
+    /* Fixed pill showing which sources are still fetching, and how far along. */
+    #load-progress {
+      position: fixed;
+      right: 16px;
+      bottom: 16px;
+      z-index: 200;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 9px 14px;
+      background: var(--surface-1);
+      border: 1px solid var(--border-strong);
+      border-radius: 999px;
+      box-shadow: var(--shadow-pop);
+      font-size: 12px;
+      color: var(--text);
+      opacity: 0;
+      transform: translateY(6px);
+      pointer-events: none;
+      transition: opacity .18s ease, transform .18s ease;
+    }
+    #load-progress.visible { opacity: 1; transform: translateY(0); }
+    #load-progress .spinner {
+      width: 12px; height: 12px;
+      border-radius: 50%;
+      border: 2px solid var(--border-strong);
+      border-top-color: var(--accent);
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #load-progress .lp-item { display: inline-flex; align-items: center; gap: 5px; font-variant-numeric: tabular-nums; }
+    #load-progress .lp-item::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--lp-dot, var(--text-faint)); }
+    #load-progress .lp-alt { --lp-dot: var(--alt); }
+    #load-progress .lp-cl { --lp-dot: var(--cl); }
+    #load-progress .lp-sd { --lp-dot: var(--sd); }
+    .alt-link { color: var(--alt); text-decoration: none; }
+    .alt-link:hover { text-decoration: underline; }
+    .card-link { color: var(--text); text-decoration: none; font-weight: 500; }
+    .card-link:hover { color: var(--accent); text-decoration: underline; }
+    .snkrdunk-price a { color: var(--sd); text-decoration: none; }
+    .snkrdunk-price a:hover { text-decoration: underline; }
+    .cl-link { color: var(--cl); text-decoration: none; }
+    .cl-link:hover { text-decoration: underline; }
+    .price-sub { color: var(--text-muted); font-weight: 400; }
+    .delta-pos { color: var(--pos); font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+    .delta-neg { color: var(--neg); font-variant-numeric: tabular-nums; font-weight: 600; white-space: nowrap; }
+
+    th.col-num,
+    td.price, td.pop-count,
+    td.alt-price, td.alt-delta, td.alt-pct,
+    td.cl-price, td.cl-delta, td.cl-pct,
+    td.snkrdunk-price, td.snkrdunk-delta, td.snkr-pct {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    th.grp, td.price,
+    td.alt-price, td.cl-price, td.snkrdunk-price {
+      border-left: 1px solid var(--border);
+    }
+    td.pop-count { color: var(--text-muted); }
+
+    td.hide-cell { padding: 0; text-align: center; }
+    .hide-toggle { display: inline-flex; align-items: center; justify-content: center; width: 30px; height: 26px; background: transparent; border: 1px solid var(--border); border-radius: 6px; color: var(--text-faint); cursor: pointer; font-size: 14px; line-height: 1; }
+    .hide-toggle:hover { background: var(--surface-3); color: var(--text); border-color: var(--border-strong); }
+    tr.row-hidden td:not(.hide-cell) { filter: grayscale(.6); opacity: 0.35; }
+    tr.row-hidden .hide-toggle { background: var(--neg-bg); border-color: var(--neg); color: var(--neg); }
+
+    .toggle-btn { position: relative; padding-left: 24px; color: var(--text-muted); }
+    .toggle-btn::before { content: ""; position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 8px; height: 8px; border-radius: 50%; background: var(--dot, var(--text-faint)); opacity: .45; transition: opacity .12s; }
+    #toggle-alt { --dot: var(--alt); }
+    #toggle-cl { --dot: var(--cl); }
+    #toggle-snkrdunk { --dot: var(--sd); }
+    .toggle-btn.active { color: var(--text); border-color: var(--border-strong); background: var(--surface-1); }
+    .toggle-btn.active::before { opacity: 1; }
+    .toggle-btn:disabled { opacity: .35; cursor: not-allowed; }
+    .toggle-btn:disabled:hover { border-color: var(--border); }
+
+    td.date-col { font-size: 11px; color: var(--text-muted); padding: 10px 8px; white-space: nowrap; }
+    th.th-listed { padding-left: 8px; padding-right: 8px; }
+    td.year-col { font-size: 12px; color: var(--text-muted); white-space: nowrap; }
+    td.num-col { font-size: 12px; color: var(--text-muted); font-family: ui-monospace, "SF Mono", Menlo, monospace; white-space: nowrap; }
+
+    table.hide-alt .alt-price,
+    table.hide-alt .alt-delta,
+    table.hide-alt .alt-pct,
+    table.hide-alt .th-alt { display: none; }
+
+    table.hide-snkrdunk .snkrdunk-price,
+    table.hide-snkrdunk .snkrdunk-delta,
+    table.hide-snkrdunk .snkr-pct,
+    table.hide-snkrdunk .th-snkrdunk { display: none; }
+
+    table.hide-cl .cl-price,
+    table.hide-cl .cl-delta,
+    table.hide-cl .cl-pct,
+    table.hide-cl .th-cl { display: none; }
+
+    .grade-select { position: relative; display: inline-block; }
+    #grade-btn { display: inline-flex; align-items: center; gap: 6px; }
+    .grade-menu {
+      position: absolute;
+      top: calc(100% + 4px);
+      left: 0;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 5px 0;
+      z-index: 100;
+      min-width: 190px;
+      box-shadow: var(--shadow-pop);
+    }
+    .grade-menu label {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 14px;
+      cursor: pointer;
+      font-size: 13px;
+      color: var(--text);
+      white-space: nowrap;
+      user-select: none;
+    }
+    .grade-menu label:hover { background: var(--surface-3); }
+    .grade-menu input[type="checkbox"] { accent-color: var(--accent); cursor: pointer; }
+
+    #lock-screen {
+      position: fixed; inset: 0;
+      background: var(--bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 999;
+    }
+
+    #lock-screen form {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 300px;
+      padding: 28px;
+      background: var(--surface-1);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      box-shadow: var(--shadow-pop);
+    }
+
+    #lock-screen h2 { font-size: 16px; font-weight: 700; text-align: center; color: var(--text); }
+
+    #lock-screen input {
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 11px 14px;
+      border-radius: var(--radius);
+      font-size: 14px;
+      outline: none;
+      width: 100%;
+    }
+
+    #lock-screen input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
+
+    #lock-screen button {
+      background: var(--accent);
+      border: none;
+      color: var(--accent-on);
+      padding: 11px;
+      border-radius: var(--radius);
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    #lock-screen button:hover { background: var(--accent-hover); }
+    #lock-error { color: var(--neg); font-size: 13px; text-align: center; min-height: 18px; }
+
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="lock-screen">
+  <form onsubmit="unlock(event)">
+    <h2>Marketplace Scanner</h2>
+    <input type="password" id="pw-input" placeholder="Password" autofocus />
+    <div id="lock-error"></div>
+    <button type="submit">Enter</button>
+  </form>
+</div>
+
+<header>
+  <h1>Marketplace Scanner</h1>
+  <div class="header-actions">
+    <button id="refresh-list-btn" onclick="refreshCardList()" disabled title="Re-fetch listings">↻ List</button>
+    <button id="refresh-alt-btn" onclick="refreshAlt()" disabled title="Re-fetch ALT prices">↻ ALT</button>
+    <button id="refresh-cl-btn" onclick="refreshCl()" disabled title="Re-fetch CardLadder prices">↻ CL</button>
+    <button id="refresh-snkr-btn" onclick="refreshSnkr()" disabled title="Re-fetch SNKRDUNK prices">↻ SD</button>
+    <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light / dark">☀</button>
+  </div>
+</header>
+
+<div class="filters">
+  <div class="filter-group">
+    <span class="fg-label">Marketplace</span>
+    <select id="source" onchange="onSourceChange()">
+      <option value="cc">Collector Crypt</option>
+      <option value="beezie">Beezie</option>
+      <option value="phygitals">Phygitals</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Category</span>
+    <select id="categories">
+      <option value="Pokemon">Pokemon</option>
+      <option value="One Piece">One Piece</option>
+      <option value="Yu-Gi-Oh!">Yu-Gi-Oh!</option>
+      <option value="Magic The Gathering">Magic The Gathering</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Grader</span>
+    <select id="gradingCompany" onchange="updateGradeOptions()">
+      <option value="PSA">PSA</option>
+      <option value="Beckett">BGS</option>
+      <option value="CGC">CGC</option>
+      <option value="TAG">TAG</option>
+      <option value="AGS">AGS</option>
+      <option value="">Any grader</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Grade</span>
+    <div class="grade-select" id="grade-wrap">
+      <button type="button" id="grade-btn" onclick="toggleGradeMenu()">
+        <span id="grade-label">GEM-MT 10</span> <span style="font-size:10px;opacity:.5">▾</span>
+      </button>
+      <div class="grade-menu" id="grade-menu" style="display:none"></div>
+    </div>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Language</span>
+    <select id="language" onchange="onLanguageChange()">
+      <option value="Japanese">Japanese</option>
+      <option value="English">English</option>
+      <option value="">Any language</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Sort</span>
+    <select id="orderBy">
+      <option value="listedDateDesc">Newest first</option>
+      <option value="listedDateAsc">Oldest first</option>
+      <option value="priceAsc">Price: low to high</option>
+      <option value="priceDesc">Price: high to low</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Load</span>
+    <select id="step" title="How many listings to pull. Applies on the next fetch.">
+      <option value="24">Latest 24</option>
+      <option value="48" selected>Latest 48</option>
+      <option value="96">Latest 96</option>
+      <option value="all">All listings</option>
+    </select>
+  </div>
+
+  <div class="filter-group">
+    <span class="fg-label">Search marketplace</span>
+    <input type="text" id="marketplace-search" placeholder="e.g. mew -mewtwo"
+           title='Substring by default. Use "mew" for a whole-word match, and -term to exclude.'
+           onkeydown="if (event.key === 'Enter') fetchListings(true)" />
+  </div>
+
+  <button id="fetch-btn" onclick="fetchListings(true)">Fetch listings</button>
+</div>
+
+<div class="filters-live">
+  <input type="text" id="live-search" placeholder="Filter card, set or cert…" oninput="debouncedLiveFilters()" />
+  <span class="filter-label">Price $</span>
+  <input type="number" id="price-min" placeholder="Min" min="0" oninput="debouncedLiveFilters()" />
+  <input type="number" id="price-max" placeholder="Max" min="0" oninput="debouncedLiveFilters()" />
+  <span class="filter-label">Sources</span>
+  <button id="toggle-alt" class="toggle-btn active" onclick="toggleSource('alt')" title="ALT price columns">ALT</button>
+  <button id="toggle-cl" class="toggle-btn" onclick="toggleSource('cl')" title="CardLadder price columns (off by default — CardLadder has a small daily request quota)">CL</button>
+  <button id="toggle-snkrdunk" class="toggle-btn active" onclick="toggleSource('snkrdunk')" title="SNKRDUNK price columns">SD</button>
+</div>
+
+<div class="status" id="status">Ready.</div>
+
+<div class="table-wrap">
+  <table id="results-table" class="hide-cl">
+    <thead>
+      <tr>
+        <th class="th-listed" onclick="sortBy('listedAt')">Listed</th>
+        <th onclick="sortBy('cardYear')">Year</th>
+        <th onclick="sortBy('cardName')">Card</th>
+        <th onclick="sortBy('cardNumber')">#</th>
+        <th onclick="sortBy('grade')">Grade</th>
+        <th onclick="sortBy('gradingID')">Cert</th>
+        <th class="col-num" onclick="sortBy('pop')">Pop</th>
+        <th class="col-num grp" onclick="sortBy('price')">Price</th>
+        <th class="th-alt col-num grp" onclick="sortBy('altPrice')">ALT $</th>
+        <th class="th-alt col-num" onclick="sortBy('altDelta')">ALT Δ</th>
+        <th class="th-alt col-num" onclick="sortBy('altPct')">ALT %</th>
+        <th class="th-cl col-num grp" onclick="sortBy('clPrice')">CL $</th>
+        <th class="th-cl col-num" onclick="sortBy('clDelta')">CL Δ</th>
+        <th class="th-cl col-num" onclick="sortBy('clPct')">CL %</th>
+        <th class="th-snkrdunk col-num grp" onclick="sortBy('snkrdunkPrice')" title="SNKRDUNK price for the row's PSA grade">SD $</th>
+        <th class="th-snkrdunk col-num" onclick="sortBy('snkrdunkDelta')">SD Δ</th>
+        <th class="th-snkrdunk col-num" onclick="sortBy('snkrdunkPct')">SD %</th>
+        <th style="width:40px"></th>
+      </tr>
+    </thead>
+    <tbody id="results-body"></tbody>
+  </table>
+  <div class="empty" id="empty-msg">Hit "Fetch listings" to load cards.</div>
+</div>
+
+<div class="pagination" id="pagination" style="display:none">
+  <button id="prev-btn" onclick="goPage(-1)">← Prev</button>
+  <span id="page-info"></span>
+  <button id="next-btn" onclick="goPage(1)">Next →</button>
+</div>
+
+<div id="hover-preview"><div class="hp-spinner"></div><img id="hover-preview-img" alt="" /></div>
+
+<div id="load-progress"></div>
+
+<footer>v1.12</footer>
+
+<script>
+  const PASSWORD_HASH = "023ad9f865cdbeaca49066c3d5970d17b1377b2087500220ab6805d6c814bb30";
+
+  async function sha256(str) {
+    if (!window.isSecureContext || !crypto.subtle) {
+      throw new Error("HTTPS required — please access via https://");
+    }
+    const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+    return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, "0")).join("");
+  }
+
+  async function unlock(e) {
+    e.preventDefault();
+    try {
+      const input = document.getElementById("pw-input").value;
+      const hash = await sha256(input);
+      if (hash === PASSWORD_HASH) {
+        sessionStorage.setItem("auth", "1");
+        document.getElementById("lock-screen").remove();
+        loadCardCache();
+      } else {
+        document.getElementById("lock-error").textContent = "Incorrect password.";
+      }
+    } catch (err) {
+      document.getElementById("lock-error").textContent = err.message;
+    }
+  }
+
+  if (sessionStorage.getItem("auth") === "1") {
+    document.getElementById("lock-screen").remove();
+  }
+
+  const WORKER_URL = "https://cryptjapan-proxy.mew-860.workers.dev";
+
+  let allRows = [];
+  let sortCol = null;
+  let cacheLoadAborted = false;
+  let sortDir = 1;
+  let previousCardPrices = new Map(); // nftAddress → price, for detecting new/repriced listings
+  let currentPage = 1;
+  let totalPages = 1;
+  const platformFilterCache = {};
+  let _activeSrc = document.getElementById("source")?.value ?? "cc";
+
+  // ── Platform registry ────────────────────────────────────────────────
+  // To add a new platform: add an entry to PLATFORMS with a fetch() method.
+  // If the platform needs client-side filtering (instead of server-side), add clientFilter(filtered) → filtered.
+  function activePlatform() {
+    return PLATFORMS[document.getElementById("source")?.value] ?? PLATFORMS.cc;
+  }
+
+  // Shared client-side filter for platforms that fetch all data and filter locally
+  function clientFilterByDropdowns(filtered) {
+    const gc = document.getElementById("gradingCompany")?.value;
+    if (gc) {
+      const grader = gc === "Beckett" ? "BGS" : gc;
+      filtered = filtered.filter(c => c.gradingCompany === grader);
+    }
+    const selectedGrades = getSelectedGrades();
+    if (selectedGrades.length > 0) {
+      filtered = filtered.filter(c => {
+        const cgNum = parseFloat(c.grade ?? "");
+        return selectedGrades.some(g =>
+          (g.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat).some(n => n === cgNum)
+        );
+      });
+    }
+    const lang = document.getElementById("language")?.value;
+    if (lang) {
+      filtered = filtered.filter(c => (c.language || "").toLowerCase() === lang.toLowerCase());
+    }
+    return filtered;
+  }
+
+  const PLATFORMS = {
+    cc: {
+      fetch: (resetPage, forceRefresh) => fetchCcListings(resetPage, forceRefresh),
+    },
+    beezie: {
+      fetch: () => fetchBeezieListings(),
+      clientFilter: clientFilterByDropdowns,
+    },
+    phygitals: {
+      fetch: () => fetchPhygitalsListings(),
+      paginate: true,
+    },
+  };
+
+  async function fetchListings(resetPage = false, forceRefresh = false) {
+    cacheLoadAborted = true;
+    return activePlatform().fetch(resetPage, forceRefresh);
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  function captureFilterState() {
+    return {
+      gradingCompany: document.getElementById("gradingCompany")?.value ?? "",
+      grades: getSelectedGrades(),
+      language: document.getElementById("language")?.value ?? "",
+      step: document.getElementById("step")?.value ?? "48",
+      orderBy: document.getElementById("orderBy")?.value ?? "listedDateDesc",
+    };
+  }
+
+  const PLATFORM_FILTER_DEFAULTS = {
+    beezie:    { gradingCompany: "",    grades: [],             language: "Japanese", step: "48", orderBy: "listedDateDesc" },
+    phygitals: { gradingCompany: "PSA", grades: ["GEM-MT 10"], language: "Japanese", step: "48", orderBy: "listedDateDesc" },
+  };
+
+  function applyFilterState(src, state) {
+    const s = state ?? PLATFORM_FILTER_DEFAULTS[src] ?? null;
+    if (s) {
+      document.getElementById("gradingCompany").value = s.gradingCompany;
+      document.getElementById("language").value = s.language;
+      document.getElementById("step").value = s.step;
+      document.getElementById("orderBy").value = s.orderBy;
+    }
+    syncSdAvailability(); // language may have changed with the platform
+    updateGradeOptions(); // rebuild menu for company + set platform default grade
+    if (s?.grades?.length > 0) {
+      const menu = document.getElementById("grade-menu");
+      menu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
+        cb.checked = s.grades.includes(cb.value);
+      });
+      if (!menu.querySelector('input[type="checkbox"]:checked')) {
+        const anyBox = menu.querySelector('input[value=""]');
+        if (anyBox) anyBox.checked = true;
+      }
+      updateGradeLabel();
+      if (activePlatform().clientFilter) applyLiveFilters();
+    }
+  }
+
+  function onSourceChange() {
+    platformFilterCache[_activeSrc] = captureFilterState();
+    _activeSrc = document.getElementById("source")?.value ?? "cc";
+    applyFilterState(_activeSrc, platformFilterCache[_activeSrc] ?? null);
+    syncCategoryOptions();
+  }
+
+  function goPage(delta) {
+    const next = currentPage + delta;
+    if (next < 1 || next > totalPages) return;
+    currentPage = next;
+    const pf = activePlatform();
+    if (pf.clientFilter || pf.paginate) applyLiveFilters();
+    else fetchListings();
+  }
+
+  function updatePagination(total) {
+    totalPages = total;
+    const pag = document.getElementById("pagination");
+    pag.style.display = totalPages > 1 ? "flex" : "none";
+    document.getElementById("page-info").textContent = `Page ${currentPage} of ${totalPages}`;
+    document.getElementById("prev-btn").disabled = currentPage <= 1;
+    document.getElementById("next-btn").disabled = currentPage >= totalPages;
+  }
+
+  function enableRefreshButtons() {
+    for (const id of ["refresh-list-btn", "refresh-alt-btn", "refresh-cl-btn", "refresh-snkr-btn"]) {
+      const btn = document.getElementById(id);
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function fetchCcListings(resetPage = false, forceRefresh = false) {
+    if (resetPage) currentPage = 1;
+    const btn = document.getElementById("fetch-btn");
+    const status = document.getElementById("status");
+    btn.disabled = true;
+
+    const stepSel = document.getElementById("step").value;
+    const showAll = stepSel === "all";
+    const stepVal = showAll ? "96" : stepSel;
+
+    const selectedGrades = getSelectedGrades();
+    const searchTerm = marketplaceSearchTerm();
+    const baseParams = {
+      cardType: "Card",
+      categories: document.getElementById("categories").value,
+      gradingCompany: document.getElementById("gradingCompany").value,
+      language: document.getElementById("language").value,
+      orderBy: document.getElementById("orderBy").value,
+      step: stepVal,
+      search: apiSearchTerm(searchTerm),
+    };
+    // filterState stores "all" as step so the cache key is meaningful
+    // cache on the raw query: "mew" and mew -promo hit the API identically but
+    // must not share a cached result set
+    const filterState = { ...baseParams, step: stepSel, grade: selectedGrades.join(",") || "", search: searchTerm };
+
+    // For show-all, use cached card list if filters match and not force-refreshing
+    if (showAll && !forceRefresh) {
+      try {
+        const cached = JSON.parse(localStorage.getItem("cardListCache") || "null");
+        const filterKeys = ["categories","gradingCompany","grade","language","orderBy","search"];
+        const fresh = !cached?.savedAt || Date.now() - cached.savedAt <= 3600_000;
+        if (fresh && cached?.rows?.length && cached.filters?.step === "all" &&
+            filterKeys.every(k => cached.filters[k] === filterState[k])) {
+          allRows = cached.rows;
+          await getSolPrice();
+          await getJpyRate();
+          updatePagination(1);
+          status.textContent = (cached.statusText || `${allRows.length} listings loaded`) + " (cached)";
+          enableRefreshButtons();
+          applyLiveFilters();
+          window.scrollTo(0, 0);
+          btn.disabled = false;
+          return;
+        }
+      } catch {}
+    }
+
+    async function fetchPage(page) {
+      const grades = selectedGrades.length > 0 ? selectedGrades : [""];
+      if (grades.length === 1) {
+        const params = new URLSearchParams({ ...baseParams, grade: grades[0], page });
+        for (const [k, v] of [...params]) { if (!v) params.delete(k); }
+        const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        return res.json();
+      }
+      const fetches = await Promise.all(grades.map(async g => {
+        try {
+          const params = new URLSearchParams({ ...baseParams, grade: g, page });
+          for (const [k, v] of [...params]) { if (!v) params.delete(k); }
+          const res = await fetch(`${WORKER_URL}/marketplace?${params}`);
+          if (!res.ok) return null;
+          return res.json();
+        } catch { return null; }
+      }));
+      const seen = new Set();
+      const cards = [];
+      let total = 0, pages = 1;
+      for (const data of fetches.filter(Boolean)) {
+        total += data.findTotal ?? 0;
+        pages = Math.max(pages, data.totalPages ?? 1);
+        for (const c of (data.filterNFtCard || []).filter(c => c.listing)) {
+          if (!seen.has(c.nftAddress)) { seen.add(c.nftAddress); cards.push(c); }
+        }
+      }
+      return { filterNFtCard: cards, findTotal: total, totalPages: pages };
+    }
+
+    status.textContent = "Fetching…";
+
+    try {
+      const firstData = await fetchPage(showAll ? 1 : currentPage);
+      let fetchedCount = (firstData.filterNFtCard || []).length;
+      let cards = filterBySearch((firstData.filterNFtCard || []).filter(c => c.listing), searchTerm);
+      const total = firstData.findTotal ?? cards.length;
+      const pages = firstData.totalPages ?? 1;
+
+      await getSolPrice();
+      updatePagination(1); // a fixed number of listings is loaded, not a page of them
+
+      if (showAll) {
+        allRows = cards;
+        renderTable(cards);
+        repopulateAltCells(cards);
+        repopulateSnkrdunkCells(cards);
+        window.scrollTo(0, 0);
+
+        if (pages > 1) {
+          const tbody = document.getElementById("results-body");
+          document.getElementById("empty-msg").style.display = "none";
+          status.textContent = `Loading ${pages} pages…`;
+          const remaining = await Promise.all(
+            Array.from({ length: pages - 1 }, (_, i) => fetchPage(i + 2).catch(() => null))
+          );
+          for (const d of remaining) {
+            if (!d) continue;
+            fetchedCount += (d.filterNFtCard || []).length;
+            const newCards = filterBySearch((d.filterNFtCard || []).filter(c => c.listing), searchTerm);
+            cards = cards.concat(newCards);
+            allRows = cards;
+            tbody.insertAdjacentHTML("beforeend", newCards.map(buildRowHtml).join(""));
+            applyHiddenRows();
+            repopulateAltCells(newCards);
+            repopulateSnkrdunkCells(newCards);
+          }
+        }
+
+        // On forced refresh, bubble new and repriced listings to the top
+        if (forceRefresh && previousCardPrices.size > 0) {
+          const isNewOrRepriced = c => {
+            const prev = previousCardPrices.get(c.nftAddress);
+            return prev === undefined || prev !== (c.listing?.updatedAt ?? c.listing?.createdAt ?? "");
+          };
+          cards = [...cards.filter(isNewOrRepriced), ...cards.filter(c => !isNewOrRepriced(c))];
+          allRows = cards;
+          renderTable(cards);
+        }
+
+        const msg = listingsMsg(cards.length, fetchedCount, searchTerm);
+        status.textContent = msg;
+        applyLiveFilters();
+        saveCardCache(cards, filterState, currentPage, 1, msg);
+        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
+        fetchClForVisible();
+      } else {
+        allRows = cards;
+        const msg = searchTerm
+          ? listingsMsg(cards.length, fetchedCount, searchTerm) + ` — page ${currentPage} of ${pages}`
+          : `${total.toLocaleString()} total listings — page ${currentPage} of ${pages}`;
+        status.textContent = msg;
+        applyLiveFilters();
+        saveCardCache(cards, filterState, currentPage, pages, msg);
+        fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
+        fetchClForVisible();
+        window.scrollTo(0, 0);
+      }
+
+      enableRefreshButtons();
+    } catch (e) {
+      status.textContent = `Error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // ── Marketplace-side search ──────────────────────────────────────────
+  // Sent to each marketplace's own API so only matching cards are fetched,
+  // which also cuts the per-card ALT/SD/CardLadder lookups by the same factor.
+  // The site URL param and the API param don't always agree (Phygitals' site
+  // says search= but its API wants searchTerm=), so results are also filtered
+  // locally — that way a wrong guess costs speed, never correctness.
+  // How many listings to pull. Beezie and Phygitals used to page through their
+  // entire catalogue regardless of this setting and only paginate afterwards,
+  // which is what made a scan take so long; they now stop once they have this
+  // many.
+  function loadLimit() {
+    const v = document.getElementById("step")?.value;
+    return !v || v === "all" ? Infinity : parseInt(v, 10);
+  }
+
+  function marketplaceSearchTerm() {
+    return (document.getElementById("marketplace-search")?.value || "").trim();
+  }
+
+  // The marketplaces only do substring matching, so "mew" necessarily also
+  // returns "mewtwo". We can't change that, but we already re-filter locally,
+  // so precision is free here:
+  //   mew           substring, as before
+  //   "mew"         whole word only — matches Mew ex, not Mewtwo
+  //   mew -mewtwo   exclude anything containing mewtwo
+  function parseSearchQuery(raw) {
+    const include = [], exclude = [];
+    for (let tok of raw.match(/-?"[^"]*"|\S+/g) || []) {
+      const negated = tok.startsWith("-") && tok.length > 1;
+      if (negated) tok = tok.slice(1);
+      const exact = tok.length > 1 && tok.startsWith('"') && tok.endsWith('"');
+      if (exact) tok = tok.slice(1, -1);
+      const text = tok.trim().toLowerCase();
+      if (text) (negated ? exclude : include).push({ text, exact });
+    }
+    return { include, exclude };
+  }
+
+  // What the marketplace API receives: positive terms only, syntax stripped,
+  // since it won't understand quotes or exclusions.
+  function apiSearchTerm(raw) {
+    return parseSearchQuery(raw).include.map(t => t.text).join(" ");
+  }
+
+  // The listing title bundles year, number, grade and set together
+  // ("2023 #170 Squirtle PSA 10 Mew EN-151"), so matching it makes a Squirtle
+  // from the 151 set answer to "mew". Positive terms match the card's own name
+  // instead; itemName is only a fallback for sources that don't provide one.
+  function cardNameText(c) {
+    const named = [c._altCardName, c.cardName, c.name].find(v => String(v ?? "").trim());
+    return String(named ?? c.itemName ?? "").toLowerCase();
+  }
+
+  // Exclusions still match the whole listing, so -promo can drop a card on set
+  // or title text as well as on its name.
+  function listingText(c) {
+    return [c.itemName, c.cardName, c.name, c.set, c.gradingID]
+      .map(v => String(v ?? "").toLowerCase()).join(" ");
+  }
+
+  function matchesSearchTerm(c, term) {
+    const { include, exclude } = parseSearchQuery(term);
+    const hit = ({ text, exact }, hay) => exact
+      ? new RegExp(`(^|[^a-z0-9])${text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^a-z0-9]|$)`).test(hay)
+      : hay.includes(text);
+    const name = cardNameText(c);
+    const full = listingText(c);
+    return include.every(t => hit(t, name)) && !exclude.some(t => hit(t, full));
+  }
+
+  function filterBySearch(cards, term) {
+    return term ? cards.filter(c => matchesSearchTerm(c, term)) : cards;
+  }
+
+  // Collector Crypt and Phygitals don't expose a card name, so at fetch time
+  // the only text to match is the listing title — and that embeds the set,
+  // which lets a Vileplume from the "Mew EN-151" set answer to "mew". ALT
+  // supplies the real card name moments later, so re-run the match then and
+  // drop the rows that never genuinely matched. Rows ALT couldn't identify
+  // keep their title-based result, since there's nothing better to judge on.
+  function refineSearchWithAltNames(cards, fetchedCount) {
+    const term = marketplaceSearchTerm();
+    if (!term) return cards;
+    const kept = filterBySearch(cards, term);
+    if (kept.length === cards.length) return cards;
+    allRows = kept;
+    applyLiveFilters();
+    const status = document.getElementById("status");
+    if (status) status.textContent = listingsMsg(kept.length, fetchedCount, term);
+    return kept;
+  }
+
+  // Says plainly whether the marketplace honoured the search server-side.
+  function listingsMsg(shown, fetched, term, label = "listings") {
+    if (!term) return `${shown.toLocaleString()} ${label} loaded`;
+    const note = fetched > shown
+      ? ` — filtered locally from ${fetched.toLocaleString()} fetched`
+      : "";
+    const q = /["']/.test(term) ? term : `"${term}"`;
+    return `${shown.toLocaleString()} ${label} for ${q}${note}`;
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  function buildRowHtml(c) {
+    const l = c.listing;
+    const cardUrl = c._cardUrl || `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
+    const price = Number(l.price);
+    const solAmt = `${price % 1 === 0 ? price : price.toFixed(2)} SOL`;
+    const priceStr = l.currency === "SOL"
+      ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="price-sub">(${solAmt})</span>` : solAmt)
+      : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
+    const certDisplay = c.gradingCompany === "PSA"
+      ? `<a href="https://www.psacard.com/cert/${esc(c.gradingID)}/psa" target="_blank" rel="noopener" style="color:#94a3b8">${esc(c.gradingID)}</a>`
+      : esc(c.gradingID);
+    const isJpn = !c.language || c.language.toLowerCase() === "japanese";
+    const cardDisplayName = c.cardName || c.name || "";
+    const cardNumStr = (c.itemName || "").match(/#(\d+)/)?.[1] ?? "";
+    const cardNumDisplay = cardNumStr ? cardNumStr.padStart(3, "0") : "—";
+    const cardImg = c._image ?? pickCardImage(c);
+    return `<tr data-nft="${esc(c.nftAddress)}">
+      <td class="date-col">${formatListedDate(c)}</td>
+      <td class="year-col">${itemYear(c) || "—"}</td>
+      <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"${cardImg ? ` data-img="${esc(cardImg)}" data-img-kind="card"` : ""}><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
+      <td class="num-col">${esc(cardNumDisplay)}</td>
+      <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+(?:\.\d+)?)$/)?.[1] || c.grade).replace(/\.0$/, ""))}</td>
+      <td>${certDisplay}</td>
+      <td class="pop-count" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="price">${priceStr}</td>
+      <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
+      <td class="alt-pct" data-cert="${esc(c.gradingID)}"></td>
+      <td class="cl-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="cl-delta" data-cert="${esc(c.gradingID)}"></td>
+      <td class="cl-pct" data-cert="${esc(c.gradingID)}"></td>
+      <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}">${isJpn ? '<span class="alt-loading">···</span>' : '—'}</td>
+      <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
+      <td class="snkr-pct" data-cert="${esc(c.gradingID)}"></td>
+      <td class="hide-cell"><button class="hide-toggle" onclick="toggleRowHide('${esc(c.nftAddress)}')" title="Hide row">${EYE_OPEN}</button></td>
+    </tr>`;
+  }
+
+  const EYE_OPEN = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+  const EYE_CLOSED = `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>`;
+
+  const hiddenRows = new Set(JSON.parse(localStorage.getItem("hiddenRows") || "[]"));
+
+  function toggleRowHide(nft) {
+    if (hiddenRows.has(nft)) {
+      hiddenRows.delete(nft);
+    } else {
+      hiddenRows.add(nft);
+    }
+    localStorage.setItem("hiddenRows", JSON.stringify([...hiddenRows]));
+    applyHiddenRows();
+  }
+
+  function applyHiddenRows() {
+    document.querySelectorAll("tr[data-nft]").forEach(tr => {
+      const isHidden = hiddenRows.has(tr.dataset.nft);
+      tr.classList.toggle("row-hidden", isHidden);
+      const btn = tr.querySelector(".hide-toggle");
+      if (btn) btn.innerHTML = isHidden ? EYE_CLOSED : EYE_OPEN;
+    });
+  }
+
+  function renderTable(rows) {
+    const tbody = document.getElementById("results-body");
+    const empty = document.getElementById("empty-msg");
+    if (!rows.length) {
+      tbody.innerHTML = "";
+      empty.style.display = "block";
+      return;
+    }
+    empty.style.display = "none";
+    tbody.innerHTML = rows.map(buildRowHtml).join("");
+    applyHiddenRows();
+  }
+
+  function sortBy(col) {
+    const ths = document.querySelectorAll("thead th");
+    ths.forEach(th => th.classList.remove("sort-asc", "sort-desc"));
+
+    if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
+
+    const colOrder = ["listedAt","cardYear","cardName","cardNumber","grade","gradingID","pop","price","altPrice","altDelta","altPct","clPrice","clDelta","clPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
+    const thIdx = colOrder.indexOf(col);
+    if (thIdx >= 0) {
+      ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
+    }
+
+    const sorted = [...allRows].sort((a, b) => {
+      let av, bv;
+      if (col === "listedAt") {
+        const dateOf = c => new Date(c.listing?.updatedAt ?? c.listing?.createdAt ?? 0).getTime();
+        av = dateOf(a); bv = dateOf(b);
+      } else if (col === "cardYear") {
+        av = parseInt(itemYear(a) || "0"); bv = parseInt(itemYear(b) || "0");
+      } else if (col === "cardName") {
+        av = (a.cardName || a.name || "").toLowerCase(); bv = (b.cardName || b.name || "").toLowerCase();
+      } else if (col === "cardNumber") {
+        av = parseInt((a.itemName || "").match(/#(\d+)/)?.[1] ?? "0");
+        bv = parseInt((b.itemName || "").match(/#(\d+)/)?.[1] ?? "0");
+      } else if (col === "pop") {
+        av = a._altPop ?? -Infinity; bv = b._altPop ?? -Infinity;
+      } else if (col === "price") {
+        const toUsd = c => { const cur = c.listing?.currency, raw = Number(c.listing?.price ?? 0); return cur === "USDC" ? raw : (cur === "SOL" && solUsd ? raw * solUsd : raw); };
+        av = toUsd(a); bv = toUsd(b);
+      } else if (col === "altPrice") {
+        av = a._altPrice ?? -Infinity; bv = b._altPrice ?? -Infinity;
+      } else if (col === "altDelta") {
+        av = a._altDelta ?? -Infinity; bv = b._altDelta ?? -Infinity;
+      } else if (col === "altPct") {
+        av = a._altPct ?? -Infinity; bv = b._altPct ?? -Infinity;
+      } else if (col === "clPrice") {
+        av = a._clPrice ?? -Infinity; bv = b._clPrice ?? -Infinity;
+      } else if (col === "clDelta") {
+        av = a._clDelta ?? -Infinity; bv = b._clDelta ?? -Infinity;
+      } else if (col === "clPct") {
+        av = a._clPct ?? -Infinity; bv = b._clPct ?? -Infinity;
+      } else if (col === "snkrdunkPrice") {
+        av = a._snkrdunkPrice ?? -Infinity; bv = b._snkrdunkPrice ?? -Infinity;
+      } else if (col === "snkrdunkDelta") {
+        av = a._snkrdunkDelta ?? -Infinity; bv = b._snkrdunkDelta ?? -Infinity;
+      } else if (col === "snkrdunkPct") {
+        av = a._snkrdunkPct ?? -Infinity; bv = b._snkrdunkPct ?? -Infinity;
+      } else {
+        av = a[col] ?? ""; bv = b[col] ?? "";
+      }
+      if (typeof av === "string") return av.localeCompare(bv) * sortDir;
+      return (av - bv) * sortDir;
+    });
+    allRows = sorted;
+    applyLiveFilters();
+  }
+
+  // Typing in the search/price inputs re-renders the whole table; debounce so
+  // fast typing triggers one render instead of one per keystroke.
+  const debouncedLiveFilters = (() => {
+    let t;
+    return () => { clearTimeout(t); t = setTimeout(applyLiveFilters, 200); };
+  })();
+
+  function applyLiveFilters() {
+    const q = (document.getElementById("live-search")?.value || "").toLowerCase();
+    const minVal = parseFloat(document.getElementById("price-min")?.value || "");
+    const maxVal = parseFloat(document.getElementById("price-max")?.value || "");
+
+    let filtered = allRows;
+
+    if (q) {
+      filtered = filtered.filter(c => {
+        const name = (c.itemName || "").toLowerCase();
+        const cert = (c.gradingID || "").toLowerCase();
+        const cardName = (c.name || c.cardName || "").toLowerCase();
+        return name.includes(q) || cert.includes(q) || cardName.includes(q);
+      });
+    }
+
+    if (!isNaN(minVal) || !isNaN(maxVal)) {
+      filtered = filtered.filter(c => {
+        const cur = c.listing?.currency;
+        const raw = Number(c.listing?.price ?? 0);
+        const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+        if (usdc == null) return true;
+        if (!isNaN(minVal) && usdc < minVal) return false;
+        if (!isNaN(maxVal) && usdc > maxVal) return false;
+        return true;
+      });
+    }
+
+    const pf = activePlatform();
+    if (pf.clientFilter) {
+      filtered = pf.clientFilter(filtered);
+    }
+    if (pf.clientFilter || pf.paginate) updatePagination(1);
+
+    renderTable(filtered);
+    visibleRows = filtered;
+    repopulateAltCells(allRows);
+    repopulateClCells(allRows);
+    repopulateSnkrdunkCells(allRows);
+    scheduleClForVisible();
+  }
+
+  // ── CardLadder: fetch only what's on screen ──────────────────────────
+  // CardLadder has a tight daily quota and is slow, so fetching every row of a
+  // long list both takes forever and exhausts the quota before finishing.
+  // Only the rendered page is fetched; paging or filtering pulls the rest.
+  let visibleRows = [];
+
+  function fetchClForVisible() {
+    if (!sourceEnabled("cl") || !visibleRows.length) return;
+    const pending = [];
+    const seen = new Set();
+    for (const c of visibleRows) {
+      const cert = c.gradingID;
+      if (!cert || seen.has(cert) || clCache.has(cert) || !clGrader(c)) continue;
+      seen.add(cert);
+      pending.push(c);
+    }
+    if (pending.length) fetchClPrices(pending);
+  }
+
+  // applyLiveFilters runs on every keystroke and sort; coalesce the triggers.
+  let clVisibleTimer = null;
+  function scheduleClForVisible() {
+    clearTimeout(clVisibleTimer);
+    clVisibleTimer = setTimeout(fetchClForVisible, 250);
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // The repopulate passes run over ALL rows, but the update*Cell DOM writes
+  // are no-ops for rows not currently rendered (their cells don't exist).
+  // Collect the rendered certs in one DOM pass so we can skip the pointless
+  // per-cert document-wide selector scans; row-object field updates (used by
+  // sorting) still run for every row.
+  function renderedCertSet() {
+    const s = new Set();
+    for (const el of document.querySelectorAll('#results-body [data-cert]')) s.add(el.dataset.cert);
+    return s;
+  }
+
+  function repopulateAltCells(rows) {
+    const rendered = renderedCertSet();
+    for (const c of rows) {
+      if (!c.gradingID || !altCache.has(c.gradingID)) continue;
+      const result = altCache.get(c.gradingID);
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+      if (rendered.has(c.gradingID)) {
+        updateAltCell(c.gradingID, result, usdc);
+        if (result?.cardName) {
+          const nameCell = document.querySelector(`.card-name-cell[data-cert="${c.gradingID}"]`);
+          if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
+        }
+      }
+      if (result?.cardName) c._altCardName = result.cardName;
+      if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
+      if (result?.psaPop != null || result?.pop != null) c._altPop = result.psaPop ?? result.pop;
+      if (result?.price != null) {
+        const altPrice = Number(result.price);
+        c._altPrice = altPrice;
+        c._altDelta = usdc != null ? altPrice - usdc : null;
+        c._altPct = usdc != null ? ((altPrice - usdc) / usdc) * 100 : null;
+      }
+    }
+  }
+
+  function cardToPsaGrade(c) {
+    const m = (c.grade || "").match(/(\d+(?:\.\d+)?)/);
+    if (!m) return "";
+    return `PSA${Math.floor(parseFloat(m[1]))}`;
+  }
+
+  function isMasterBall(c) {
+    const s = ((c.itemName || "") + " " + (c.name || "") + " " + (c.cardName || "")).toLowerCase();
+    return s.includes("master ball");
+  }
+
+  function itemYear(c) {
+    return String(c.year || (c.itemName?.match(/^(\d{4})\s/) ?? [])[1] || "");
+  }
+
+  function formatListedDate(c) {
+    const dateStr = c.listing?.updatedAt ?? c.listing?.createdAt ?? null;
+    if (!dateStr) return "";
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return "";
+    const ms = Date.now() - d;
+    const mins = Math.floor(ms / 60000);
+    if (mins < 60) return `${Math.max(mins, 0)}m`;
+    const hours = Math.floor(ms / 3600000);
+    if (hours < 24) return `${hours}h`;
+    const days = Math.floor(ms / 86400000);
+    if (days < 30) return `${days}d`;
+    if (days < 365) return `${Math.floor(days / 30)}mo`;
+    return `${Math.floor(days / 365)}y`;
+  }
+
+  function snkrdunkKwKey(c) {
+    const psaGrade = cardToPsaGrade(c);
+    let kw;
+    if (c._altCardName && c._altCardNumber) {
+      kw = `${c._altCardName} ${c._altCardNumber}`;
+    } else {
+      const cleanName = c.name || c.cardName || null;
+      kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+    }
+    const year = itemYear(c);
+    return `${kw}|${psaGrade}${isMasterBall(c) ? "|mb" : ""}${year ? `|${year}` : ""}`;
+  }
+
+  function repopulateSnkrdunkCells(rows) {
+    const rendered = renderedCertSet();
+    for (const c of rows) {
+      if (!c.gradingID) continue;
+      if (c.language && c.language.toLowerCase() !== "japanese") continue;
+      const key = snkrdunkKwKey(c);
+      if (!snkrdunkCache.has(key)) continue;
+      const result = snkrdunkCache.get(key);
+      if (rendered.has(c.gradingID)) updateSnkrdunkCell(c.gradingID, result);
+      if (result?.price != null) c._snkrdunkPrice = result.price;
+    }
+  }
+
+  // ── Alt.xyz price fetching ───────────────────────────────────────────
+  const altCache = new Map();
+
+  const CERT_QUERY = `query Cert($certNumber: String!) {
+    cert(certNumber: $certNumber) {
+      certNumber gradeNumber gradingCompany
+      asset { id subject attributes { cardNumber } __typename }
+      __typename
+    }
+  }`;
+
+  // Single-round-trip variant: pulls altValueInfo + cardPops through the cert's
+  // asset in one request. altValueInfo needs a tsFilter (grade + grader), which
+  // we guess from the marketplace row before the call and verify against the
+  // cert response — a wrong guess costs one extra AssetDetails call, and a
+  // schema rejection falls back to the legacy 3-call path.
+  const CERT_FULL_QUERY = `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
+    cert(certNumber: $certNumber) {
+      certNumber gradeNumber gradingCompany
+      asset {
+        id subject attributes { cardNumber }
+        altValueInfo(tsFilter: $tsFilter) { currentAltValue }
+        cardPops { gradingCompany gradeNumber count }
+        __typename
+      }
+      __typename
+    }
+  }`;
+
+  const ASSET_QUERY = `query AssetDetails($id: ID!, $tsFilter: TimeSeriesFilter!) {
+    asset(id: $id) {
+      id
+      altValueInfo(tsFilter: $tsFilter) { currentAltValue }
+      __typename
+    }
+  }`;
+
+  const CARDPOPS_QUERY = `query AssetCardPops($id: ID!) {
+    asset(id: $id) {
+      id
+      cardPops { gradingCompany gradeNumber count }
+    }
+  }`;
+
+  // Marketplace payloads differ in where they put the card photo, so probe the
+  // plausible shapes rather than hard-coding one field. Returns null when a
+  // listing has no usable image, in which case no preview is offered.
+  const IMG_KEYS = ["image", "imageUrl", "image_url", "frontImage", "frontImageUrl",
+    "front_image", "frontScan", "thumbnail", "thumbnailUrl", "thumbnail_url", "img", "photo"];
+  const IMG_ARRAYS = ["images", "media", "photos"];
+  const IMG_CONTAINERS = ["metadata", "primaryMedia", "asset", "nft", "card"];
+
+  function toImageUrl(v) {
+    if (typeof v !== "string") return null;
+    if (v.startsWith("ipfs://")) return "https://ipfs.io/ipfs/" + v.slice(7).replace(/^ipfs\//, "");
+    return /^https?:\/\//.test(v) ? v : null;
+  }
+
+  function pickCardImage(o, depth = 0) {
+    if (!o || typeof o !== "object" || depth > 2) return null;
+    for (const k of IMG_KEYS) {
+      const direct = toImageUrl(o[k]);
+      if (direct) return direct;
+      if (o[k] && typeof o[k] === "object") {
+        const nested = pickCardImage(o[k], depth + 1);
+        if (nested) return nested;
+      }
+    }
+    for (const k of IMG_ARRAYS) {
+      const arr = o[k];
+      if (Array.isArray(arr) && arr.length) {
+        const first = toImageUrl(arr[0]) || pickCardImage(arr[0], depth + 1);
+        if (first) return first;
+      }
+    }
+    for (const k of IMG_CONTAINERS) {
+      if (o[k]) {
+        const nested = pickCardImage(o[k], depth + 1);
+        if (nested) return nested;
+      }
+    }
+    return null;
+  }
+
+  // "069"→"069", "120/SV-P"→"SV-P 120", "294XYP"→"XY-P 294", "RC32"→"RC32"
+  function normalizeCardNum(raw) {
+    if (!raw) return null;
+    if (/^\d+$/.test(raw)) return String(parseInt(raw, 10)).padStart(3, "0");
+    const parts = raw.split("/");
+    if (parts.length === 2 && /^\d+$/.test(parts[0]) && !/^\d+$/.test(parts[1]))
+      return `${parts[1]} ${parts[0].padStart(3, "0")}`;
+    const m = raw.match(/^(\d+)([A-Za-z].*)$/);
+    if (m) {
+      const code = m[2].replace(/([A-Za-z])P$/i, "$1-P");
+      return `${code} ${m[1].padStart(3, "0")}`;
+    }
+    return raw;
+  }
+
+  const QUERY_MAP = { Cert: CERT_QUERY, AssetDetails: ASSET_QUERY, AssetCardPops: CARDPOPS_QUERY };
+  async function altPost(operation, variables, queryOverride) {
+    const res = await fetch(`${WORKER_URL}/alt/${operation}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ operationName: operation, query: queryOverride ?? QUERY_MAP[operation] ?? ASSET_QUERY, variables }),
+    });
+    const data = await res.json();
+    return data;
+  }
+
+  // Build the tsFilter guess for the combined cert query from marketplace row
+  // data. ALT formats gradeNumber as "10.0" / "9.5" and uses BGS (not Beckett).
+  function altTsFilterGuess(card) {
+    const m = (card?.grade || "").match(/(\d+(?:\.\d+)?)/);
+    if (!m) return null;
+    const num = parseFloat(m[1]);
+    const gradeNumber = Number.isInteger(num) ? `${num}.0` : String(num);
+    const gcRaw = (card?.gradingCompany || "").toUpperCase();
+    const gradingCompany = gcRaw.startsWith("BECK") ? "BGS" : gcRaw;
+    if (!gradingCompany) return null;
+    return { gradeNumber, gradingCompany, autograph: null };
+  }
+
+  function buildAltResult(cert, price, cardPops) {
+    const popEntry = cardPops.find(p => p.gradingCompany === cert.gradingCompany && p.gradeNumber === cert.gradeNumber);
+    const gradeFloor = `${Math.floor(parseFloat(cert.gradeNumber))}.0`;
+    const psaEntry = cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === cert.gradeNumber)
+                  ?? cardPops.find(p => p.gradingCompany === "PSA" && p.gradeNumber === gradeFloor);
+    return {
+      price: price ?? null,
+      pop: popEntry?.count ?? null,
+      psaPop: psaEntry?.count ?? null,
+      assetId: cert.asset.id,
+      cardName: cert.asset.subject ?? null,
+      cardNumber: normalizeCardNum(cert.asset.attributes?.cardNumber ?? null),
+    };
+  }
+
+  // Live telemetry for the combined-query rollout — check in the console:
+  // single = 1 round trip, extra = guess mismatched (2 trips), legacy = fallback (3 trips)
+  window._altStats = { single: 0, extra: 0, legacy: 0 };
+
+  async function fetchAltPrice(certNumber, card) {
+    if (altCache.has(certNumber)) {
+      const cached = altCache.get(certNumber);
+      if (!cached) return cached;
+      if ('cardName' in cached && cached.price !== null) return cached;
+      // re-fetch if price is null (stale cache or first fetch after Alt API change)
+    }
+    try {
+      // Fast path: one combined round trip when we can guess the tsFilter
+      const guess = card ? altTsFilterGuess(card) : null;
+      if (guess) {
+        const full = await altPost("Cert", { certNumber, tsFilter: guess }, CERT_FULL_QUERY);
+        const cert = full.data?.cert;
+        if (cert?.asset?.id) {
+          const guessMatched = cert.gradeNumber === guess.gradeNumber && cert.gradingCompany === guess.gradingCompany;
+          let price;
+          if (guessMatched && !full.errors) {
+            price = cert.asset.altValueInfo?.currentAltValue ?? null;
+            window._altStats.single++;
+          } else {
+            // Guessed grade/grader didn't match the cert (or the value field
+            // errored) — re-fetch the value with the cert's real filter.
+            const assetData = await altPost("AssetDetails", { id: cert.asset.id, tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany, autograph: null } });
+            price = assetData.data?.asset?.altValueInfo?.currentAltValue ?? null;
+            window._altStats.extra++;
+          }
+          const cardPops = Array.isArray(cert.asset.cardPops) ? cert.asset.cardPops : [];
+          const result = buildAltResult(cert, price, cardPops);
+          altCache.set(certNumber, result);
+          return result;
+        }
+        // Cert came back null with no errors: this cert isn't indexed by ALT
+        // (CGC certs never are). Cache the miss — without it every such card
+        // re-queried ALT on every load and failed every time.
+        if (!full.errors) { altCache.set(certNumber, null); return null; }
+        // schema rejected the combined query — fall through to the legacy path
+      }
+
+      // Legacy path: 3 round trips (Cert, then AssetDetails + AssetCardPops)
+      window._altStats.legacy++;
+      const certData = await altPost("Cert", { certNumber });
+      const cert = certData.data?.cert;
+      if (!cert?.asset?.id) { altCache.set(certNumber, null); return null; }
+      const [assetData, popsData] = await Promise.all([
+        altPost("AssetDetails", { id: cert.asset.id, tsFilter: { gradeNumber: cert.gradeNumber, gradingCompany: cert.gradingCompany, autograph: null } }),
+        altPost("AssetCardPops", { id: cert.asset.id }),
+      ]);
+      const cardPops = popsData.data?.asset?.cardPops ?? [];
+      const result = buildAltResult(cert, assetData.data?.asset?.altValueInfo?.currentAltValue ?? null, cardPops);
+      altCache.set(certNumber, result);
+      return result;
+    } catch { return null; }
+  }
+
+  let solUsd = null;
+
+  async function getSolPrice() {
+    if (solUsd !== null) return solUsd;
+    try {
+      const res = await fetch(`${WORKER_URL}/sol-price`);
+      const data = await res.json();
+      solUsd = data.usd ?? null;
+    } catch { solUsd = null; }
+    return solUsd;
+  }
+
+  function updateAltCell(certNumber, result, ccPriceUsdc) {
+    const priceCell = document.querySelector(`.alt-price[data-cert="${certNumber}"]`);
+    const deltaCell = document.querySelector(`.alt-delta[data-cert="${certNumber}"]`);
+    const pctCell = document.querySelector(`.alt-pct[data-cert="${certNumber}"]`);
+    const popCell = document.querySelector(`.pop-count[data-cert="${certNumber}"]`);
+    const displayPop = result?.psaPop ?? result?.pop;
+  if (popCell) popCell.textContent = displayPop != null ? displayPop : "—";
+    if (!priceCell) return;
+    if (!result?.price) {
+      priceCell.textContent = "—";
+      if (pctCell) pctCell.textContent = "";
+      return;
+    }
+    const altPrice = Number(result.price);
+    const url = `https://alt.xyz/itm/${result.assetId}/research`;
+    priceCell.innerHTML = `<a href="${url}" target="_blank" rel="noopener" class="alt-link">$${altPrice.toFixed(2)}</a>`;
+    if (ccPriceUsdc != null) {
+      const delta = altPrice - ccPriceUsdc;
+      const pct = (delta / ccPriceUsdc) * 100;
+      const sign = delta >= 0 ? "+" : "";
+      const cls = delta >= 0 ? "delta-pos" : "delta-neg";
+      if (deltaCell) deltaCell.innerHTML = `<span class="${cls}">${sign}$${Math.abs(delta).toFixed(2)}</span>`;
+      if (pctCell) pctCell.innerHTML = `<span class="${cls}">${sign}${Math.abs(pct).toFixed(1)}%</span>`;
+    }
+  }
+
+  // ── Load progress pill ───────────────────────────────────────────────
+  // Individual cells show a skeleton bar, but that only tells you a given
+  // cell is pending. This says which sources are still running overall.
+  const loadProgress = { ALT: null, CL: null, SD: null };
+
+  function renderLoadProgress() {
+    const el = document.getElementById("load-progress");
+    if (!el) return;
+    const active = Object.entries(loadProgress).filter(([, v]) => v && v.done < v.total);
+    if (!active.length) { el.classList.remove("visible"); return; }
+    el.innerHTML = `<span class="spinner"></span>` + active
+      .map(([src, v]) => `<span class="lp-item lp-${src.toLowerCase()}">${src} ${v.done}/${v.total}</span>`)
+      .join("");
+    el.classList.add("visible");
+  }
+
+  function progressStart(src, total) {
+    loadProgress[src] = total > 0 ? { done: 0, total } : null;
+    renderLoadProgress();
+  }
+  function progressTick(src) {
+    const v = loadProgress[src];
+    if (v) { v.done++; renderLoadProgress(); }
+  }
+  function progressEnd(src) {
+    loadProgress[src] = null;
+    renderLoadProgress();
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  async function fetchAltPrices(cards, concurrency = 8) {
+    const rate = await getSolPrice();
+    await getJpyRate();
+    const certPrices = new Map();
+    for (const c of cards) {
+      if (!c.gradingID) continue;
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && rate ? raw * rate : null;
+      if (usdc !== null) certPrices.set(c.gradingID, usdc);
+    }
+    const certCards = new Map(); // cert → row (for the combined-query tsFilter guess)
+    for (const c of cards) {
+      if (c.gradingID && !certCards.has(c.gradingID)) certCards.set(c.gradingID, c);
+    }
+    const certs = [...certCards.keys()];
+    progressStart("ALT", certs.length);
+    try {
+    for (let i = 0; i < certs.length; i += concurrency) {
+      await Promise.all(
+        certs.slice(i, i + concurrency).map(async cert => {
+          const result = await fetchAltPrice(cert, certCards.get(cert));
+          progressTick("ALT");
+          const usdc = certPrices.get(cert);
+          updateAltCell(cert, result, usdc);
+          for (const c of allRows) {
+            if (c.gradingID !== cert) continue;
+            if (result?.cardName) {
+              c._altCardName = result.cardName;
+              const nameCell = document.querySelector(`.card-name-cell[data-cert="${cert}"]`);
+              if (nameCell) { const a = nameCell.querySelector('a'); if (a) a.textContent = result.cardName; }
+            }
+            if (result?.cardNumber) c._altCardNumber = normalizeCardNum(result.cardNumber);
+            if (result?.psaPop != null || result?.pop != null) c._altPop = result.psaPop ?? result.pop;
+            if (result?.price != null) {
+              const altPrice = Number(result.price);
+              c._altPrice = altPrice;
+              c._altDelta = usdc != null ? altPrice - usdc : null;
+              c._altPct   = usdc != null ? ((altPrice - usdc) / usdc) * 100 : null;
+            }
+          }
+        })
+      );
+    }
+    } finally { progressEnd("ALT"); }
+    savePriceCache();
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── CardLadder price fetching ────────────────────────────────────────
+  const clCache = new Map(); // cert → result | null
+
+  // CardLadder grader param: psa/bgs/cgc/sgc — TAG/AGS unsupported
+  function clGrader(c) {
+    const g = (c.gradingCompany || "").toUpperCase();
+    if (!g || g.startsWith("PSA")) return "psa";
+    if (g.startsWith("BGS") || g.startsWith("BECK")) return "bgs";
+    if (g.startsWith("CGC")) return "cgc";
+    if (g.startsWith("SGC")) return "sgc";
+    return null;
+  }
+
+  // In-flight requests, so overlapping triggers (paging, filtering, an explicit
+  // refresh) never spend two CardLadder requests on the same cert.
+  const clInFlight = new Map();
+
+  function fetchClPrice(certNumber, grader, fresh = false) {
+    if (clCache.has(certNumber)) return Promise.resolve(clCache.get(certNumber));
+    const existing = clInFlight.get(certNumber);
+    if (existing) return existing;
+    const p = clFetchOne(certNumber, grader, fresh)
+      .finally(() => clInFlight.delete(certNumber));
+    clInFlight.set(certNumber, p);
+    return p;
+  }
+
+  async function clFetchOne(certNumber, grader, fresh) {
+    try {
+      // Bounded so one stalled lookup can't hold up its whole batch; an
+      // aborted call just stays uncached and is retried later.
+      const res = await fetch(
+        `${WORKER_URL}/cardladder-price?cert=${encodeURIComponent(certNumber)}&grader=${grader}${fresh ? "&fresh=1" : ""}`,
+        { signal: AbortSignal.timeout(15000) }
+      );
+      const data = await res.json();
+      if (data.quotaExceeded) {
+        // Daily quota won't recover until tomorrow — cache so we stop retrying.
+        const result = { price: null, quotaExceeded: true, _t: Date.now() };
+        clCache.set(certNumber, result);
+        return result;
+      }
+      if (data.error) return null; // transient failure — don't cache, retry next load
+      const result = data.clPrice != null ? {
+        price: data.clPrice,
+        lastSalePrice: data.lastSalePrice ?? null,
+        lastSaleDate: data.lastSaleDate ?? null,
+        salesCount: data.salesCount ?? null,
+        avgCount: data.avgCount ?? null,
+        _t: Date.now(),
+      } : { price: null, _t: Date.now() };
+      clCache.set(certNumber, result);
+      return result;
+    } catch { return null; } // network error — don't cache, retry next load
+  }
+
+  function updateClCell(certNumber, result, ccPriceUsdc) {
+    const priceCell = document.querySelector(`.cl-price[data-cert="${certNumber}"]`);
+    const deltaCell = document.querySelector(`.cl-delta[data-cert="${certNumber}"]`);
+    const pctCell = document.querySelector(`.cl-pct[data-cert="${certNumber}"]`);
+    if (!priceCell) return;
+    if (!result?.price) {
+      priceCell.innerHTML = result?.quotaExceeded
+        ? `<span title="CardLadder daily request limit reached — try again tomorrow">—</span>`
+        : "—";
+      if (deltaCell) deltaCell.textContent = "";
+      if (pctCell) pctCell.textContent = "";
+      return;
+    }
+    const clPrice = Number(result.price);
+    const titleParts = [];
+    if (result.avgCount != null) titleParts.push(`avg of ${result.avgCount} sale${result.avgCount === 1 ? "" : "s"}`);
+    if (result.lastSalePrice != null && result.lastSaleDate) {
+      titleParts.push(`last sale $${Number(result.lastSalePrice).toFixed(2)} on ${result.lastSaleDate.slice(0, 10)}`);
+    }
+    if (result.salesCount != null) titleParts.push(`${result.salesCount} recent sales`);
+    const title = titleParts.join(", ");
+    priceCell.innerHTML = `<span class="cl-link" title="${esc(title)}">$${clPrice.toFixed(2)}</span>`;
+    if (ccPriceUsdc != null) {
+      const delta = clPrice - ccPriceUsdc;
+      const pct = (delta / ccPriceUsdc) * 100;
+      const sign = delta >= 0 ? "+" : "";
+      const cls = delta >= 0 ? "delta-pos" : "delta-neg";
+      if (deltaCell) deltaCell.innerHTML = `<span class="${cls}">${sign}$${Math.abs(delta).toFixed(2)}</span>`;
+      if (pctCell) pctCell.innerHTML = `<span class="${cls}">${sign}${Math.abs(pct).toFixed(1)}%</span>`;
+    }
+  }
+
+  function repopulateClCells(rows) {
+    const rendered = renderedCertSet();
+    for (const c of rows) {
+      if (!c.gradingID || !clCache.has(c.gradingID)) continue;
+      const result = clCache.get(c.gradingID);
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+      if (rendered.has(c.gradingID)) updateClCell(c.gradingID, result, usdc);
+      if (result?.price != null) {
+        const clPrice = Number(result.price);
+        c._clPrice = clPrice;
+        c._clDelta = usdc != null ? clPrice - usdc : null;
+        c._clPct = usdc != null ? ((clPrice - usdc) / usdc) * 100 : null;
+      }
+    }
+  }
+
+  async function fetchClPrices(cards, concurrency = 3, fresh = false) {
+    if (!sourceEnabled("cl")) return; // CL columns hidden — don't spend CardLadder's daily quota
+    const rate = await getSolPrice();
+    const certPrices = new Map();
+    for (const c of cards) {
+      if (!c.gradingID) continue;
+      const cur = c.listing?.currency;
+      const raw = Number(c.listing?.price ?? 0);
+      const usdc = cur === "USDC" ? raw : cur === "SOL" && rate ? raw * rate : null;
+      if (usdc !== null) certPrices.set(c.gradingID, usdc);
+    }
+    const seen = new Set();
+    const entries = [];
+    for (const c of cards) {
+      if (!c.gradingID || seen.has(c.gradingID)) continue;
+      seen.add(c.gradingID);
+      const grader = clGrader(c);
+      if (!grader) { updateClCell(c.gradingID, null, null); continue; }
+      entries.push({ cert: c.gradingID, grader });
+    }
+    progressStart("CL", entries.length);
+    try {
+    for (let i = 0; i < entries.length; i += concurrency) {
+      await Promise.all(
+        entries.slice(i, i + concurrency).map(async ({ cert, grader }) => {
+          const result = await fetchClPrice(cert, grader, fresh);
+          progressTick("CL");
+          const usdc = certPrices.get(cert);
+          updateClCell(cert, result, usdc);
+          for (const c of allRows) {
+            if (c.gradingID !== cert) continue;
+            if (result?.price != null) {
+              const clPrice = Number(result.price);
+              c._clPrice = clPrice;
+              c._clDelta = usdc != null ? clPrice - usdc : null;
+              c._clPct   = usdc != null ? ((clPrice - usdc) / usdc) * 100 : null;
+            }
+          }
+        })
+      );
+    }
+    } finally { progressEnd("CL"); }
+    savePriceCache();
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── SNKRDUNK price fetching ──────────────────────────────────────────
+  const snkrdunkCache = new Map(); // key: `${kw}|${psaGrade}`
+  let jpyUsd = null;
+
+  async function getJpyRate() {
+    if (jpyUsd !== null) return jpyUsd;
+    try {
+      const res = await fetch(`${WORKER_URL}/jpy-rate`);
+      const data = await res.json();
+      jpyUsd = data.usdPerJpy ?? null;
+    } catch { jpyUsd = null; }
+    return jpyUsd;
+  }
+
+  // Build SNKRDUNK keywords from the CC clean card name field (e.g. "Shining Lugia-Holo" → "Shining Lugia 058")
+  function snkrdunkKeywordsFromClean(cleanName, itemName) {
+    const numMatch = itemName.match(/#(\d+)/);
+    const num = numMatch ? numMatch[1].padStart(3, "0") : "";
+    // Strip PSA/grading company suffixes and holo/rarity suffixes (CC "Card Name" field includes them)
+    const baseName = cleanName.replace(/\s*-.*$/, "").replace(/\s*(PSA|BGS|CGC|SGC).*$/i, "").trim();
+    return `${baseName} ${num}`.trim();
+  }
+
+  // Extract "CardName num" from CC itemName — forward parse, then backward fallback for
+  // non-standard formats like "2017 #58 JAPANESE SUN & MOON ... SHINING LUGIA PSA 10"
+  function snkrdunkKeywords(itemName) {
+    const m = itemName.match(/#(\d+)\s+(.+)/);
+    if (!m) return itemName;
+    const num = m[1].padStart(3, "0");
+    const rest = m[2];
+    // "Full Art/Braixen" → take the part after "/"
+    const slashMatch = rest.match(/\b\w+\/(\w+)/);
+    if (slashMatch) return `${slashMatch[1]} ${num}`.trim();
+    const stopWords = new Set(["psa","bgs","cgc","sgc","japanese","english","holo","reverse","sar","sr","ur","rr","hr","chr","csr","full","secret","pokemon","magic"]);
+    const words = rest.split(/\s+/);
+    // Forward: take 1-2 name words from right after the card number
+    // Stop at a dash — everything after is a rarity/variant suffix (e.g. "Squirtle-Holo" → "Squirtle")
+    const fwdWords = [];
+    for (const w of words) {
+      if (stopWords.has(w.toLowerCase())) break;
+      if (w.includes("-")) { fwdWords.push(w.split("-")[0]); break; }
+      fwdWords.push(w);
+      if (fwdWords.length >= 2) break;
+    }
+    if (fwdWords.length > 0) return `${fwdWords.join(" ")} ${num}`.trim();
+    // Backward fallback: find grade marker and take 1-2 words that precede it
+    const psaIdx = words.findIndex(w => /^(psa|bgs|cgc|sgc)$/i.test(w));
+    if (psaIdx > 0) {
+      const bwdWords = [];
+      for (let i = psaIdx - 1; i >= 0 && bwdWords.length < 2; i--) {
+        const w = words[i];
+        if (stopWords.has(w.toLowerCase()) || /^[&]$/.test(w)) break;
+        bwdWords.unshift(w);
+      }
+      if (bwdWords.length > 0) return `${bwdWords.join(" ")} ${num}`.trim();
+    }
+    return num;
+  }
+
+  // Bold the card name + number extracted by snkrdunkKeywords within the full itemName display
+  function boldCardName(itemName) {
+    const kw = snkrdunkKeywords(itemName);
+    const numMatch = kw.match(/(\d+)$/);
+    if (!numMatch) return esc(itemName);
+    const num = numMatch[1];
+    const nameOnly = kw.slice(0, -num.length).trim();
+    let result = esc(itemName);
+    result = result.replace(`#${num}`, `<b>#${num}</b>`);
+    if (nameOnly) {
+      const pat = nameOnly.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      result = result.replace(new RegExp(pat), `<b>${esc(nameOnly)}</b>`);
+    }
+    return result;
+  }
+
+  function updateSnkrdunkCell(certNumber, result) {
+    const cell = document.querySelector(`.snkrdunk-price[data-cert="${certNumber}"]`);
+    const deltaCell = document.querySelector(`.snkrdunk-delta[data-cert="${certNumber}"]`);
+    const pctCell = document.querySelector(`.snkr-pct[data-cert="${certNumber}"]`);
+    if (!cell) return;
+    // Hovering anywhere in the cell shows the preview, not just the link text.
+    if (result?.image) {
+      cell.setAttribute("data-img", result.image);
+      cell.setAttribute("data-img-kind", "sd");
+    } else {
+      cell.removeAttribute("data-img");
+      cell.removeAttribute("data-img-kind");
+    }
+    if (!result?.price) {
+      if (result?.priceType === "na" && result?.apparelId) {
+        const naUrl = `https://snkrdunk.com/apparels/${result.apparelId}`;
+        cell.innerHTML = `<a href="${naUrl}" target="_blank" rel="noopener" style="color:#555">N/A</a>`;
+      } else {
+        cell.textContent = "—";
+      }
+      if (deltaCell) deltaCell.textContent = "";
+      if (pctCell) pctCell.textContent = "";
+      return;
+    }
+    const jpy = result.price;
+    const usdSnkr = jpyUsd ? jpy * jpyUsd : null;
+    const url = `https://snkrdunk.com/apparels/${result.apparelId}`;
+    const label = result.priceType === "ask" ? " ask" : "";
+    const usdPart = usdSnkr != null ? `$${usdSnkr.toFixed(0)}${label} ` : "";
+    cell.innerHTML = `<a href="${url}" target="_blank" rel="noopener">${usdPart}<span class="price-sub">(¥${jpy.toLocaleString()})</span></a>`;
+    if (usdSnkr != null) {
+      const row = allRows.find(c => c.gradingID === certNumber);
+      if (row) {
+        const cur = row.listing?.currency;
+        const raw = Number(row.listing?.price ?? 0);
+        const ccUsd = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+        if (ccUsd != null) {
+          const delta = usdSnkr - ccUsd;
+          const pct = (delta / ccUsd) * 100;
+          row._snkrdunkDelta = delta;
+          row._snkrdunkPct = pct;
+          const sign = delta >= 0 ? "+" : "";
+          const cls = delta >= 0 ? "delta-pos" : "delta-neg";
+          if (deltaCell) deltaCell.innerHTML = `<span class="${cls}">${sign}$${Math.abs(delta).toFixed(0)}</span>`;
+          if (pctCell) pctCell.innerHTML = `<span class="${cls}">${sign}${Math.abs(pct).toFixed(1)}%</span>`;
+        }
+      }
+    }
+  }
+
+  async function fetchSnkrdunkPrices(cards, concurrency = 4) {
+    if (sdUnavailable()) return; // English filter — no row can have an SD price
+    await getJpyRate();
+
+    // Deduplicate by computed keywords+grade — multiple CC listings of the same card
+    // often have slightly different itemName strings but resolve to identical searches
+    const kwGroups = new Map();
+    for (const c of cards) {
+      if (!c.gradingID) continue;
+      if (c.language && c.language.toLowerCase() !== "japanese") continue;
+      const psaGrade = cardToPsaGrade(c);
+      let kw;
+      if (c._altCardName && c._altCardNumber) {
+        kw = `${c._altCardName} ${c._altCardNumber}`;
+      } else {
+        const cleanName = c.name || c.cardName || null;
+        kw = cleanName ? snkrdunkKeywordsFromClean(cleanName, c.itemName) : snkrdunkKeywords(c.itemName);
+      }
+      const mb = isMasterBall(c);
+      const year = itemYear(c);
+      const kwKey = snkrdunkKwKey(c);
+      if (!kwGroups.has(kwKey)) kwGroups.set(kwKey, { kw, psaGrade, mb, year, kwKey, grpCards: [] });
+      kwGroups.get(kwKey).grpCards.push(c);
+    }
+
+    const entries = [...kwGroups.values()];
+    progressStart("SD", entries.length);
+    try {
+    for (let i = 0; i < entries.length; i += concurrency) {
+      await Promise.all(
+        entries.slice(i, i + concurrency).map(async ({ kw, psaGrade, mb, year, kwKey, grpCards }) => {
+          let result;
+          if (snkrdunkCache.has(kwKey)) {
+            result = snkrdunkCache.get(kwKey);
+          } else {
+            try {
+              const res = await fetch(`${WORKER_URL}/snkrdunk/price?keywords=${encodeURIComponent(kw)}&grade=${encodeURIComponent(psaGrade)}&masterball=${mb ? "1" : ""}${year ? `&year=${year}` : ""}`);
+              const data = await res.json();
+              result = (data.price != null || data.apparelId != null)
+                ? { price: data.price ?? null, apparelId: data.apparelId, priceType: data.priceType, image: data.image ?? null }
+                : null;
+            } catch { result = null; }
+            snkrdunkCache.set(kwKey, result);
+          }
+          progressTick("SD");
+          for (const c of grpCards) {
+            updateSnkrdunkCell(c.gradingID, result);
+            const row = allRows.find(r => r.gradingID === c.gradingID);
+            if (row) row._snkrdunkPrice = result?.price ?? null;
+          }
+        })
+      );
+    }
+    } finally { progressEnd("SD"); }
+    savePriceCache();
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── Beezie marketplace integration ──────────────────────────────────
+  function beezieAttr(item, traitType) {
+    return item.metadata?.attributes?.find(a => a.trait_type === traitType)?.trait_value ?? null;
+  }
+
+  function normalizeBeezieCard(item) {
+    const grader      = beezieAttr(item, "grader") ?? "";
+    const grade       = beezieAttr(item, "grade") ?? "";
+    const year        = beezieAttr(item, "year") ?? "";
+    const pokemonName = beezieAttr(item, "pokemon name") ?? "";
+    const setName     = beezieAttr(item, "set name") ?? "";
+    const cardNumber  = beezieAttr(item, "card number") ?? "";
+    const serial      = beezieAttr(item, "serial") ?? String(item.tokenId ?? item.id);
+    const language    = beezieAttr(item, "language") ?? "";
+    const createdAtMs = item.SellOrder?.createdAt;
+    const createdAtIso = createdAtMs ? new Date(createdAtMs).toISOString() : null;
+    const priceUsdc   = item.SellOrder?.amountUSDC ? parseFloat(item.SellOrder.amountUSDC) : null;
+    const cardUrl = `https://beezie.com/marketplace/collectible/${item.tokenId ?? item.id}`;
+    return {
+      nftAddress: `beezie-${item.tokenId ?? item.id}`,
+      gradingID: serial,
+      gradingCompany: grader,
+      grade: grade,
+      year: parseInt(year) || null,
+      language: language,
+      cardName: pokemonName,
+      name: pokemonName,
+      set: setName,
+      itemName: item.metadata?.name ?? "",
+      listing: { price: priceUsdc, currency: "USDC", createdAt: createdAtIso, updatedAt: createdAtIso },
+      _source: "beezie",
+      _cardUrl: cardUrl,
+      _image: pickCardImage(item),
+      _altCardName: pokemonName,
+    };
+  }
+
+  // Beezie selects the game by numeric id, and its listings carry no category
+  // field — so an unmapped value can't be caught client-side. Anything not
+  // listed here is refused rather than silently returning the wrong game,
+  // which is how One Piece used to come back as Pokemon.
+  const BEEZIE_CATEGORY_IDS = {
+    "Pokemon": "1",
+    "One Piece": "2",
+  };
+
+  // Which categories each marketplace can actually serve. Collector Crypt takes
+  // the category as a free-text param so it offers everything; Beezie needs a
+  // numeric id we only have for two games; the Phygitals request hardcodes
+  // Pokemon. Options outside this list are hidden rather than left selectable,
+  // since picking one used to return the wrong game with no visible sign.
+  const PLATFORM_CATEGORIES = {
+    beezie: Object.keys(BEEZIE_CATEGORY_IDS),
+    phygitals: ["Pokemon", "One Piece"],
+  };
+
+  function syncCategoryOptions() {
+    const src = document.getElementById("source")?.value;
+    const sel = document.getElementById("categories");
+    if (!sel) return;
+    const allowed = PLATFORM_CATEGORIES[src] ?? null;   // null = no restriction
+    for (const opt of sel.options) {
+      const blocked = allowed !== null && !allowed.includes(opt.value);
+      opt.hidden = blocked;
+      opt.disabled = blocked;
+    }
+    if (sel.selectedOptions[0]?.disabled) {
+      const first = [...sel.options].find(o => !o.disabled);
+      if (first) sel.value = first.value;
+    }
+  }
+
+  async function fetchBeezieListings() {
+    const btn = document.getElementById("fetch-btn");
+    const status = document.getElementById("status");
+    btn.disabled = true;
+
+    const category = document.getElementById("categories").value;
+    const categoryId = BEEZIE_CATEGORY_IDS[category];
+    if (!categoryId) {
+      status.textContent = `Beezie has no known category id for ${category} — only ${Object.keys(BEEZIE_CATEGORY_IDS).join(" and ")} are mapped so far.`;
+      document.getElementById("empty-msg").style.display = "block";
+      btn.disabled = false;
+      return;
+    }
+
+    status.textContent = "Fetching Beezie listings…";
+    document.getElementById("results-body").innerHTML = "";
+    document.getElementById("empty-msg").style.display = "none";
+    allRows = [];
+
+    // Build server-side filters from current dropdown selections
+    const filters = [];
+    const gc = document.getElementById("gradingCompany")?.value;
+    if (gc) filters.push({ filterName: "grader", value: gc === "Beckett" ? "BGS" : gc });
+    for (const g of getSelectedGrades()) {
+      const n = (g.match(/\d+(?:\.\d+)?/g) || [])[0];
+      if (n) filters.push({ filterName: "grade", value: n });
+    }
+    const lang = document.getElementById("language")?.value;
+    if (lang) filters.push({ filterName: "language", value: lang });
+    const searchTerm = marketplaceSearchTerm();
+    if (searchTerm) filters.push({ filterName: "name", value: apiSearchTerm(searchTerm) });
+
+    const pageSize = 40;
+    let page = 0;
+    let cards = [];
+    let fetchedCount = 0;
+    try {
+      await getSolPrice();
+      await getJpyRate();
+      const limit = loadLimit();
+      while (page <= 50 && cards.length < limit) {
+        const res = await fetch(`${WORKER_URL}/beezie/listings`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ categoryId, page: String(page), pageSize: String(pageSize), filters, saleStatus: "all", sellOrderDateOrder: "DESC" }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rawItems = data.dropItems || [];
+        fetchedCount += rawItems.length;
+        cards = cards.concat(filterBySearch(
+          rawItems.filter(item => item.SellOrder).map(normalizeBeezieCard), searchTerm));
+        status.textContent = `${cards.length} Beezie listings…`;
+        if (rawItems.length < pageSize) break;
+        page++;
+      }
+      if (cards.length > limit) cards = cards.slice(0, limit);
+      allRows = cards;
+      currentPage = 1;
+      applyLiveFilters();
+      if (!cards.length) document.getElementById("empty-msg").style.display = "block";
+      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Beezie listings");
+      window.scrollTo(0, 0);
+      enableRefreshButtons();
+      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
+      fetchClForVisible();
+    } catch (e) {
+      status.textContent = `Beezie error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── Phygitals marketplace integration ───────────────────────────────
+  function normalizePhygitalsCard(item) {
+    const meta = item.metadata ?? [];  // [{key, value}, ...]
+    const attr = name => meta.find(m => (m.key ?? "").toLowerCase() === name.toLowerCase())?.value ?? null;
+    const grader   = attr("Grader") ?? "";
+    const gradeRaw = attr("Grade") ?? "";
+    // "CGC 9.0" → "9.0", "PSA 10" → "10" — strip leading grader prefix
+    const grade    = gradeRaw.replace(/^[A-Za-z]+\s*/, "").trim();
+    const language = attr("Language") ?? "";
+    const category = attr("Category") ?? "";
+    const set      = attr("Set") ?? attr("Set Name") ?? "";
+    const yearRaw  = attr("Year") ?? attr("Set Release Date") ?? "";
+    const title    = attr("Title") ?? item.name ?? "";
+    const serial   = attr("Cert Number") ?? attr("Cert") ?? attr("Serial") ?? "";
+    // price is micro-USDC (6 decimal places)
+    const priceUsdc = item.price != null ? parseFloat(item.price) / 1_000_000 : null;
+    const createdAt = item.createdAt ?? item.listedAt ?? null;
+    const isoDate   = createdAt ? new Date(createdAt).toISOString() : null;
+    const address   = item.address ?? item.mintAddress ?? "";
+    const cardUrl   = `https://www.phygitals.com/card/${address}`;
+    return {
+      nftAddress:     `phygitals-${address}`,
+      gradingID:      serial || address,
+      gradingCompany: grader,
+      grade,
+      year:           parseInt(yearRaw) || null,
+      language,
+      cardName:       "",
+      name:           "",
+      set,
+      itemName:       title,
+      listing:        { price: priceUsdc, currency: "USDC", createdAt: isoDate, updatedAt: isoDate },
+      category,
+      _source:        "phygitals",
+      _cardUrl:       cardUrl,
+      _image:         pickCardImage(item),
+      _altCardName:   "",
+    };
+  }
+
+  async function fetchPhygitalsListings() {
+    const searchTerm = marketplaceSearchTerm();
+    const wantCategory = document.getElementById("categories").value;
+    const btn = document.getElementById("fetch-btn");
+    const status = document.getElementById("status");
+    btn.disabled = true;
+    status.textContent = "Fetching Phygitals listings…";
+    document.getElementById("results-body").innerHTML = "";
+    document.getElementById("empty-msg").style.display = "none";
+    allRows = [];
+
+    // Build server-side metadataConditions from dropdown selections
+    const metaCond = {
+      "set": [], "grader": [], "grade": [], "rarity": [], "type": [],
+      "set release date": [], "grade type": ["Graded Cards"],
+      "language": [], "category": [document.getElementById("categories").value],
+    };
+
+    const gc = document.getElementById("gradingCompany")?.value;
+    const graderAbbrev = gc === "Beckett" ? "BGS" : gc;
+    if (graderAbbrev) metaCond["grader"] = [graderAbbrev];
+
+    for (const g of getSelectedGrades()) {
+      // Phygitals grade format: "{GRADER} {N}.0" for whole numbers, "{GRADER} {N.M}" for decimals
+      const n = (g.match(/\d+(?:\.\d+)?/) || [])[0];
+      if (n != null) {
+        const num = parseFloat(n);
+        const formatted = Number.isInteger(num) ? `${num}.0` : String(num);
+        metaCond["grade"].push(graderAbbrev ? `${graderAbbrev} ${formatted}` : formatted);
+      }
+    }
+    metaCond["grade"] = [...new Set(metaCond["grade"])];
+
+    const lang = document.getElementById("language")?.value;
+    if (lang) metaCond["language"] = [lang];
+
+    const collAddresses = ["BSG6DyEihFFtfvxtL9mKYsvTwiZXB1rq5gARMTJC2xAM", "phygZDQZJZVHvJGYPGoKPYUtXw7mstSYtTtcuh8LJcC"];
+    const pageSize = 48;
+    let page = 0;
+    let cards = [];
+    let fetchedCount = 0;
+    try {
+      await getSolPrice();
+      await getJpyRate();
+      const limit = loadLimit();
+      while (page <= 100 && cards.length < limit) {
+        // Build query string to match Phygitals URL format:
+        // metadataConditions: encode only {, }, " and space (as +); leave :, ,, [ ] literal
+        // priceRange/fmvRange: ["",""] with encoded quotes; collectionAddresses: encode only quotes
+        const metaRaw = JSON.stringify(metaCond)
+          .replace(/{/g, '%7B').replace(/}/g, '%7D')
+          .replace(/"/g, '%22').replace(/ /g, '+');
+        const collRaw = JSON.stringify(collAddresses).replace(/"/g, '%22');
+        const qs = `searchTerm=${encodeURIComponent(apiSearchTerm(searchTerm))}&sortBy=price-low-high&itemsPerPage=${pageSize}&page=${page}&metadataConditions=${metaRaw}&priceRange=[%22%22,%22%22]&fmvRange=[%22%22,%22%22]&listedStatus=listed&collectionAddresses=${collRaw}`;
+        const res = await fetch(`${WORKER_URL}/phygitals/listings?${qs}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const rawItems = data.listings ?? data.data ?? data.items ?? [];
+        fetchedCount += rawItems.length;
+        // Only "Pokemon" is a confirmed category string for this API, so the
+        // value sent for anything else is inferred. Re-check each listing's own
+        // category rather than trusting the filter was understood; rows that
+        // don't publish one are kept, since there's nothing to judge them on.
+        const newCards = filterBySearch(
+          rawItems.map(normalizePhygitalsCard)
+            .filter(c => c.listing?.price != null)
+            .filter(c => !c.category || !wantCategory ||
+                         c.category.toLowerCase() === wantCategory.toLowerCase()),
+          searchTerm);
+        cards = cards.concat(newCards);
+        status.textContent = `${cards.length} Phygitals listings…`;
+        const total = data.amount ?? data.total ?? data.totalCount ?? data.totalItems ?? 0;
+        const totalPages = data.totalPages ?? data.total_pages ?? Math.ceil(total / pageSize);
+        if (rawItems.length < pageSize || page >= totalPages - 1) break;
+        page++;
+      }
+      if (cards.length > limit) cards = cards.slice(0, limit);
+      allRows = cards;
+      currentPage = 1;
+      applyLiveFilters();
+      if (!cards.length) document.getElementById("empty-msg").style.display = "block";
+      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Phygitals listings");
+      window.scrollTo(0, 0);
+      enableRefreshButtons();
+      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
+      fetchClForVisible();
+    } catch (e) {
+      status.textContent = `Phygitals error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  async function refreshAlt() {
+    const btn = document.getElementById("refresh-alt-btn");
+    btn.disabled = true;
+    for (const c of allRows) { if (c.gradingID) altCache.delete(c.gradingID); }
+    for (const c of allRows) {
+      const cert = c.gradingID;
+      const altCell = document.querySelector(`.alt-price[data-cert="${cert}"]`);
+      if (altCell) altCell.innerHTML = '<span class="alt-loading">···</span>';
+      for (const cls of ["alt-delta","alt-pct"]) {
+        const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
+        if (el) el.textContent = "";
+      }
+    }
+    await fetchAltPrices(allRows);
+    btn.disabled = false;
+  }
+
+  async function refreshCl() {
+    const btn = document.getElementById("refresh-cl-btn");
+    btn.disabled = true;
+    // Drop cached values for every row so other pages re-fetch when visited,
+    // but only spend requests on the page actually being looked at.
+    for (const c of allRows) { if (c.gradingID) clCache.delete(c.gradingID); }
+    for (const c of allRows) {
+      const cert = c.gradingID;
+      const clCell = document.querySelector(`.cl-price[data-cert="${cert}"]`);
+      if (clCell) clCell.innerHTML = '<span class="alt-loading">···</span>';
+      for (const cls of ["cl-delta","cl-pct"]) {
+        const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
+        if (el) el.textContent = "";
+      }
+    }
+    const targets = (visibleRows.length ? visibleRows : allRows)
+      .filter(c => c.gradingID && clGrader(c));
+    await fetchClPrices(targets, 3, true);
+    btn.disabled = false;
+  }
+
+  async function refreshSnkr() {
+    const btn = document.getElementById("refresh-snkr-btn");
+    btn.disabled = true;
+    const snkrKeys = new Set(allRows.map(c => snkrdunkKwKey(c)));
+    for (const k of snkrKeys) snkrdunkCache.delete(k);
+    for (const c of allRows) {
+      const cert = c.gradingID;
+      for (const cls of ["snkrdunk-delta","snkr-pct"]) {
+        const el = document.querySelector(`.${cls}[data-cert="${cert}"]`);
+        if (el) el.textContent = "";
+      }
+      const snkrCell = document.querySelector(`.snkrdunk-price[data-cert="${cert}"]`);
+      if (snkrCell) snkrCell.innerHTML = '<span class="alt-loading">···</span>';
+    }
+    await fetchSnkrdunkPrices(allRows);
+    btn.disabled = false;
+  }
+
+  function saveCardCache(rows, filters, page, pages, statusText) {
+    try {
+      localStorage.setItem("cardListCache", JSON.stringify({ rows, filters, page, pages, statusText, savedAt: Date.now() }));
+    } catch {} // quota exceeded — skip silently
+  }
+
+  // CL results persist in localStorage (24h TTL) rather than sessionStorage:
+  // CardLadder has a small daily quota, so re-spending it after every browser
+  // restart on certs we already looked up is pure waste. Quota-exceeded
+  // markers are session-only — the quota resets daily.
+  const CL_CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+
+  function savePriceCache() {
+    try {
+      sessionStorage.setItem("altCacheData", JSON.stringify([...altCache.entries()]));
+      sessionStorage.setItem("snkrdunkCacheData", JSON.stringify([...snkrdunkCache.entries()]));
+      const clEntries = [...clCache.entries()].filter(([, v]) => v && !v.quotaExceeded);
+      localStorage.setItem("clCacheData", JSON.stringify(clEntries));
+    } catch {}
+  }
+
+  function loadClCache() {
+    try {
+      const entries = JSON.parse(localStorage.getItem("clCacheData") || "[]");
+      const cutoff = Date.now() - CL_CACHE_TTL_MS;
+      for (const [k, v] of entries) {
+        if (v && v._t && v._t > cutoff) clCache.set(k, v);
+      }
+    } catch {}
+  }
+
+  async function loadCardCache() {
+    try {
+      const raw = localStorage.getItem("cardListCache");
+      if (!raw) return;
+      const cached = JSON.parse(raw);
+      if (!cached?.rows?.length) return;
+      if (cached.savedAt && Date.now() - cached.savedAt > 3600_000) return; // 1-hour TTL
+      // Restore filter selects
+      const f = cached.filters || {};
+      const filterMap = { categories: "categories", gradingCompany: "gradingCompany", language: "language", orderBy: "orderBy", step: "step", search: "marketplace-search" };
+      for (const [param, id] of Object.entries(filterMap)) {
+        const el = document.getElementById(id);
+        if (!el || f[param] == null) continue;
+        el.value = f[param];
+        // A saved value whose <option> no longer exists leaves the select
+        // blank; fall back to the first option instead of an empty filter.
+        if (el.value !== f[param] && el.options?.length) el.selectedIndex = 0;
+      }
+      syncSdAvailability(); // restored language may disable SNKRDUNK
+      // Rebuild grade options for the restored company, then restore selections
+      updateGradeOptions();
+      if (f.grade != null) {
+        const gradeValues = f.grade ? f.grade.split(",") : [];
+        document.querySelectorAll('#grade-menu input[type="checkbox"]').forEach(cb => {
+          cb.checked = gradeValues.length === 0 ? cb.value === "" : gradeValues.includes(cb.value);
+        });
+        if (!document.querySelector('#grade-menu input[type="checkbox"]:checked')) {
+          const anyBox = document.querySelector('#grade-menu input[value=""]');
+          if (anyBox) anyBox.checked = true;
+        }
+        updateGradeLabel();
+      }
+      // Restore price caches before repopulating cells
+      try {
+        const altEntries = JSON.parse(sessionStorage.getItem("altCacheData") || "[]");
+        for (const [k, v] of altEntries) altCache.set(k, v);
+        const snkrEntries = JSON.parse(sessionStorage.getItem("snkrdunkCacheData") || "[]");
+        for (const [k, v] of snkrEntries) snkrdunkCache.set(k, v);
+      } catch {}
+      allRows = cached.rows;
+      currentPage = cached.page ?? 1;
+      totalPages = cached.pages ?? 1;
+      await getSolPrice();
+      await getJpyRate();
+      if (cacheLoadAborted) return; // fetchListings was called while we were awaiting
+      updatePagination(totalPages);
+      document.getElementById("status").textContent = (cached.statusText || "") + " (cached)";
+      enableRefreshButtons();
+      applyLiveFilters();
+      // The cache holds the pre-ALT (title-matched) set, so re-refine now that
+      // restored ALT names are back on the rows.
+      refineSearchWithAltNames(allRows, allRows.length);
+      // If any Japanese cards are missing SNKRDUNK prices (e.g. key changed after alt data loaded),
+      // trigger a background fetch so they fill in without requiring a manual refresh.
+      const needsSnkr = allRows.some(c =>
+        c.gradingID && (!c.language || c.language.toLowerCase() === "japanese") &&
+        !snkrdunkCache.has(snkrdunkKwKey(c))
+      );
+      if (needsSnkr) fetchSnkrdunkPrices(allRows);
+      const needsCl = allRows.some(c => c.gradingID && clGrader(c) && !clCache.has(c.gradingID));
+      if (needsCl) fetchClForVisible();
+    } catch {}
+  }
+
+  async function refreshCardList() {
+    const pf = activePlatform();
+    if (pf !== PLATFORMS.cc) return pf.fetch();
+    previousCardPrices = new Map(allRows.filter(c => c.nftAddress).map(c => [c.nftAddress, c.listing?.updatedAt ?? c.listing?.createdAt ?? ""]));
+    await fetchListings(true, true);
+  }
+
+  // CL defaults to off: CardLadder has a small daily request quota, so its
+  // prices are only fetched while its columns are visible.
+  const SOURCE_TOGGLE_DEFAULTS = { alt: true, cl: false, snkrdunk: true };
+
+  function sourceEnabled(source) {
+    return document.getElementById(`toggle-${source}`)?.classList.contains("active") ?? false;
+  }
+
+  function syncClRefreshBtn() {
+    const btn = document.getElementById("refresh-cl-btn");
+    if (btn) btn.style.display = sourceEnabled("cl") ? "" : "none";
+  }
+
+  // SNKRDUNK is a Japanese marketplace, so it can only ever price Japanese
+  // cards. Filtering to English means no row can have an SD result — hide the
+  // columns and skip the lookups entirely rather than showing a dead column.
+  function sdUnavailable() {
+    return (document.getElementById("language")?.value || "").toLowerCase() === "english";
+  }
+
+  // Keeps the SD toggle's own "active" state as the record of user intent, and
+  // only overrides what's shown, so the preference survives switching language.
+  function syncSdAvailability() {
+    const blocked = sdUnavailable();
+    const table = document.getElementById("results-table");
+    const toggle = document.getElementById("toggle-snkrdunk");
+    const refresh = document.getElementById("refresh-snkr-btn");
+    if (table) table.classList.toggle("hide-snkrdunk", blocked || !sourceEnabled("snkrdunk"));
+    if (toggle) {
+      toggle.disabled = blocked;
+      toggle.title = blocked
+        ? "Unavailable for English cards — SNKRDUNK only lists Japanese cards"
+        : "SNKRDUNK price columns";
+    }
+    if (refresh) refresh.style.display = blocked ? "none" : "";
+  }
+
+  function onLanguageChange() {
+    syncSdAvailability();
+    if (activePlatform().clientFilter) applyLiveFilters();
+    if (!sdUnavailable() && allRows.length) fetchSnkrdunkPrices(allRows);
+  }
+
+  function initSourceToggles() {
+    let saved = {};
+    try { saved = JSON.parse(sessionStorage.getItem("sourceToggles") || "{}"); } catch {}
+    const table = document.getElementById("results-table");
+    for (const [source, def] of Object.entries(SOURCE_TOGGLE_DEFAULTS)) {
+      const on = saved[source] ?? def;
+      document.getElementById(`toggle-${source}`)?.classList.toggle("active", on);
+      table.classList.toggle(`hide-${source}`, !on);
+    }
+    syncClRefreshBtn();
+    syncSdAvailability();
+  }
+
+  function toggleSource(source) {
+    const btn = document.getElementById(`toggle-${source}`);
+    const table = document.getElementById("results-table");
+    btn.classList.toggle("active");
+    const on = btn.classList.contains("active");
+    table.classList.toggle(`hide-${source}`, !on);
+    try {
+      const saved = JSON.parse(sessionStorage.getItem("sourceToggles") || "{}");
+      saved[source] = on;
+      sessionStorage.setItem("sourceToggles", JSON.stringify(saved));
+    } catch {}
+    if (source === "cl") {
+      syncClRefreshBtn();
+      if (on && allRows.length) fetchClForVisible();
+    }
+    if (source === "snkrdunk") syncSdAvailability();
+  }
+
+  // ── Cursor-following card image preview ──────────────────────────────
+  // Any element carrying data-img gets a preview. The image is only requested
+  // on first hover, so a page of listings costs nothing until you point at one.
+  (function initHoverPreview() {
+    const panel = document.getElementById("hover-preview");
+    const img = document.getElementById("hover-preview-img");
+    if (!panel || !img) return;
+    let current = null;
+
+    const hide = () => { panel.classList.remove("visible"); current = null; };
+
+    function place(e) {
+      const pad = 18;
+      const w = panel.offsetWidth || 248;
+      const h = panel.offsetHeight || 344;
+      let x = e.clientX + pad;
+      let y = e.clientY + pad;
+      if (x + w + pad > window.innerWidth) x = e.clientX - w - pad;   // flip left near the edge
+      if (y + h + pad > window.innerHeight) y = window.innerHeight - h - pad;
+      panel.style.left = Math.max(pad, x) + "px";
+      panel.style.top = Math.max(pad, y) + "px";
+    }
+
+    document.addEventListener("mouseover", e => {
+      const target = e.target.closest?.("[data-img]");
+      if (!target) return;
+      const src = target.dataset.img;
+      if (!src) return;
+      if (src !== current) {
+        current = src;
+        panel.classList.toggle("kind-sd", target.dataset.imgKind === "sd");
+        panel.classList.toggle("kind-card", target.dataset.imgKind !== "sd");
+        // Drop the previous image immediately so it can't sit there looking
+        // like this row's card while the new one is still downloading.
+        panel.classList.add("loading");
+        img.removeAttribute("src");
+        img.src = src;
+      }
+      place(e);
+      panel.classList.add("visible");
+    });
+
+    img.addEventListener("load", () => panel.classList.remove("loading"));
+
+    document.addEventListener("mousemove", e => {
+      if (!current) return;
+      if (!e.target.closest?.("[data-img]")) { hide(); return; }
+      place(e);
+    });
+
+    // A broken or hotlink-blocked image shouldn't leave an empty panel behind.
+    img.addEventListener("error", hide);
+    document.addEventListener("scroll", hide, true);
+    window.addEventListener("blur", hide);
+  })();
+  // ─────────────────────────────────────────────────────────────────────
+
+  window.addEventListener("beforeunload", savePriceCache);
+
+  document.getElementById("results-body").addEventListener("click", e => {
+    const tr = e.target.closest("tr");
+    if (!tr) return;
+    const already = tr.classList.contains("selected");
+    document.querySelectorAll("#results-body tr.selected").forEach(r => r.classList.remove("selected"));
+    if (!already) tr.classList.add("selected");
+  });
+
+  // ── Grade multi-select ───────────────────────────────────────────────
+  // Values are the grade strings each platform's API expects (PSA/BGS/CGC
+  // official label formats). TAG and AGS have no per-grade filter support
+  // yet, so they fall back to "Any grade" only.
+  const GRADE_OPTIONS = {
+    PSA: [
+      { label: "GEM-MT 10", value: "GEM-MT 10" },
+      { label: "MINT 9",    value: "MINT 9"    },
+      { label: "NM-MT 8",   value: "NM-MT 8"   },
+      { label: "NM 7",      value: "NM 7"      },
+      { label: "EX-MT 6",   value: "EX-MT 6"   },
+      { label: "EX 5",      value: "EX 5"      },
+      { label: "VG-EX 4",   value: "VG-EX 4"   },
+      { label: "VG 3",      value: "VG 3"      },
+      { label: "GOOD 2",    value: "GOOD 2"    },
+      { label: "PR 1",      value: "PR 1"      },
+    ],
+    Beckett: [
+      { label: "Black Label 10", value: "10-PRISTINE BLACK LABEL" },
+      { label: "Pristine 10",    value: "10-PRISTINE"             },
+      { label: "Gem Mint 9.5",   value: "9.5-GEM MINT"           },
+      { label: "Mint 9",         value: "9-MINT"                  },
+      { label: "NM-MT 8",        value: "8-NM-MT"                },
+      { label: "Near Mint 7",    value: "7-NEAR MINT"            },
+      { label: "EX-NM 6",        value: "6-EX-NM"               },
+      { label: "Excellent 5",    value: "5-EXCELLENT"            },
+      { label: "VG-EX 4",        value: "4-VG-EX"               },
+      { label: "Very Good 3",    value: "3-VERY GOOD"            },
+      { label: "Good 2",         value: "2-GOOD"                 },
+      { label: "Poor 1",         value: "1-POOR"                 },
+    ],
+    CGC: [
+      { label: "Pristine 10",  value: "PRISTINE 10"   },
+      { label: "Gem Mint 10",  value: "GEM MINT 10"   },
+      { label: "Mint+ 9.5",    value: "MINT+ 9.5"    },
+      { label: "Mint 9",       value: "MINT 9"        },
+      { label: "NM/Mint+ 8.5", value: "NM/MINT+ 8.5" },
+      { label: "NM/Mint 8",    value: "NM/MINT 8"    },
+    ],
+  };
+
+  function updateGradeOptions() {
+    const company = document.getElementById("gradingCompany").value;
+    const options = GRADE_OPTIONS[company] || [];
+    const menu = document.getElementById("grade-menu");
+    const rows = options.map(opt =>
+      `<label><input type="checkbox" value="${esc(opt.value)}" onchange="onGradeCheck(this)" />${opt.label}</label>`
+    );
+    rows.push(`<label><input type="checkbox" value="" onchange="onGradeCheck(this)" />Any grade</label>`);
+    menu.innerHTML = rows.join("");
+    // Client-filter/paginate platforms default to Any grade; CC defaults to first specific grade
+    const pf = activePlatform();
+    const toCheck = (pf.clientFilter || pf.paginate)
+      ? menu.querySelector('input[value=""]')
+      : menu.querySelector('input[type="checkbox"]');
+    if (toCheck) { toCheck.checked = true; updateGradeLabel(); }
+    if (pf.clientFilter) applyLiveFilters();
+  }
+
+  function onGradeCheck(cb) {
+    const allBoxes = [...document.querySelectorAll('#grade-menu input[type="checkbox"]')];
+    const anyBox = document.querySelector('#grade-menu input[value=""]');
+    if (cb.value === "") {
+      if (cb.checked) allBoxes.filter(c => c !== cb).forEach(c => c.checked = false);
+    } else {
+      if (cb.checked && anyBox) anyBox.checked = false;
+    }
+    if (!allBoxes.some(c => c.checked) && anyBox) anyBox.checked = true;
+    updateGradeLabel();
+    if (activePlatform().clientFilter) applyLiveFilters();
+  }
+
+  function getSelectedGrades() {
+    return [...document.querySelectorAll('#grade-menu input[type="checkbox"]:checked')]
+      .map(cb => cb.value).filter(v => v !== "");
+  }
+
+  function updateGradeLabel() {
+    const grades = getSelectedGrades();
+    const anyBox = document.querySelector('#grade-menu input[value=""]:checked');
+    const label = document.getElementById("grade-label");
+    if (!label) return;
+    if (anyBox || grades.length === 0) {
+      label.textContent = "Any grade";
+    } else if (grades.length === 1) {
+      const cb = document.querySelector(`#grade-menu input[value="${CSS.escape(grades[0])}"]`);
+      label.textContent = cb?.closest('label')?.textContent.trim() ?? grades[0];
+    } else {
+      label.textContent = `${grades.length} grades`;
+    }
+  }
+
+  function toggleGradeMenu() {
+    const menu = document.getElementById("grade-menu");
+    menu.style.display = menu.style.display === "none" ? "block" : "none";
+  }
+
+  document.addEventListener("click", e => {
+    const wrap = document.getElementById("grade-wrap");
+    if (wrap && !wrap.contains(e.target)) {
+      document.getElementById("grade-menu").style.display = "none";
+    }
+  });
+  // ─────────────────────────────────────────────────────────────────────
+
+  // Restore from cache on page refresh — must run after all const/let declarations
+  // are initialized (calling earlier causes TDZ ReferenceErrors that are silently swallowed)
+  initSourceToggles();
+  syncCategoryOptions();
+  loadClCache();
+  updateGradeOptions();
+  if (sessionStorage.getItem("auth") === "1") loadCardCache();
+
+  window._row = () => allRows[0]; // debug: inspect first card's fields
+
+  function esc(s) {
+    return String(s ?? "").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+  }
+</script>
+</body>
+</html>
+<!-- redeploy: rebuild to pick up the updated SITE_PASSWORD secret -->

@@ -1,0 +1,35 @@
+name: Deploy GitHub Pages
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - docs/**
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Inject password hash
+        run: |
+          HASH=$(echo -n "${{ secrets.SITE_PASSWORD }}" | sha256sum | cut -d' ' -f1)
+          sed -i "s/__PASSWORD_HASH__/$HASH/g" docs/index.html
+
+      - name: Deploy to gh-pages
+        run: |
+          git config user.email "action@github.com"
+          git config user.name "GitHub Action"
+          git add -f docs/index.html
+          git stash
+          git checkout --orphan gh-pages 2>/dev/null || git checkout gh-pages
+          git checkout stash -- docs/
+          cp -r docs/* .
+          rm -rf docs
+          git add -A
+          git commit -m "Deploy $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          git push origin gh-pages --force
