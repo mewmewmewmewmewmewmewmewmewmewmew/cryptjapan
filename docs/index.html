@@ -757,7 +757,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.11</footer>
+<footer>v1.12</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -2187,7 +2187,7 @@
   // since picking one used to return the wrong game with no visible sign.
   const PLATFORM_CATEGORIES = {
     beezie: Object.keys(BEEZIE_CATEGORY_IDS),
-    phygitals: ["Pokemon"],
+    phygitals: ["Pokemon", "One Piece"],
   };
 
   function syncCategoryOptions() {
@@ -2289,6 +2289,7 @@
     // "CGC 9.0" → "9.0", "PSA 10" → "10" — strip leading grader prefix
     const grade    = gradeRaw.replace(/^[A-Za-z]+\s*/, "").trim();
     const language = attr("Language") ?? "";
+    const category = attr("Category") ?? "";
     const set      = attr("Set") ?? attr("Set Name") ?? "";
     const yearRaw  = attr("Year") ?? attr("Set Release Date") ?? "";
     const title    = attr("Title") ?? item.name ?? "";
@@ -2311,6 +2312,7 @@
       set,
       itemName:       title,
       listing:        { price: priceUsdc, currency: "USDC", createdAt: isoDate, updatedAt: isoDate },
+      category,
       _source:        "phygitals",
       _cardUrl:       cardUrl,
       _image:         pickCardImage(item),
@@ -2320,6 +2322,7 @@
 
   async function fetchPhygitalsListings() {
     const searchTerm = marketplaceSearchTerm();
+    const wantCategory = document.getElementById("categories").value;
     const btn = document.getElementById("fetch-btn");
     const status = document.getElementById("status");
     btn.disabled = true;
@@ -2332,7 +2335,7 @@
     const metaCond = {
       "set": [], "grader": [], "grade": [], "rarity": [], "type": [],
       "set release date": [], "grade type": ["Graded Cards"],
-      "language": [], "category": ["Pokemon"],
+      "language": [], "category": [document.getElementById("categories").value],
     };
 
     const gc = document.getElementById("gradingCompany")?.value;
@@ -2376,8 +2379,16 @@
         const data = await res.json();
         const rawItems = data.listings ?? data.data ?? data.items ?? [];
         fetchedCount += rawItems.length;
+        // Only "Pokemon" is a confirmed category string for this API, so the
+        // value sent for anything else is inferred. Re-check each listing's own
+        // category rather than trusting the filter was understood; rows that
+        // don't publish one are kept, since there's nothing to judge them on.
         const newCards = filterBySearch(
-          rawItems.map(normalizePhygitalsCard).filter(c => c.listing?.price != null), searchTerm);
+          rawItems.map(normalizePhygitalsCard)
+            .filter(c => c.listing?.price != null)
+            .filter(c => !c.category || !wantCategory ||
+                         c.category.toLowerCase() === wantCategory.toLowerCase()),
+          searchTerm);
         cards = cards.concat(newCards);
         status.textContent = `${cards.length} Phygitals listings…`;
         const total = data.amount ?? data.total ?? data.totalCount ?? data.totalItems ?? 0;
