@@ -757,7 +757,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.09</footer>
+<footer>v1.10</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -2170,10 +2170,29 @@
     };
   }
 
+  // Beezie selects the game by numeric id, and its listings carry no category
+  // field — so an unmapped value can't be caught client-side. Anything not
+  // listed here is refused rather than silently returning the wrong game,
+  // which is how One Piece used to come back as Pokemon.
+  const BEEZIE_CATEGORY_IDS = {
+    "Pokemon": "1",
+    "One Piece": "2",
+  };
+
   async function fetchBeezieListings() {
     const btn = document.getElementById("fetch-btn");
     const status = document.getElementById("status");
     btn.disabled = true;
+
+    const category = document.getElementById("categories").value;
+    const categoryId = BEEZIE_CATEGORY_IDS[category];
+    if (!categoryId) {
+      status.textContent = `Beezie has no known category id for ${category} — only ${Object.keys(BEEZIE_CATEGORY_IDS).join(" and ")} are mapped so far.`;
+      document.getElementById("empty-msg").style.display = "block";
+      btn.disabled = false;
+      return;
+    }
+
     status.textContent = "Fetching Beezie listings…";
     document.getElementById("results-body").innerHTML = "";
     document.getElementById("empty-msg").style.display = "none";
@@ -2204,7 +2223,7 @@
         const res = await fetch(`${WORKER_URL}/beezie/listings`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ categoryId: "1", page: String(page), pageSize: String(pageSize), filters, saleStatus: "all", sellOrderDateOrder: "DESC" }),
+          body: JSON.stringify({ categoryId, page: String(page), pageSize: String(pageSize), filters, saleStatus: "all", sellOrderDateOrder: "DESC" }),
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
