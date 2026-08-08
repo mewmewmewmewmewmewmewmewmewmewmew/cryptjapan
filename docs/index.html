@@ -757,7 +757,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.10</footer>
+<footer>v1.11</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -896,6 +896,7 @@
     platformFilterCache[_activeSrc] = captureFilterState();
     _activeSrc = document.getElementById("source")?.value ?? "cc";
     applyFilterState(_activeSrc, platformFilterCache[_activeSrc] ?? null);
+    syncCategoryOptions();
   }
 
   function goPage(delta) {
@@ -2179,6 +2180,32 @@
     "One Piece": "2",
   };
 
+  // Which categories each marketplace can actually serve. Collector Crypt takes
+  // the category as a free-text param so it offers everything; Beezie needs a
+  // numeric id we only have for two games; the Phygitals request hardcodes
+  // Pokemon. Options outside this list are hidden rather than left selectable,
+  // since picking one used to return the wrong game with no visible sign.
+  const PLATFORM_CATEGORIES = {
+    beezie: Object.keys(BEEZIE_CATEGORY_IDS),
+    phygitals: ["Pokemon"],
+  };
+
+  function syncCategoryOptions() {
+    const src = document.getElementById("source")?.value;
+    const sel = document.getElementById("categories");
+    if (!sel) return;
+    const allowed = PLATFORM_CATEGORIES[src] ?? null;   // null = no restriction
+    for (const opt of sel.options) {
+      const blocked = allowed !== null && !allowed.includes(opt.value);
+      opt.hidden = blocked;
+      opt.disabled = blocked;
+    }
+    if (sel.selectedOptions[0]?.disabled) {
+      const first = [...sel.options].find(o => !o.disabled);
+      if (first) sel.value = first.value;
+    }
+  }
+
   async function fetchBeezieListings() {
     const btn = document.getElementById("fetch-btn");
     const status = document.getElementById("status");
@@ -2783,6 +2810,7 @@
   // Restore from cache on page refresh — must run after all const/let declarations
   // are initialized (calling earlier causes TDZ ReferenceErrors that are silently swallowed)
   initSourceToggles();
+  syncCategoryOptions();
   loadClCache();
   updateGradeOptions();
   if (sessionStorage.getItem("auth") === "1") loadCardCache();
