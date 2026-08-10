@@ -81,7 +81,7 @@ export default {
       return phygitalsListings(url);
     }
 
-    if (path.startsWith("/marketplace") || path.startsWith("/cart")) {
+    if (path.startsWith("/marketplace") || path.startsWith("/cart") || path.startsWith("/cards/")) {
       return proxyCC(path, url);
     }
 
@@ -947,7 +947,27 @@ async function beezieListings(request) {
   });
 }
 
+// Per-card detail (/cards/publicNft/{nftAddress}) carries the card's identity
+// and its GemRate population block. Identity never changes and the population
+// figures are refreshed on a slow cycle, so these responses are edge-cached;
+// listing traffic stays uncached because new listings are the point.
+const CC_DETAIL_TTL = 12 * 3600;
+
 async function proxyCC(path, url) {
+  const cacheable = path.startsWith("/cards/");
+  const cache = caches.default;
+  const cacheKey = cacheable
+    ? new Request(`https://cc-cache.internal${path}${url.search}`)
+    : null;
+  if (cacheKey) {
+    const hit = await cache.match(cacheKey);
+    if (hit) {
+      return new Response(await hit.text(), {
+        headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "hit" },
+      });
+    }
+  }
+
   const target = `${CC_BASE}${path}${url.search}`;
   const upstream = await fetch(target, {
     headers: {
@@ -959,11 +979,19 @@ async function proxyCC(path, url) {
     },
   });
   const body = await upstream.text();
+  if (cacheKey && upstream.ok) {
+    try {
+      await cache.put(cacheKey, new Response(body, {
+        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${CC_DETAIL_TTL}` },
+      }));
+    } catch {}
+  }
   return new Response(body, {
     status: upstream.status,
     headers: {
       ...CORS,
       "Content-Type": upstream.headers.get("Content-Type") || "application/json",
+      ...(cacheKey ? { "X-Edge-Cache": "miss" } : {}),
     },
   });
 }
