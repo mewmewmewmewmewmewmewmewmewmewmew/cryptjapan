@@ -366,24 +366,29 @@
     }
 
     /* Floating, bottom-left — clear of the version chip in the corner. */
+    /* Sits flush on top of the version chip and borrows its treatment, so it
+       reads as part of the same corner rather than a floating action button.
+       The icon already matched the column headers (--text-muted); the previous
+       brightness came from the circle's border and drop shadow. */
     #cert-lookup-btn {
       position: fixed;
-      left: 14px;
-      bottom: 44px;
+      left: 0;
+      bottom: 24px;              /* the version chip is exactly 24px tall */
       z-index: 300;
-      width: 40px;
-      height: 40px;
-      padding: 0;
       display: inline-flex;
       align-items: center;
       justify-content: center;
-      border-radius: 50%;
+      min-width: 49px;           /* same footprint as the chip below it */
+      padding: 5px 12px;
       background: var(--surface-1);
-      border: 1px solid var(--border-strong);
-      box-shadow: var(--shadow-pop);
+      border: 1px solid var(--border);
+      border-left: none;
+      border-bottom: none;       /* the chip's top border is the divider */
+      border-radius: 0 6px 0 0;
+      box-shadow: none;
       color: var(--text-muted);
     }
-    #cert-lookup-btn:hover { color: var(--text); border-color: var(--accent); }
+    #cert-lookup-btn:hover { color: var(--text); background: var(--surface-2); }
 
     #cert-modal { position: fixed; inset: 0; z-index: 400; display: flex; align-items: center; justify-content: center; }
     #cert-modal[hidden] { display: none; }
@@ -894,7 +899,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.16</footer>
+<footer>v1.17</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
