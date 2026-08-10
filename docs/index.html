@@ -360,6 +360,81 @@
       border-top-right-radius: 6px;
     }
 
+    #cert-modal { position: fixed; inset: 0; z-index: 400; display: flex; align-items: center; justify-content: center; }
+    #cert-modal[hidden] { display: none; }
+    .cm-backdrop { position: absolute; inset: 0; background: rgba(8, 12, 20, 0.55); }
+    .cm-panel {
+      position: relative;
+      width: min(760px, 92vw);
+      max-height: 86vh;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      padding: 18px 20px 20px;
+      background: var(--surface-1);
+      border: 1px solid var(--border-strong);
+      border-radius: 14px;
+      box-shadow: var(--shadow-pop);
+    }
+    .cm-head { display: flex; align-items: center; justify-content: space-between; }
+    .cm-head h2 { font-size: 15px; font-weight: 700; }
+    .cm-close { padding: 4px 9px; font-size: 13px; color: var(--text-muted); }
+    #cert-input {
+      width: 100%;
+      resize: vertical;
+      background: var(--surface-2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: var(--radius);
+      padding: 10px 12px;
+      font-size: 13px;
+      font-family: ui-monospace, "SF Mono", Menlo, monospace;
+      outline: none;
+    }
+    #cert-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-weak); }
+    .cm-actions { display: flex; align-items: center; gap: 12px; }
+    #cert-go { background: var(--accent); border-color: var(--accent); color: var(--accent-on); font-weight: 600; padding: 8px 18px; }
+    #cert-go:hover:not(:disabled) { background: var(--accent-hover); }
+    #cert-go:disabled { opacity: .5; cursor: not-allowed; }
+    #cert-status { font-size: 12px; color: var(--text-muted); }
+    .cm-results { overflow: auto; flex: 1; }
+    /* Fixed layout with explicit widths: a percentage width on a cell is
+       relative to the table, which pushed the price columns off the panel. */
+    #cert-results {
+      width: 100%;
+      min-width: 0;          /* the global table rule sets 1080px for the main grid */
+      table-layout: fixed;
+      border-collapse: separate;
+      border-spacing: 0;
+      font-size: 13px;
+    }
+    #cert-results th:nth-child(1) { width: 104px; }
+    #cert-results th:nth-child(3) { width: 84px; }
+    #cert-results th:nth-child(4) { width: 84px; }
+    #cert-results th:nth-child(5) { width: 146px; }
+    #cert-results thead { display: none; }
+    #cert-results.has-rows thead { display: table-header-group; }
+    #cert-results td { padding: 8px 10px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+    #cert-results td.cm-cert { font-family: ui-monospace, "SF Mono", Menlo, monospace; color: var(--text-muted); font-size: 12px; }
+    #cert-results td.cm-name { white-space: normal; overflow-wrap: anywhere; }
+    #cert-results td.cm-cert { overflow: hidden; text-overflow: ellipsis; }
+    #cert-results th {
+      position: sticky; top: 0;
+      text-align: left;
+      padding: 7px 10px;
+      background: var(--surface-2);
+      border-bottom: 1px solid var(--border-strong);
+      color: var(--text-muted);
+      font-size: 10px; font-weight: 600;
+      text-transform: uppercase; letter-spacing: .4px;
+      white-space: nowrap;
+    }
+    #cert-results th.cm-num { text-align: right; }
+    #cert-results td.cm-num { text-align: right; font-variant-numeric: tabular-nums; }
+    #cert-results .cm-alt { color: var(--alt); }
+    #cert-results .cm-sd { color: var(--sd); }
+    #cert-results td.cm-err { color: var(--neg); }
+
     /* Card image preview that tracks the cursor on hover. */
     #hover-preview {
       position: fixed;
@@ -620,6 +695,14 @@
     <button id="refresh-alt-btn" onclick="refreshAlt()" disabled title="Re-fetch ALT prices">↻ ALT</button>
     <button id="refresh-cl-btn" onclick="refreshCl()" disabled title="Re-fetch CardLadder prices">↻ CL</button>
     <button id="refresh-snkr-btn" onclick="refreshSnkr()" disabled title="Re-fetch SNKRDUNK prices">↻ SD</button>
+    <button id="cert-lookup-btn" onclick="openCertLookup()" title="Look up a list of certs">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/>
+        <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+      </svg>
+    </button>
     <button id="theme-toggle" onclick="toggleTheme()" title="Toggle light / dark">☀</button>
   </div>
 </header>
@@ -753,11 +836,36 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
+<div id="cert-modal" hidden>
+  <div class="cm-backdrop" onclick="closeCertLookup()"></div>
+  <div class="cm-panel" role="dialog" aria-modal="true" aria-labelledby="cm-title">
+    <div class="cm-head">
+      <h2 id="cm-title">Cert lookup</h2>
+      <button class="cm-close" onclick="closeCertLookup()" title="Close">✕</button>
+    </div>
+    <textarea id="cert-input" rows="5" spellcheck="false"
+              placeholder="One cert number per line&#10;113695473&#10;6165472042"></textarea>
+    <div class="cm-actions">
+      <button id="cert-go" onclick="runCertLookup()">Look up</button>
+      <span id="cert-status"></span>
+    </div>
+    <div class="cm-results">
+      <table id="cert-results">
+        <thead><tr>
+          <th>Cert</th><th>Card</th>
+          <th class="cm-num">Pop</th><th class="cm-num">ALT</th><th class="cm-num">SNKRDUNK</th>
+        </tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 <div id="hover-preview"><div class="hp-spinner"></div><img id="hover-preview-img" alt="" /></div>
 
 <div id="load-progress"></div>
 
-<footer>v1.12</footer>
+<footer>v1.13</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -2701,6 +2809,91 @@
     document.addEventListener("scroll", hide, true);
     window.addEventListener("blur", hide);
   })();
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── Cert lookup panel ────────────────────────────────────────────────
+  // Ad-hoc lookups for certs that aren't in the loaded listings. The worker's
+  // /alt-price endpoint already returns ALT and SNKRDUNK data for a single
+  // cert, so one request per cert covers both.
+  function openCertLookup() {
+    document.getElementById("cert-modal").hidden = false;
+    document.getElementById("cert-input").focus();
+  }
+
+  function closeCertLookup() {
+    document.getElementById("cert-modal").hidden = true;
+  }
+
+  document.addEventListener("keydown", e => {
+    if (e.key === "Escape" && !document.getElementById("cert-modal")?.hidden) closeCertLookup();
+  });
+
+  function certLookupRow(cert) {
+    return `<tr data-cert-row="${esc(cert)}">
+      <td class="cm-cert">${esc(cert)}</td>
+      <td class="cm-name"><span class="alt-loading">···</span></td>
+      <td class="cm-num"></td>
+      <td class="cm-num"></td>
+      <td class="cm-num"></td>
+    </tr>`;
+  }
+
+  function fillCertLookupRow(cert, data) {
+    const tr = document.querySelector(`#cert-results tr[data-cert-row="${CSS.escape(cert)}"]`);
+    if (!tr) return;
+    const [nameTd, popTd, altTd, sdTd] = [tr.children[1], tr.children[2], tr.children[3], tr.children[4]];
+    if (!data || data.error || !data.certNumber) {
+      nameTd.className = "cm-name cm-err";
+      nameTd.textContent = data?.error ? "lookup failed" : "not found";
+      return;
+    }
+    const num = data.cardNumber ? ` #${data.cardNumber}` : "";
+    const grade = [data.gradingCompany, data.gradeNumber].filter(Boolean).join(" ").replace(/\.0$/, "");
+    nameTd.textContent = (data.cardName || "—") + num + (grade ? ` · ${grade}` : "");
+    const pop = data.psaPop ?? data.pop;
+    popTd.textContent = pop != null ? `pop ${Number(pop).toLocaleString()}` : "";
+    altTd.innerHTML = data.altPrice != null
+      ? `<span class="cm-alt">$${Number(data.altPrice).toFixed(2)}</span>` : "—";
+    const jpy = data.snkrdunk?.price;
+    if (jpy != null) {
+      const usd = jpyUsd ? ` <span class="price-sub">($${(jpy * jpyUsd).toFixed(0)})</span>` : "";
+      sdTd.innerHTML = `<span class="cm-sd">¥${Number(jpy).toLocaleString()}</span>${usd}`;
+    } else {
+      sdTd.textContent = "—";
+    }
+  }
+
+  async function runCertLookup(concurrency = 3) {
+    const btn = document.getElementById("cert-go");
+    const status = document.getElementById("cert-status");
+    const body = document.querySelector("#cert-results tbody");
+    const certs = [...new Set(
+      document.getElementById("cert-input").value.split(/[\s,]+/).map(c => c.trim()).filter(Boolean)
+    )];
+    if (!certs.length) { status.textContent = "Enter at least one cert number."; return; }
+
+    await getJpyRate();
+    btn.disabled = true;
+    body.innerHTML = certs.map(certLookupRow).join("");
+    document.getElementById("cert-results").classList.add("has-rows");
+    let done = 0;
+    status.textContent = `0/${certs.length}`;
+
+    for (let i = 0; i < certs.length; i += concurrency) {
+      await Promise.all(certs.slice(i, i + concurrency).map(async cert => {
+        let data = null;
+        try {
+          const res = await fetch(`${WORKER_URL}/alt-price?cert=${encodeURIComponent(cert)}`,
+                                  { signal: AbortSignal.timeout(20000) });
+          data = await res.json();
+        } catch { data = { error: "request failed" }; }
+        fillCertLookupRow(cert, data);
+        status.textContent = `${++done}/${certs.length}`;
+      }));
+    }
+    status.textContent = `${certs.length} cert${certs.length === 1 ? "" : "s"} looked up`;
+    btn.disabled = false;
+  }
   // ─────────────────────────────────────────────────────────────────────
 
   window.addEventListener("beforeunload", savePriceCache);
