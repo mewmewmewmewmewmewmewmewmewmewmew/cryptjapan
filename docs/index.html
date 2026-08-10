@@ -51,7 +51,7 @@
       --accent-on: #ffffff;
       --pos: #0b8f5c; --pos-bg: rgba(11,143,92,0.10);
       --neg: #d23b3b; --neg-bg: rgba(210,59,59,0.10);
-      --alt: #7c3aed; --cl: #b7791f; --sd: #0e7fc0;
+      --alt: #7c3aed; --cl: #b7791f; --sd: #0e7fc0; --gr: #0f766e;
       --money: #0b8f5c;
       --row-alt: #f7f9fb;
       --radius: 8px;
@@ -76,7 +76,7 @@
         --accent-on: #0f0f0f;
         --pos: #3ddc97; --pos-bg: rgba(61,220,151,0.12);
         --neg: #ff6b6b; --neg-bg: rgba(255,107,107,0.12);
-        --alt: #b39bff; --cl: #f5c451; --sd: #57c2f5;
+        --alt: #b39bff; --cl: #f5c451; --sd: #57c2f5; --gr: #5eead4;
         --money: #3ddc97;
         --row-alt: #161616;
         --shadow-pop: 0 12px 32px rgba(0,0,0,0.55);
@@ -100,7 +100,7 @@
       --accent-on: #0f0f0f;
       --pos: #3ddc97; --pos-bg: rgba(61,220,151,0.12);
       --neg: #ff6b6b; --neg-bg: rgba(255,107,107,0.12);
-      --alt: #b39bff; --cl: #f5c451; --sd: #57c2f5;
+      --alt: #b39bff; --cl: #f5c451; --sd: #57c2f5; --gr: #5eead4;
       --money: #3ddc97;
       --row-alt: #161616;
       --shadow-pop: 0 12px 32px rgba(0,0,0,0.55);
@@ -564,6 +564,7 @@
     #load-progress .lp-alt { --lp-dot: var(--alt); }
     #load-progress .lp-cl { --lp-dot: var(--cl); }
     #load-progress .lp-sd { --lp-dot: var(--sd); }
+    #load-progress .lp-gr { --lp-dot: var(--gr); }
     .alt-link { color: var(--alt); text-decoration: none; }
     .alt-link:hover { text-decoration: underline; }
     .card-link { color: var(--text); text-decoration: none; font-weight: 500; }
@@ -601,6 +602,7 @@
     #toggle-alt { --dot: var(--alt); }
     #toggle-cl { --dot: var(--cl); }
     #toggle-snkrdunk { --dot: var(--sd); }
+    #toggle-gemrate { --dot: var(--gr); }
     .toggle-btn.active { color: var(--text); border-color: var(--border-strong); background: var(--surface-1); }
     .toggle-btn.active::before { opacity: 1; }
     .toggle-btn:disabled { opacity: .35; cursor: not-allowed; }
@@ -625,6 +627,11 @@
     table.hide-cl .cl-delta,
     table.hide-cl .cl-pct,
     table.hide-cl .th-cl { display: none; }
+
+    table.hide-gemrate .gr-cell,
+    table.hide-gemrate .th-gemrate { display: none; }
+    th.th-gemrate { color: var(--gr); }
+    td.gr-cell { color: var(--text-muted); }
 
     .grade-select { position: relative; display: inline-block; }
     #grade-btn { display: inline-flex; align-items: center; gap: 6px; }
@@ -821,6 +828,7 @@
   <button id="toggle-alt" class="toggle-btn active" onclick="toggleSource('alt')" title="ALT price columns">ALT</button>
   <button id="toggle-cl" class="toggle-btn" onclick="toggleSource('cl')" title="CardLadder price columns (off by default — CardLadder has a small daily request quota)">CL</button>
   <button id="toggle-snkrdunk" class="toggle-btn active" onclick="toggleSource('snkrdunk')" title="SNKRDUNK price columns">SD</button>
+  <button id="toggle-gemrate" class="toggle-btn active" onclick="toggleSource('gemrate')" title="GemRate population columns — Collector Crypt only">GR</button>
 </div>
 
 <div class="status" id="status">Ready.</div>
@@ -836,6 +844,11 @@
         <th onclick="sortBy('grade')">Grade</th>
         <th onclick="sortBy('gradingID')">Cert</th>
         <th class="col-num" onclick="sortBy('pop')">Pop</th>
+        <th class="th-gemrate col-num" onclick="sortBy('grPopHigher')" title="GemRate: copies graded higher">Pop Higher</th>
+        <th class="th-gemrate col-num" onclick="sortBy('grTotalPop')" title="GemRate: total graded, all grades">Total Pop</th>
+        <th class="th-gemrate col-num" onclick="sortBy('grGemTotal')" title="GemRate: copies graded gem">Gem Total</th>
+        <th class="th-gemrate col-num" onclick="sortBy('grGemRate')" title="GemRate: share of submissions graded gem">Gem Rate</th>
+        <th class="th-gemrate col-num" onclick="sortBy('grLastGem')" title="GemRate: most recent gem grade">Last Gem</th>
         <th class="col-num grp" onclick="sortBy('price')">Price</th>
         <th class="th-alt col-num grp" onclick="sortBy('altPrice')">ALT $</th>
         <th class="th-alt col-num" onclick="sortBy('altDelta')">ALT Δ</th>
@@ -901,7 +914,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.19</footer>
+  <footer>v1.20</footer>
 </div>
 
 <script>
@@ -1042,6 +1055,7 @@
     _activeSrc = document.getElementById("source")?.value ?? "cc";
     applyFilterState(_activeSrc, platformFilterCache[_activeSrc] ?? null);
     syncCategoryOptions();
+    syncGemrateAvailability();
   }
 
   function goPage(delta) {
@@ -1203,6 +1217,7 @@
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, 1, msg);
         fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
+        fetchGemratePops(cards);
         fetchClForVisible();
       } else {
         allRows = cards;
@@ -1213,6 +1228,7 @@
         applyLiveFilters();
         saveCardCache(cards, filterState, currentPage, pages, msg);
         fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
+        fetchGemratePops(cards);
         fetchClForVisible();
         window.scrollTo(0, 0);
       }
@@ -1352,6 +1368,11 @@
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+(?:\.\d+)?)$/)?.[1] || c.grade).replace(/\.0$/, ""))}</td>
       <td>${certDisplay}</td>
       <td class="pop-count" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="gr-cell gr-higher" data-nft="${esc(c.nftAddress)}"></td>
+      <td class="gr-cell gr-total" data-nft="${esc(c.nftAddress)}"></td>
+      <td class="gr-cell gr-gemtotal" data-nft="${esc(c.nftAddress)}"></td>
+      <td class="gr-cell gr-gemrate" data-nft="${esc(c.nftAddress)}"></td>
+      <td class="gr-cell gr-lastgem" data-nft="${esc(c.nftAddress)}"></td>
       <td class="price">${priceStr}</td>
       <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
       <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
@@ -1409,7 +1430,8 @@
 
     if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
 
-    const colOrder = ["listedAt","cardYear","cardName","cardNumber","grade","gradingID","pop","price","altPrice","altDelta","altPct","clPrice","clDelta","clPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
+    const colOrder = ["listedAt","cardYear","cardName","cardNumber","grade","gradingID","pop",
+      "grPopHigher","grTotalPop","grGemTotal","grGemRate","grLastGem","price","altPrice","altDelta","altPct","clPrice","clDelta","clPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
     const thIdx = colOrder.indexOf(col);
     if (thIdx >= 0) {
       ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
@@ -1429,6 +1451,8 @@
         bv = parseInt((b.itemName || "").match(/#(\d+)/)?.[1] ?? "0");
       } else if (col === "pop") {
         av = a._altPop ?? -Infinity; bv = b._altPop ?? -Infinity;
+      } else if (col.startsWith("gr") && col !== "grade" && col !== "gradingID") {
+        av = a["_" + col] ?? -Infinity; bv = b["_" + col] ?? -Infinity;
       } else if (col === "price") {
         const toUsd = c => { const cur = c.listing?.currency, raw = Number(c.listing?.price ?? 0); return cur === "USDC" ? raw : (cur === "SOL" && solUsd ? raw * solUsd : raw); };
         av = toUsd(a); bv = toUsd(b);
@@ -1506,6 +1530,7 @@
     repopulateAltCells(allRows);
     repopulateClCells(allRows);
     repopulateSnkrdunkCells(allRows);
+    repopulateGrCells(allRows);
     scheduleClForVisible();
   }
 
@@ -1868,7 +1893,7 @@
   // ── Load progress pill ───────────────────────────────────────────────
   // Individual cells show a skeleton bar, but that only tells you a given
   // cell is pending. This says which sources are still running overall.
-  const loadProgress = { ALT: null, CL: null, SD: null };
+  const loadProgress = { ALT: null, CL: null, SD: null, GR: null };
 
   function renderLoadProgress() {
     const el = document.getElementById("load-progress");
@@ -2093,6 +2118,91 @@
     }
     } finally { progressEnd("CL"); }
     savePriceCache();
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
+  // ── GemRate population (Collector Crypt only) ────────────────────────
+  // Collector Crypt stores a GemRate population block against each card it
+  // vaults, exposed at /cards/publicNft/{nftAddress}. It's keyed by their NFT
+  // address, so it only exists for their own listings — hence the columns are
+  // hidden on other marketplaces rather than showing blanks.
+  const grCache = new Map();   // nftAddress → population | null
+
+  function gemrateSupported() {
+    return (document.getElementById("source")?.value ?? "cc") === "cc";
+  }
+
+  function updateGrCells(nft, pop) {
+    const set = (cls, text) => {
+      const td = document.querySelector(`.${cls}[data-nft="${CSS.escape(nft)}"]`);
+      if (td) td.textContent = text;
+    };
+    if (!pop) { for (const c of ["gr-higher","gr-total","gr-gemtotal","gr-gemrate","gr-lastgem"]) set(c, "—"); return; }
+    const n = v => (v == null ? "—" : Number(v).toLocaleString());
+    set("gr-higher", n(pop.populationHigher));
+    set("gr-total", n(pop.totalPopulation));
+    set("gr-gemtotal", n(pop.gemTotal));
+    set("gr-gemrate", pop.gemRate == null ? "—" : `${(pop.gemRate * 100).toFixed(1)}%`);
+    set("gr-lastgem", pop.lastGem ? String(pop.lastGem).slice(0, 10) : "—");
+  }
+
+  function applyGrToRow(row, pop) {
+    row._grPop = pop ?? null;
+    row._grPopHigher = pop?.populationHigher ?? null;
+    row._grTotalPop  = pop?.totalPopulation ?? null;
+    row._grGemTotal  = pop?.gemTotal ?? null;
+    row._grGemRate   = pop?.gemRate ?? null;
+    // sortable as a number while displayed as a date
+    row._grLastGem   = pop?.lastGem ? Date.parse(pop.lastGem) || null : null;
+  }
+
+  function repopulateGrCells(rows) {
+    const rendered = renderedNftSet();
+    for (const c of rows) {
+      if (!c.nftAddress || !grCache.has(c.nftAddress)) continue;
+      const pop = grCache.get(c.nftAddress);
+      applyGrToRow(c, pop);
+      if (rendered.has(c.nftAddress)) updateGrCells(c.nftAddress, pop);
+    }
+  }
+
+  function renderedNftSet() {
+    const s = new Set();
+    for (const el of document.querySelectorAll('#results-body [data-nft]')) s.add(el.dataset.nft);
+    return s;
+  }
+
+  async function fetchGemratePops(cards, concurrency = 5) {
+    if (!sourceEnabled("gemrate") || !gemrateSupported()) return;
+    const targets = [];
+    const seen = new Set();
+    for (const c of cards) {
+      if (!c.nftAddress || seen.has(c.nftAddress) || grCache.has(c.nftAddress)) continue;
+      seen.add(c.nftAddress);
+      targets.push(c);
+    }
+    if (!targets.length) return;
+
+    progressStart("GR", targets.length);
+    try {
+      for (let i = 0; i < targets.length; i += concurrency) {
+        await Promise.all(targets.slice(i, i + concurrency).map(async card => {
+          let pop = null;
+          try {
+            const res = await fetch(`${WORKER_URL}/cards/publicNft/${encodeURIComponent(card.nftAddress)}`,
+                                    { signal: AbortSignal.timeout(15000) });
+            if (res.ok) pop = (await res.json())?.population ?? null;
+          } catch {}
+          progressTick("GR");
+          grCache.set(card.nftAddress, pop);
+          for (const c of allRows) {
+            if (c.nftAddress !== card.nftAddress) continue;
+            applyGrToRow(c, pop);
+          }
+          updateGrCells(card.nftAddress, pop);
+        }));
+      }
+    } finally { progressEnd("GR"); }
   }
   // ─────────────────────────────────────────────────────────────────────
 
@@ -2416,6 +2526,7 @@
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
+        fetchGemratePops(cards);
       fetchClForVisible();
     } catch (e) {
       status.textContent = `Beezie error: ${e.message}`;
@@ -2550,6 +2661,7 @@
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
+        fetchGemratePops(cards);
       fetchClForVisible();
     } catch (e) {
       status.textContent = `Phygitals error: ${e.message}`;
@@ -2698,6 +2810,7 @@
       // The cache holds the pre-ALT (title-matched) set, so re-refine now that
       // restored ALT names are back on the rows.
       refineSearchWithAltNames(allRows, allRows.length);
+      fetchGemratePops(allRows);
       // If any Japanese cards are missing SNKRDUNK prices (e.g. key changed after alt data loaded),
       // trigger a background fetch so they fill in without requiring a manual refresh.
       const needsSnkr = allRows.some(c =>
@@ -2719,7 +2832,7 @@
 
   // CL defaults to off: CardLadder has a small daily request quota, so its
   // prices are only fetched while its columns are visible.
-  const SOURCE_TOGGLE_DEFAULTS = { alt: true, cl: false, snkrdunk: true };
+  const SOURCE_TOGGLE_DEFAULTS = { alt: true, cl: false, snkrdunk: true, gemrate: true };
 
   function sourceEnabled(source) {
     return document.getElementById(`toggle-${source}`)?.classList.contains("active") ?? false;
@@ -2754,6 +2867,20 @@
     if (refresh) refresh.style.display = blocked ? "none" : "";
   }
 
+  // GemRate data only exists for Collector Crypt's own vaulted cards, so the
+  // columns are hidden entirely on other marketplaces rather than showing
+  // blanks that look like a failed lookup.
+  function syncGemrateAvailability() {
+    const supported = gemrateSupported();
+    const table = document.getElementById("results-table");
+    const toggle = document.getElementById("toggle-gemrate");
+    if (table) table.classList.toggle("hide-gemrate", !supported || !sourceEnabled("gemrate"));
+    if (toggle) {
+      toggle.style.display = supported ? "" : "none";
+      toggle.title = "GemRate population columns — Collector Crypt only";
+    }
+  }
+
   function onLanguageChange() {
     syncSdAvailability();
     if (activePlatform().clientFilter) applyLiveFilters();
@@ -2771,6 +2898,7 @@
     }
     syncClRefreshBtn();
     syncSdAvailability();
+    syncGemrateAvailability();
   }
 
   function toggleSource(source) {
@@ -2789,6 +2917,10 @@
       if (on && allRows.length) fetchClForVisible();
     }
     if (source === "snkrdunk") syncSdAvailability();
+    if (source === "gemrate") {
+      syncGemrateAvailability();
+      if (on && allRows.length) fetchGemratePops(allRows);
+    }
   }
 
   // ── Cursor-following card image preview ──────────────────────────────
