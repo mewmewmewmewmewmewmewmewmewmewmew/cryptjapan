@@ -353,16 +353,12 @@
     .pagination button:disabled { opacity: .4; cursor: not-allowed; }
 
     footer {
-      position: fixed;
-      bottom: 0;
-      left: 0;
       padding: 6px 12px;
       font-size: 10px;
+      text-align: center;
       color: var(--text-faint);
       background: var(--surface-1);
-      border-top: 1px solid var(--border);
       border-right: 1px solid var(--border);
-      border-top-right-radius: 6px;
     }
 
     /* Floating, bottom-left — clear of the version chip in the corner. */
@@ -370,23 +366,29 @@
        reads as part of the same corner rather than a floating action button.
        The icon already matched the column headers (--text-muted); the previous
        brightness came from the circle's border and drop shadow. */
-    #cert-lookup-btn {
+    /* Stacked in a flex column with align-items: stretch, so the button and the
+       version chip always share the wider one's width — no hardcoded number to
+       drift when the version string changes length. */
+    #corner-stack {
       position: fixed;
       left: 0;
-      bottom: 24px;              /* the version chip is exactly 24px tall */
+      bottom: 0;
       z-index: 300;
-      display: inline-flex;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+    }
+    #cert-lookup-btn {
+      display: flex;
       align-items: center;
       justify-content: center;
-      min-width: 49px;           /* same footprint as the chip below it */
       padding: 5px 12px;
       background: var(--surface-1);
-      border: 1px solid var(--border);
+      border: 1px solid var(--border);   /* its bottom edge is the divider */
       border-left: none;
-      border-bottom: none;       /* the chip's top border is the divider */
       border-radius: 0 6px 0 0;
       box-shadow: none;
-      color: var(--text-muted);
+      color: var(--text-faint);          /* matches the version number */
     }
     #cert-lookup-btn:hover { color: var(--text); background: var(--surface-2); }
 
@@ -858,15 +860,6 @@
   <button id="next-btn" onclick="goPage(1)">Next →</button>
 </div>
 
-<button id="cert-lookup-btn" onclick="openCertLookup()" title="Look up a list of certs">
-  <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none"
-       stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-    <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/>
-    <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
-  </svg>
-</button>
-
 <div id="cert-modal" hidden>
   <div class="cm-backdrop" onclick="closeCertLookup()"></div>
   <div class="cm-panel" role="dialog" aria-modal="true" aria-labelledby="cm-title">
@@ -899,7 +892,17 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.17</footer>
+<div id="corner-stack">
+  <button id="cert-lookup-btn" onclick="openCertLookup()" title="Look up a list of certs">
+    <svg xmlns="http://www.w3.org/2000/svg" width="17" height="17" viewBox="0 0 24 24" fill="none"
+         stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+      <polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/>
+      <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
+    </svg>
+  </button>
+  <footer>v1.18</footer>
+</div>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
