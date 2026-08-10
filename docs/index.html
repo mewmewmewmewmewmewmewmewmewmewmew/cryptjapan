@@ -878,8 +878,11 @@
     <div class="cm-results">
       <table id="cert-results">
         <thead><tr>
-          <th>Cert</th><th>Card</th>
-          <th class="cm-num">Pop</th><th class="cm-num">ALT</th><th class="cm-num">SNKRDUNK</th>
+          <th data-sort="cert" onclick="sortCertResults('cert')">Cert</th>
+          <th data-sort="card" onclick="sortCertResults('card')">Card</th>
+          <th class="cm-num" data-sort="pop" onclick="sortCertResults('pop')">Pop</th>
+          <th class="cm-num" data-sort="alt" onclick="sortCertResults('alt')">ALT</th>
+          <th class="cm-num" data-sort="sd" onclick="sortCertResults('sd')">SNKRDUNK</th>
         </tr></thead>
         <tbody></tbody>
       </table>
@@ -891,7 +894,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.15</footer>
+<footer>v1.16</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
@@ -2854,53 +2857,102 @@
     if (e.key === "Escape" && !document.getElementById("cert-modal")?.hidden) closeCertLookup();
   });
 
-  function certLookupRow(cert) {
-    return `<tr data-cert-row="${esc(cert)}">
-      <td class="cm-cert">${esc(cert)}</td>
-      <td class="cm-name"><span class="alt-loading">···</span></td>
-      <td class="cm-num"></td>
-      <td class="cm-num"></td>
-      <td class="cm-num"></td>
-    </tr>`;
+  // Results are held as data rather than written straight to the DOM, so the
+  // table can be re-sorted after the fact.
+  let certResults = [];                     // input order
+  let certSort = { col: null, dir: 1 };
+
+  function certSortValue(entry, col) {
+    const d = entry.data;
+    switch (col) {
+      case "cert": return entry.cert;
+      case "card": return (d?.cardName || "").toLowerCase();
+      case "pop":  return d ? Number(d.psaPop ?? d.pop ?? NaN) : NaN;
+      case "alt":  return Number(d?.altPrice ?? NaN);
+      case "sd":   return Number(d?.snkrdunk?.price ?? NaN);
+      default:     return "";
+    }
   }
 
-  function fillCertLookupRow(cert, data) {
-    const tr = document.querySelector(`#cert-results tr[data-cert-row="${CSS.escape(cert)}"]`);
-    if (!tr) return;
-    const [nameTd, popTd, altTd, sdTd] = [tr.children[1], tr.children[2], tr.children[3], tr.children[4]];
-    if (!data || data.error || !data.certNumber) {
-      nameTd.className = "cm-name cm-err";
-      nameTd.textContent = data?.error ? "lookup failed" : "not found";
-      return;
+  function sortCertResults(col) {
+    certSort = certSort.col === col ? { col, dir: -certSort.dir } : { col, dir: 1 };
+    renderCertResults();
+  }
+
+  function certRowHtml(entry) {
+    const { cert, data, pending } = entry;
+    if (pending) {
+      return `<tr><td class="cm-cert">${esc(cert)}</td>
+        <td class="cm-name"><span class="alt-loading">···</span></td>
+        <td class="cm-num"></td><td class="cm-num"></td><td class="cm-num"></td></tr>`;
     }
+    if (!data || data.error || !data.certNumber) {
+      const msg = data?.error ? "lookup failed" : "not found";
+      return `<tr><td class="cm-cert">${esc(cert)}</td>
+        <td class="cm-name cm-err">${msg}</td>
+        <td class="cm-num"></td><td class="cm-num"></td><td class="cm-num"></td></tr>`;
+    }
+
     const num = data.cardNumber ? ` #${data.cardNumber}` : "";
     const grade = [data.gradingCompany, data.gradeNumber].filter(Boolean).join(" ").replace(/\.0$/, "");
-    nameTd.textContent = (data.cardName || "—") + num + (grade ? ` · ${grade}` : "");
+    const name = esc((data.cardName || "—") + num + (grade ? ` · ${grade}` : ""));
+
     const pop = data.psaPop ?? data.pop;
-    popTd.textContent = pop != null ? `pop ${Number(pop).toLocaleString()}` : "";
-    altTd.innerHTML = data.altPrice != null
-      ? `<span class="cm-alt">$${Number(data.altPrice).toFixed(2)}</span>` : "—";
+    const popCell = pop != null ? `pop ${Number(pop).toLocaleString()}` : "";
+
+    const altCell = data.altPrice == null ? "—"
+      : data.assetId
+        ? `<a href="https://alt.xyz/itm/${esc(data.assetId)}/research" target="_blank" rel="noopener" class="cm-alt">$${Number(data.altPrice).toFixed(2)}</a>`
+        : `<span class="cm-alt">$${Number(data.altPrice).toFixed(2)}</span>`;
+
     const sd = data.snkrdunk;
     const sdImg = sd?.image ? ` data-img="${esc(sd.image)}" data-img-kind="sd"` : "";
     const sdHref = sd?.apparelId ? `https://snkrdunk.com/apparels/${sd.apparelId}` : null;
     const asLink = inner => sdHref
       ? `<a href="${sdHref}" target="_blank" rel="noopener" class="cm-sd"${sdImg}>${inner}</a>`
       : `<span class="cm-sd"${sdImg}>${inner}</span>`;
+    let sdCell;
     if (sd?.price != null) {
       const usd = jpyUsd ? ` <span class="price-sub">($${(sd.price * jpyUsd).toFixed(0)})</span>` : "";
-      sdTd.innerHTML = asLink(`¥${Number(sd.price).toLocaleString()}`) + usd;
+      sdCell = asLink(`¥${Number(sd.price).toLocaleString()}`) + usd;
     } else if (sdHref) {
       // Matched on SNKRDUNK but no sales at this grade — still worth linking.
-      sdTd.innerHTML = asLink("N/A");
+      sdCell = asLink("N/A");
     } else {
-      sdTd.textContent = "—";
+      sdCell = "—";
     }
+
+    return `<tr><td class="cm-cert">${esc(cert)}</td>
+      <td class="cm-name">${name}</td>
+      <td class="cm-num">${popCell}</td>
+      <td class="cm-num">${altCell}</td>
+      <td class="cm-num">${sdCell}</td></tr>`;
+  }
+
+  function renderCertResults() {
+    const rows = [...certResults];
+    if (certSort.col) {
+      const { col, dir } = certSort;
+      rows.sort((a, b) => {
+        const av = certSortValue(a, col), bv = certSortValue(b, col);
+        // rows with no value for this column sort last, whichever direction
+        const aBad = av === "" || (typeof av === "number" && isNaN(av));
+        const bBad = bv === "" || (typeof bv === "number" && isNaN(bv));
+        if (aBad !== bBad) return aBad ? 1 : -1;
+        if (aBad && bBad) return 0;
+        return (typeof av === "string" ? av.localeCompare(bv) : av - bv) * dir;
+      });
+    }
+    document.querySelector("#cert-results tbody").innerHTML = rows.map(certRowHtml).join("");
+    document.querySelectorAll("#cert-results th").forEach(th => {
+      th.classList.remove("sort-asc", "sort-desc");
+      if (th.dataset.sort === certSort.col) th.classList.add(certSort.dir === 1 ? "sort-asc" : "sort-desc");
+    });
   }
 
   async function runCertLookup(concurrency = 3) {
     const btn = document.getElementById("cert-go");
     const status = document.getElementById("cert-status");
-    const body = document.querySelector("#cert-results tbody");
     const certs = [...new Set(
       document.getElementById("cert-input").value.split(/[\s,]+/).map(c => c.trim()).filter(Boolean)
     )];
@@ -2908,8 +2960,10 @@
 
     await getJpyRate();
     btn.disabled = true;
-    body.innerHTML = certs.map(certLookupRow).join("");
+    certSort = { col: null, dir: 1 };
+    certResults = certs.map(cert => ({ cert, data: null, pending: true }));
     document.getElementById("cert-results").classList.add("has-rows");
+    renderCertResults();
     let done = 0;
     status.textContent = `0/${certs.length}`;
 
@@ -2921,7 +2975,9 @@
                                   { signal: AbortSignal.timeout(20000) });
           data = await res.json();
         } catch { data = { error: "request failed" }; }
-        fillCertLookupRow(cert, data);
+        const entry = certResults.find(e => e.cert === cert);
+        if (entry) { entry.data = data; entry.pending = false; }
+        renderCertResults();
         status.textContent = `${++done}/${certs.length}`;
       }));
     }
