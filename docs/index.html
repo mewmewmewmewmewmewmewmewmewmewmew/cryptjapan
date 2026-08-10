@@ -254,11 +254,16 @@
       border-bottom: 1px solid var(--border);
     }
 
+    /* Full-bleed so the sticky header reaches both edges when scrolling; the
+       page gutter moves into the outer cells so columns stay aligned with the
+       rest of the page. */
     .table-wrap {
       flex: 1;
-      padding: 0 22px 90px;
+      padding: 0 0 90px;
       background: var(--bg);
     }
+    thead th:first-child, tbody td:first-child { padding-left: 22px; }
+    thead th:last-child, tbody td:last-child { padding-right: 22px; }
 
     table {
       width: 100%;
@@ -886,7 +891,7 @@
 
 <div id="load-progress"></div>
 
-<footer>v1.14</footer>
+<footer>v1.15</footer>
 
 <script>
   const PASSWORD_HASH = "__PASSWORD_HASH__";
