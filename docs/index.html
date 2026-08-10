@@ -585,7 +585,7 @@
       text-align: right;
       font-variant-numeric: tabular-nums;
     }
-    th.grp, td.price,
+    th.grp, td.price, td.gr-total,
     td.alt-price, td.cl-price, td.snkrdunk-price {
       border-left: 1px solid var(--border);
     }
@@ -844,12 +844,11 @@
         <th onclick="sortBy('grade')">Grade</th>
         <th onclick="sortBy('gradingID')">Cert</th>
         <th class="col-num" onclick="sortBy('pop')">Pop</th>
-        <th class="th-gemrate col-num" onclick="sortBy('grPopHigher')" title="GemRate: copies graded higher">Pop Higher</th>
-        <th class="th-gemrate col-num" onclick="sortBy('grTotalPop')" title="GemRate: total graded, all grades">Total Pop</th>
+        <th class="col-num grp" onclick="sortBy('price')">Price</th>
+        <th class="th-gemrate col-num grp" onclick="sortBy('grTotalPop')" title="GemRate: total graded, all grades">Total Pop</th>
         <th class="th-gemrate col-num" onclick="sortBy('grGemTotal')" title="GemRate: copies graded gem">Gem Total</th>
         <th class="th-gemrate col-num" onclick="sortBy('grGemRate')" title="GemRate: share of submissions graded gem">Gem Rate</th>
         <th class="th-gemrate col-num" onclick="sortBy('grLastGem')" title="GemRate: most recent gem grade">Last Gem</th>
-        <th class="col-num grp" onclick="sortBy('price')">Price</th>
         <th class="th-alt col-num grp" onclick="sortBy('altPrice')">ALT $</th>
         <th class="th-alt col-num" onclick="sortBy('altDelta')">ALT Δ</th>
         <th class="th-alt col-num" onclick="sortBy('altPct')">ALT %</th>
@@ -914,7 +913,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.20</footer>
+  <footer>v1.21</footer>
 </div>
 
 <script>
@@ -1368,12 +1367,11 @@
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+(?:\.\d+)?)$/)?.[1] || c.grade).replace(/\.0$/, ""))}</td>
       <td>${certDisplay}</td>
       <td class="pop-count" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
-      <td class="gr-cell gr-higher" data-nft="${esc(c.nftAddress)}"></td>
+      <td class="price">${priceStr}</td>
       <td class="gr-cell gr-total" data-nft="${esc(c.nftAddress)}"></td>
       <td class="gr-cell gr-gemtotal" data-nft="${esc(c.nftAddress)}"></td>
       <td class="gr-cell gr-gemrate" data-nft="${esc(c.nftAddress)}"></td>
       <td class="gr-cell gr-lastgem" data-nft="${esc(c.nftAddress)}"></td>
-      <td class="price">${priceStr}</td>
       <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
       <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="alt-pct" data-cert="${esc(c.gradingID)}"></td>
@@ -1431,7 +1429,7 @@
     if (sortCol === col) { sortDir *= -1; } else { sortCol = col; sortDir = 1; }
 
     const colOrder = ["listedAt","cardYear","cardName","cardNumber","grade","gradingID","pop",
-      "grPopHigher","grTotalPop","grGemTotal","grGemRate","grLastGem","price","altPrice","altDelta","altPct","clPrice","clDelta","clPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
+      "price","grTotalPop","grGemTotal","grGemRate","grLastGem","altPrice","altDelta","altPct","clPrice","clDelta","clPct","snkrdunkPrice","snkrdunkDelta","snkrdunkPct"];
     const thIdx = colOrder.indexOf(col);
     if (thIdx >= 0) {
       ths[thIdx].classList.add(sortDir === 1 ? "sort-asc" : "sort-desc");
@@ -2137,9 +2135,8 @@
       const td = document.querySelector(`.${cls}[data-nft="${CSS.escape(nft)}"]`);
       if (td) td.textContent = text;
     };
-    if (!pop) { for (const c of ["gr-higher","gr-total","gr-gemtotal","gr-gemrate","gr-lastgem"]) set(c, "—"); return; }
+    if (!pop) { for (const c of ["gr-total","gr-gemtotal","gr-gemrate","gr-lastgem"]) set(c, "—"); return; }
     const n = v => (v == null ? "—" : Number(v).toLocaleString());
-    set("gr-higher", n(pop.populationHigher));
     set("gr-total", n(pop.totalPopulation));
     set("gr-gemtotal", n(pop.gemTotal));
     set("gr-gemrate", pop.gemRate == null ? "—" : `${(pop.gemRate * 100).toFixed(1)}%`);
@@ -2148,7 +2145,6 @@
 
   function applyGrToRow(row, pop) {
     row._grPop = pop ?? null;
-    row._grPopHigher = pop?.populationHigher ?? null;
     row._grTotalPop  = pop?.totalPopulation ?? null;
     row._grGemTotal  = pop?.gemTotal ?? null;
     row._grGemRate   = pop?.gemRate ?? null;
