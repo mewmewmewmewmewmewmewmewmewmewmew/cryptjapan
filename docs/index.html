@@ -914,7 +914,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.23</footer>
+  <footer>v1.24</footer>
 </div>
 
 <script>
@@ -2416,6 +2416,15 @@
     "Magic The Gathering": "Magic The Gathering",
   };
   const COURTYARD_GRADERS = { PSA: "PSA", Beckett: "BGS", CGC: "CGC", TAG: "TAG", AGS: "AGS" };
+  // Courtyard labels PSA grades number-first. Filtering these server-side is
+  // what keeps the fetch to a page or two — without it a rare grade means
+  // paging through hundreds of non-matching hits, which is what tripped
+  // Algolia's rate limit. Other graders' labels vary too much to map safely,
+  // so they still fall back to filtering locally.
+  const COURTYARD_PSA_GRADES = {
+    "10": "10 GEM MINT", "9": "9 MINT", "8": "8 NM-MT", "7": "7 NM", "6": "6 EX-MT",
+    "5": "5 EX", "4": "4 VG-EX", "3": "3 VG", "2": "2 GOOD", "1": "1 PR",
+  };
 
   function normalizeCourtyardCard(hit) {
     const meta = hit.metadata ?? {};
@@ -2469,11 +2478,20 @@
     const lang = document.getElementById("language")?.value;
     if (lang) facetFilters.push([`metadata.Language:${lang}`]);
 
+    // Grades OR together within one facet group.
+    if (grader === "PSA") {
+      const wanted = getSelectedGrades()
+        .map(g => COURTYARD_PSA_GRADES[(g.match(/\d+(?:\.\d+)?/) || [])[0]])
+        .filter(Boolean);
+      if (wanted.length) facetFilters.push(wanted.map(v => `metadata.Grade:${v}`));
+    }
+
     const limit = loadLimit();
     const pageSize = 48;
     let page = 0;
     let cards = [];
     let fetchedCount = 0;
+    let rateLimited = false;
     try {
       await getSolPrice();
       await getJpyRate();
@@ -2484,11 +2502,24 @@
           query: apiSearchTerm(searchTerm),
         });
         if (facetFilters.length) params.set("facetFilters", JSON.stringify(facetFilters));
-        const res = await fetch(`${WORKER_URL}/courtyard/search`, {
+        // Space out consecutive pages; a burst of them is what earns a 429.
+        if (page > 0) await new Promise(r => setTimeout(r, 200));
+        let res = await fetch(`${WORKER_URL}/courtyard/search`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ requests: [{ indexName: COURTYARD_INDEX, params: params.toString() }] }),
         });
+        // Rate limited: back off and retry, then keep whatever we already have
+        // rather than discarding the whole fetch.
+        for (let attempt = 0; res.status === 429 && attempt < 3; attempt++) {
+          await new Promise(r => setTimeout(r, 700 * (attempt + 1)));
+          res = await fetch(`${WORKER_URL}/courtyard/search`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ requests: [{ indexName: COURTYARD_INDEX, params: params.toString() }] }),
+          });
+        }
+        if (res.status === 429) { rateLimited = true; break; }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const result = (await res.json())?.results?.[0] ?? {};
         const hits = result.hits ?? [];
@@ -2508,7 +2539,8 @@
       currentPage = 1;
       applyLiveFilters();
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
-      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Courtyard listings");
+      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Courtyard listings")
+        + (rateLimited ? " — stopped early, Courtyard rate-limited the search" : "");
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
