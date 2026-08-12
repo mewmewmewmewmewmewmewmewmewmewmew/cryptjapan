@@ -914,7 +914,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.22</footer>
+  <footer>v1.23</footer>
 </div>
 
 <script>
@@ -1359,6 +1359,20 @@
         ?? g;
   }
 
+  // Marketplaces quote in different currencies — Collector Crypt in SOL or
+  // USDC, Beezie and Phygitals in USDC, Courtyard in USDC. Everything
+  // downstream (deltas, percentages, the price filter, sorting) needs one USD
+  // figure, and this conversion had been copy-pasted seven times; a
+  // marketplace quoting anything unrecognised silently produced no deltas.
+  function listingUsd(card) {
+    const cur = card?.listing?.currency;
+    const raw = Number(card?.listing?.price ?? NaN);
+    if (!isFinite(raw)) return null;
+    if (cur === "USD" || cur === "USDC") return raw;
+    if (cur === "SOL") return solUsd ? raw * solUsd : null;
+    return null;
+  }
+
   function buildRowHtml(c) {
     const l = c.listing;
     const cardUrl = c._cardUrl || `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
@@ -1469,7 +1483,7 @@
       } else if (col.startsWith("gr") && col !== "grade" && col !== "gradingID") {
         av = a["_" + col] ?? -Infinity; bv = b["_" + col] ?? -Infinity;
       } else if (col === "price") {
-        const toUsd = c => { const cur = c.listing?.currency, raw = Number(c.listing?.price ?? 0); return cur === "USDC" ? raw : (cur === "SOL" && solUsd ? raw * solUsd : raw); };
+        const toUsd = c => listingUsd(c) ?? Number(c.listing?.price ?? 0);
         av = toUsd(a); bv = toUsd(b);
       } else if (col === "altPrice") {
         av = a._altPrice ?? -Infinity; bv = b._altPrice ?? -Infinity;
@@ -1524,9 +1538,7 @@
 
     if (!isNaN(minVal) || !isNaN(maxVal)) {
       filtered = filtered.filter(c => {
-        const cur = c.listing?.currency;
-        const raw = Number(c.listing?.price ?? 0);
-        const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+        const usdc = listingUsd(c);
         if (usdc == null) return true;
         if (!isNaN(minVal) && usdc < minVal) return false;
         if (!isNaN(maxVal) && usdc > maxVal) return false;
@@ -1592,9 +1604,7 @@
     for (const c of rows) {
       if (!c.gradingID || !altCache.has(c.gradingID)) continue;
       const result = altCache.get(c.gradingID);
-      const cur = c.listing?.currency;
-      const raw = Number(c.listing?.price ?? 0);
-      const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+      const usdc = listingUsd(c);
       if (rendered.has(c.gradingID)) {
         updateAltCell(c.gradingID, result, usdc);
         if (result?.cardName) {
@@ -1941,9 +1951,7 @@
     const certPrices = new Map();
     for (const c of cards) {
       if (!c.gradingID) continue;
-      const cur = c.listing?.currency;
-      const raw = Number(c.listing?.price ?? 0);
-      const usdc = cur === "USDC" ? raw : cur === "SOL" && rate ? raw * rate : null;
+      const usdc = listingUsd(c);
       if (usdc !== null) certPrices.set(c.gradingID, usdc);
     }
     const certCards = new Map(); // cert → row (for the combined-query tsFilter guess)
@@ -2077,9 +2085,7 @@
     for (const c of rows) {
       if (!c.gradingID || !clCache.has(c.gradingID)) continue;
       const result = clCache.get(c.gradingID);
-      const cur = c.listing?.currency;
-      const raw = Number(c.listing?.price ?? 0);
-      const usdc = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+      const usdc = listingUsd(c);
       if (rendered.has(c.gradingID)) updateClCell(c.gradingID, result, usdc);
       if (result?.price != null) {
         const clPrice = Number(result.price);
@@ -2096,9 +2102,7 @@
     const certPrices = new Map();
     for (const c of cards) {
       if (!c.gradingID) continue;
-      const cur = c.listing?.currency;
-      const raw = Number(c.listing?.price ?? 0);
-      const usdc = cur === "USDC" ? raw : cur === "SOL" && rate ? raw * rate : null;
+      const usdc = listingUsd(c);
       if (usdc !== null) certPrices.set(c.gradingID, usdc);
     }
     const seen = new Set();
@@ -2327,9 +2331,7 @@
     if (usdSnkr != null) {
       const row = allRows.find(c => c.gradingID === certNumber);
       if (row) {
-        const cur = row.listing?.currency;
-        const raw = Number(row.listing?.price ?? 0);
-        const ccUsd = cur === "USDC" ? raw : cur === "SOL" && solUsd ? raw * solUsd : null;
+        const ccUsd = listingUsd(row);
         if (ccUsd != null) {
           const delta = usdSnkr - ccUsd;
           const pct = (delta / ccUsd) * 100;
@@ -2436,7 +2438,7 @@
       name:           cardName,
       set:            hit.set ?? meta.Set ?? "",
       itemName:       hit.title ?? "",
-      listing: { price: priceUsd, currency: "USD", createdAt: listedAt, updatedAt: listedAt },
+      listing: { price: priceUsd, currency: "USDC", createdAt: listedAt, updatedAt: listedAt },
       _source:        "courtyard",
       _cardUrl:       `https://courtyard.io/asset/${hit.objectID}`,
       _image:         hit.imageUrl ?? null,
@@ -2491,8 +2493,12 @@
         const result = (await res.json())?.results?.[0] ?? {};
         const hits = result.hits ?? [];
         fetchedCount += hits.length;
-        cards = cards.concat(filterBySearch(
-          hits.map(normalizeCourtyardCard).filter(c => c.listing?.price != null), searchTerm));
+        // Grade is filtered locally (their labels vary by grader), so apply it
+        // here rather than only at render — otherwise a page of 48 could yield
+        // a single matching row and the loop would stop, thinking it was done.
+        const pageCards = clientFilterByDropdowns(
+          hits.map(normalizeCourtyardCard).filter(c => c.listing?.price != null));
+        cards = cards.concat(filterBySearch(pageCards, searchTerm));
         status.textContent = `${cards.length} Courtyard listings…`;
         if (!hits.length || page >= (result.nbPages ?? 1) - 1) break;
         page++;
