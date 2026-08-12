@@ -745,6 +745,7 @@
       <option value="cc">Collector Crypt</option>
       <option value="beezie">Beezie</option>
       <option value="phygitals">Phygitals</option>
+      <option value="courtyard">Courtyard</option>
     </select>
   </div>
 
@@ -913,7 +914,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.21</footer>
+  <footer>v1.22</footer>
 </div>
 
 <script>
@@ -1002,6 +1003,10 @@
       fetch: () => fetchPhygitalsListings(),
       paginate: true,
     },
+    courtyard: {
+      fetch: () => fetchCourtyardListings(),
+      clientFilter: clientFilterByDropdowns,
+    },
   };
 
   async function fetchListings(resetPage = false, forceRefresh = false) {
@@ -1023,6 +1028,7 @@
   const PLATFORM_FILTER_DEFAULTS = {
     beezie:    { gradingCompany: "",    grades: [],             language: "Japanese", step: "48", orderBy: "listedDateDesc" },
     phygitals: { gradingCompany: "PSA", grades: ["GEM-MT 10"], language: "Japanese", step: "48", orderBy: "listedDateDesc" },
+    courtyard: { gradingCompany: "PSA", grades: ["GEM-MT 10"], language: "Japanese", step: "48", orderBy: "listedDateDesc" },
   };
 
   function applyFilterState(src, state) {
@@ -1343,6 +1349,16 @@
   }
   // ─────────────────────────────────────────────────────────────────────
 
+  // Graders label grades differently: "GEM-MT 8" puts the number last,
+  // Courtyard's "10 GEM MINT" puts it first. Try both before giving up and
+  // showing the label as-is.
+  function gradeNumber(grade) {
+    const g = String(grade ?? "");
+    return g.match(/(\d+(?:\.\d+)?)\s*$/)?.[1]
+        ?? g.match(/^\s*(\d+(?:\.\d+)?)/)?.[1]
+        ?? g;
+  }
+
   function buildRowHtml(c) {
     const l = c.listing;
     const cardUrl = c._cardUrl || `https://collectorcrypt.com/assets/solana/${c.nftAddress}`;
@@ -1357,14 +1373,15 @@
     const isJpn = !c.language || c.language.toLowerCase() === "japanese";
     const cardDisplayName = c.cardName || c.name || "";
     const cardNumStr = (c.itemName || "").match(/#(\d+)/)?.[1] ?? "";
-    const cardNumDisplay = cardNumStr ? cardNumStr.padStart(3, "0") : "—";
+    const cardNumDisplay = cardNumStr ? cardNumStr.padStart(3, "0")
+                         : (c._altCardNumber || "—");
     const cardImg = c._image ?? pickCardImage(c);
     return `<tr data-nft="${esc(c.nftAddress)}">
       <td class="date-col">${formatListedDate(c)}</td>
       <td class="year-col">${itemYear(c) || "—"}</td>
       <td class="card-name-cell" data-cert="${esc(c.gradingID)}" title="${esc(c.itemName)}"${cardImg ? ` data-img="${esc(cardImg)}" data-img-kind="card"` : ""}><a href="${cardUrl}" target="_blank" rel="noopener" class="card-link">${esc(c._altCardName || cardDisplayName || c.itemName)}</a></td>
       <td class="num-col">${esc(cardNumDisplay)}</td>
-      <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + ((c.grade || "").match(/(\d+(?:\.\d+)?)$/)?.[1] || c.grade).replace(/\.0$/, ""))}</td>
+      <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + gradeNumber(c.grade)).replace(/\.0$/, "")}</td>
       <td>${certDisplay}</td>
       <td class="pop-count" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
       <td class="price">${priceStr}</td>
@@ -2385,6 +2402,119 @@
   }
   // ─────────────────────────────────────────────────────────────────────
 
+  // ── Courtyard marketplace integration ────────────────────────────────
+  // Courtyard's browse runs on an Algolia index. Their own site asks for only
+  // two attributes per hit and then hydrates each card separately; requesting
+  // the full record instead gives 48 complete listings in one call.
+  const COURTYARD_INDEX = "marketplace_prod_recently_listed";   // already newest-first
+  const COURTYARD_CATEGORIES = {
+    "Pokemon": "Pokémon",                 // their facet value carries the accent
+    "One Piece": "One Piece",
+    "Yu-Gi-Oh!": "Yu-Gi-Oh!",
+    "Magic The Gathering": "Magic The Gathering",
+  };
+  const COURTYARD_GRADERS = { PSA: "PSA", Beckett: "BGS", CGC: "CGC", TAG: "TAG", AGS: "AGS" };
+
+  function normalizeCourtyardCard(hit) {
+    const meta = hit.metadata ?? {};
+    const cert = hit.certification ?? {};
+    const cardName = meta["Title/PKMN"] || meta["Title/Subject"] || "";
+    // Year is a free-text field ("1999", "4/00", "2023-24"); keep it only when
+    // it reads as a plain 4-digit year.
+    const yearRaw = String(meta.Year ?? hit.year ?? "");
+    const year = /^\d{4}$/.test(yearRaw) ? parseInt(yearRaw, 10) : null;
+    const priceUsd = hit.price?.amountUsd ?? hit.latestListing?.price?.amount?.usd ?? null;
+    const listedAt = hit.listedAt ?? hit.createdAt ?? null;
+    return {
+      nftAddress:     `courtyard-${hit.objectID}`,
+      gradingID:      cert.number ?? meta.Serial ?? "",
+      gradingCompany: cert.agency ?? meta.Grader ?? "",
+      grade:          cert.grade ?? meta.Grade ?? "",
+      year,
+      language:       meta.Language ?? "",
+      cardName,
+      name:           cardName,
+      set:            hit.set ?? meta.Set ?? "",
+      itemName:       hit.title ?? "",
+      listing: { price: priceUsd, currency: "USD", createdAt: listedAt, updatedAt: listedAt },
+      _source:        "courtyard",
+      _cardUrl:       `https://courtyard.io/asset/${hit.objectID}`,
+      _image:         hit.imageUrl ?? null,
+      _altCardName:   cardName,
+      _altCardNumber: hit.assetNumber ? normalizeCardNum(String(hit.assetNumber)) : null,
+    };
+  }
+
+  async function fetchCourtyardListings() {
+    const searchTerm = marketplaceSearchTerm();
+    const btn = document.getElementById("fetch-btn");
+    const status = document.getElementById("status");
+    btn.disabled = true;
+    status.textContent = "Fetching Courtyard listings…";
+    document.getElementById("results-body").innerHTML = "";
+    document.getElementById("empty-msg").style.display = "none";
+    allRows = [];
+
+    // Category, grader and language map cleanly onto Algolia facets. Grade is
+    // left to the client filter: their grade strings ("10 GEM MINT") don't
+    // match ours ("GEM-MT 10") and differ per grader, so matching on the
+    // numeric grade locally is more reliable than maintaining a lookup.
+    const facetFilters = [];
+    const cat = COURTYARD_CATEGORIES[document.getElementById("categories").value];
+    if (cat) facetFilters.push([`metadata.Category:${cat}`]);
+    const grader = COURTYARD_GRADERS[document.getElementById("gradingCompany")?.value];
+    if (grader) facetFilters.push([`metadata.Grader:${grader}`]);
+    const lang = document.getElementById("language")?.value;
+    if (lang) facetFilters.push([`metadata.Language:${lang}`]);
+
+    const limit = loadLimit();
+    const pageSize = 48;
+    let page = 0;
+    let cards = [];
+    let fetchedCount = 0;
+    try {
+      await getSolPrice();
+      await getJpyRate();
+      while (page <= 100 && cards.length < limit) {
+        const params = new URLSearchParams({
+          hitsPerPage: String(pageSize),
+          page: String(page),
+          query: apiSearchTerm(searchTerm),
+        });
+        if (facetFilters.length) params.set("facetFilters", JSON.stringify(facetFilters));
+        const res = await fetch(`${WORKER_URL}/courtyard/search`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ requests: [{ indexName: COURTYARD_INDEX, params: params.toString() }] }),
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const result = (await res.json())?.results?.[0] ?? {};
+        const hits = result.hits ?? [];
+        fetchedCount += hits.length;
+        cards = cards.concat(filterBySearch(
+          hits.map(normalizeCourtyardCard).filter(c => c.listing?.price != null), searchTerm));
+        status.textContent = `${cards.length} Courtyard listings…`;
+        if (!hits.length || page >= (result.nbPages ?? 1) - 1) break;
+        page++;
+      }
+      if (cards.length > limit) cards = cards.slice(0, limit);
+      allRows = cards;
+      currentPage = 1;
+      applyLiveFilters();
+      if (!cards.length) document.getElementById("empty-msg").style.display = "block";
+      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Courtyard listings");
+      window.scrollTo(0, 0);
+      enableRefreshButtons();
+      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
+        fetchGemratePops(cards);
+    } catch (e) {
+      status.textContent = `Courtyard error: ${e.message}`;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  // ─────────────────────────────────────────────────────────────────────
+
   // ── Beezie marketplace integration ──────────────────────────────────
   function beezieAttr(item, traitType) {
     return item.metadata?.attributes?.find(a => a.trait_type === traitType)?.trait_value ?? null;
@@ -2439,6 +2569,7 @@
   const PLATFORM_CATEGORIES = {
     beezie: Object.keys(BEEZIE_CATEGORY_IDS),
     phygitals: ["Pokemon", "One Piece"],
+    courtyard: Object.keys(COURTYARD_CATEGORIES),
   };
 
   function syncCategoryOptions() {

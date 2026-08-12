@@ -81,6 +81,10 @@ export default {
       return phygitalsListings(url);
     }
 
+    if (path === "/courtyard/search") {
+      return courtyardSearch(request);
+    }
+
     if (path.startsWith("/marketplace") || path.startsWith("/cart") || path.startsWith("/cards/")) {
       return proxyCC(path, url);
     }
@@ -916,6 +920,37 @@ async function cardladderPrice(url, env) {
     const msg = String(e);
     return json({ clPrice: null, error: msg, quotaExceeded: isQuotaError(msg) });
   }
+}
+
+// Courtyard's marketplace runs on Algolia. The application id and search key
+// below are the ones their own site ships in its frontend bundle: Algolia
+// search-only keys are public by design and read-only. Proxying rather than
+// calling from the browser lets us send a Referer, since search keys can carry
+// referer restrictions.
+const ALGOLIA_APP_ID = "Y8TL3M06QA";
+const ALGOLIA_SEARCH_KEY = "3b3ed18284ca0baee9a496aea5f093d6";
+
+async function courtyardSearch(request) {
+  const body = await request.text();
+  const target = `https://${ALGOLIA_APP_ID}-dsn.algolia.net/1/indexes/*/queries`
+    + `?x-algolia-application-id=${ALGOLIA_APP_ID}`
+    + `&x-algolia-api-key=${ALGOLIA_SEARCH_KEY}`;
+  const upstream = await fetch(target, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "Accept": "application/json",
+      "Origin": "https://courtyard.io",
+      "Referer": "https://courtyard.io/",
+    },
+    body,
+    signal: AbortSignal.timeout(10000),
+  });
+  const text = await upstream.text();
+  return new Response(text, {
+    status: upstream.status,
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
 }
 
 async function phygitalsListings(workerUrl) {
