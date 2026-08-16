@@ -20,6 +20,14 @@ jobs:
           HASH=$(echo -n "${{ secrets.SITE_PASSWORD }}" | sha256sum | cut -d' ' -f1)
           sed -i "s/__PASSWORD_HASH__/$HASH/g" docs/index.html
 
+      - name: Inject Google Analytics ID
+        env:
+          GA_ID: ${{ vars.GA_MEASUREMENT_ID }}
+        run: |
+          # Unset leaves the placeholder replaced by an empty string, which
+          # disables analytics rather than loading a broken tag.
+          sed -i "s/__GA_ID__/${GA_ID}/g" docs/index.html
+
       - name: Deploy to gh-pages
         run: |
           git config user.email "action@github.com"

@@ -5,6 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Marketplace Scanner</title>
   <script>
+    // Google Analytics 4. The measurement ID is injected at deploy time from the
+    // GA_MEASUREMENT_ID repo variable; when it is absent (opening the file
+    // locally, or the variable is unset) GA never loads and track() is a no-op.
+    (function () {
+      var id = "__GA_ID__";
+      window.GA_ID = id.indexOf("G-") === 0 ? id : "";
+      window.dataLayer = window.dataLayer || [];
+      window.gtag = function () { dataLayer.push(arguments); };
+      window.track = function (name, params) { if (window.GA_ID) gtag("event", name, params || {}); };
+      if (!window.GA_ID) return;
+      var s = document.createElement("script");
+      s.async = true;
+      s.src = "https://www.googletagmanager.com/gtag/js?id=" + window.GA_ID;
+      document.head.appendChild(s);
+      gtag("js", new Date());
+      gtag("config", window.GA_ID);
+    })();
+  </script>
+  <script>
     // Apply saved theme before paint to avoid a flash; default follows the OS.
     (function () {
       try {
@@ -914,7 +933,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.25</footer>
+  <footer>v1.26</footer>
 </div>
 
 <script>
@@ -935,18 +954,31 @@
       const hash = await sha256(input);
       if (hash === PASSWORD_HASH) {
         sessionStorage.setItem("auth", "1");
+        markAuthed("unlock_success");
         document.getElementById("lock-screen").remove();
         loadCardCache();
       } else {
+        track("unlock_failed");
         document.getElementById("lock-error").textContent = "Incorrect password.";
       }
     } catch (err) {
+      track("unlock_failed", { reason: err.message });
       document.getElementById("lock-error").textContent = err.message;
     }
   }
 
+  // Flags the visitor as past the gate. The user property sticks to every
+  // later event, so any report can be segmented on authed vs. not.
+  function markAuthed(event) {
+    if (window.GA_ID) gtag("set", "user_properties", { authed: "yes" });
+    track(event);
+  }
+
   if (sessionStorage.getItem("auth") === "1") {
+    markAuthed("session_resumed");
     document.getElementById("lock-screen").remove();
+  } else {
+    track("gate_shown");
   }
 
   const WORKER_URL = "https://cryptjapan-proxy.mew-860.workers.dev";
