@@ -933,7 +933,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.26</footer>
+  <footer>v1.27</footer>
 </div>
 
 <script>
@@ -990,8 +990,6 @@
   let previousCardPrices = new Map(); // nftAddress → price, for detecting new/repriced listings
   let currentPage = 1;
   let totalPages = 1;
-  const platformFilterCache = {};
-  let _activeSrc = document.getElementById("source")?.value ?? "cc";
 
   // ── Platform registry ────────────────────────────────────────────────
   // To add a new platform: add an entry to PLATFORMS with a fetch() method.
@@ -1051,32 +1049,28 @@
     return {
       gradingCompany: document.getElementById("gradingCompany")?.value ?? "",
       grades: getSelectedGrades(),
+      // "Any grade" is a real choice, not the absence of one: without recording
+      // it, restoring a state with no specific grades looked like "nothing was
+      // selected" and the platform default was applied over the top.
+      anyGrade: !!document.querySelector('#grade-menu input[value=""]:checked'),
       language: document.getElementById("language")?.value ?? "",
       step: document.getElementById("step")?.value ?? "48",
       orderBy: document.getElementById("orderBy")?.value ?? "listedDateDesc",
     };
   }
 
-  const PLATFORM_FILTER_DEFAULTS = {
-    beezie:    { gradingCompany: "",    grades: [],             language: "Japanese", step: "48", orderBy: "listedDateDesc" },
-    phygitals: { gradingCompany: "PSA", grades: ["GEM-MT 10"], language: "Japanese", step: "48", orderBy: "listedDateDesc" },
-    courtyard: { gradingCompany: "PSA", grades: ["GEM-MT 10"], language: "Japanese", step: "48", orderBy: "listedDateDesc" },
-  };
-
-  function applyFilterState(src, state) {
-    const s = state ?? PLATFORM_FILTER_DEFAULTS[src] ?? null;
-    if (s) {
-      document.getElementById("gradingCompany").value = s.gradingCompany;
-      document.getElementById("language").value = s.language;
-      document.getElementById("step").value = s.step;
-      document.getElementById("orderBy").value = s.orderBy;
-    }
-    syncSdAvailability(); // language may have changed with the platform
-    updateGradeOptions(); // rebuild menu for company + set platform default grade
-    if (s?.grades?.length > 0) {
+  function applyFilterState(s) {
+    if (!s) return;
+    document.getElementById("gradingCompany").value = s.gradingCompany;
+    document.getElementById("language").value = s.language;
+    document.getElementById("step").value = s.step;
+    document.getElementById("orderBy").value = s.orderBy;
+    syncSdAvailability(); // the SD columns depend on language
+    updateGradeOptions(); // rebuilding the menu for the grader clears the ticks
+    if (s.anyGrade || s.grades?.length > 0) {
       const menu = document.getElementById("grade-menu");
       menu.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-        cb.checked = s.grades.includes(cb.value);
+        cb.checked = s.anyGrade ? cb.value === "" : s.grades.includes(cb.value);
       });
       if (!menu.querySelector('input[type="checkbox"]:checked')) {
         const anyBox = menu.querySelector('input[value=""]');
@@ -1087,10 +1081,13 @@
     }
   }
 
+  // Grader, grade, language, sort and load size mean the same thing on all four
+  // marketplaces, so switching marketplace now carries the current selection
+  // over instead of resetting to that platform's own defaults. Category is the
+  // one filter that genuinely differs between them, and syncCategoryOptions
+  // moves off a value the new marketplace can't serve.
   function onSourceChange() {
-    platformFilterCache[_activeSrc] = captureFilterState();
-    _activeSrc = document.getElementById("source")?.value ?? "cc";
-    applyFilterState(_activeSrc, platformFilterCache[_activeSrc] ?? null);
+    applyFilterState(captureFilterState());
     syncCategoryOptions();
     syncGemrateAvailability();
   }
@@ -1413,7 +1410,13 @@
     const priceStr = l.currency === "SOL"
       ? (solUsd ? `$${(price * solUsd).toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})} <span class="price-sub">(${solAmt})</span>` : solAmt)
       : `$${price.toLocaleString(undefined, {minimumFractionDigits: 2, maximumFractionDigits: 2})}`;
-    const certDisplay = c.gradingCompany === "PSA"
+    // Every reference price is looked up by cert, so a listing without one can
+    // never fill those columns. Say so up front instead of leaving the loading
+    // dots spinning forever on a lookup that is never going to be made.
+    const hasCert = !!String(c.gradingID ?? "").trim();
+    const wait = hasCert ? '<span class="alt-loading">···</span>' : "—";
+    const certDisplay = !hasCert ? "—"
+      : c.gradingCompany === "PSA"
       ? `<a href="https://www.psacard.com/cert/${esc(c.gradingID)}/psa" target="_blank" rel="noopener" style="color:#94a3b8">${esc(c.gradingID)}</a>`
       : esc(c.gradingID);
     const isJpn = !c.language || c.language.toLowerCase() === "japanese";
@@ -1429,19 +1432,19 @@
       <td class="num-col">${esc(cardNumDisplay)}</td>
       <td title="${esc(c.grade)}">${esc((c.gradingCompany || "") + " " + gradeNumber(c.grade)).replace(/\.0$/, "")}</td>
       <td>${certDisplay}</td>
-      <td class="pop-count" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="pop-count" data-cert="${esc(c.gradingID)}">${wait}</td>
       <td class="price">${priceStr}</td>
       <td class="gr-cell gr-total" data-nft="${esc(c.nftAddress)}"></td>
       <td class="gr-cell gr-gemtotal" data-nft="${esc(c.nftAddress)}"></td>
       <td class="gr-cell gr-gemrate" data-nft="${esc(c.nftAddress)}"></td>
       <td class="gr-cell gr-lastgem" data-nft="${esc(c.nftAddress)}"></td>
-      <td class="alt-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="alt-price" data-cert="${esc(c.gradingID)}">${wait}</td>
       <td class="alt-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="alt-pct" data-cert="${esc(c.gradingID)}"></td>
-      <td class="cl-price" data-cert="${esc(c.gradingID)}"><span class="alt-loading">···</span></td>
+      <td class="cl-price" data-cert="${esc(c.gradingID)}">${wait}</td>
       <td class="cl-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="cl-pct" data-cert="${esc(c.gradingID)}"></td>
-      <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}">${isJpn ? '<span class="alt-loading">···</span>' : '—'}</td>
+      <td class="snkrdunk-price" data-cert="${esc(c.gradingID)}">${isJpn ? wait : '—'}</td>
       <td class="snkrdunk-delta" data-cert="${esc(c.gradingID)}"></td>
       <td class="snkr-pct" data-cert="${esc(c.gradingID)}"></td>
       <td class="hide-cell"><button class="hide-toggle" onclick="toggleRowHide('${esc(c.nftAddress)}')" title="Hide row">${EYE_OPEN}</button></td>
@@ -2760,6 +2763,32 @@
   // ─────────────────────────────────────────────────────────────────────
 
   // ── Phygitals marketplace integration ───────────────────────────────
+
+  // Phygitals publishes each attribute as a {key, value} pair, and the key it
+  // uses for the grading cert is not consistent between collections ("Cert
+  // Number", "Serial", "Certification #"…). Every reference price — ALT,
+  // CardLadder, and the SNKRDUNK lookup that follows ALT's card name — is keyed
+  // on that number, so a spelling we didn't guess meant an entire marketplace
+  // quietly showed no reference data at all. Match any cert-ish key first, then
+  // fall back to recognising the value: a grading cert is a bare 7–12 digit
+  // run, which no card number (1–3 digits), year, or price here can look like.
+  const CERT_KEY_RE = /cert|serial|grading\s*id/i;
+  const NOT_CERT_KEY_RE = /year|date|price|pop|quantity|supply|edition|mint|token|listing|owner|wallet/i;
+  const CERT_VALUE_RE = /^\d{7,12}$/;
+
+  function phygitalsCert(item, meta, attr) {
+    const clean = v => String(v ?? "").trim();
+    const named = meta.find(m => CERT_KEY_RE.test(clean(m.key)) && clean(m.value));
+    if (named) return clean(named.value);
+    for (const k of ["certNumber", "certificationNumber", "cert", "serialNumber", "serial", "gradingId"]) {
+      if (clean(item?.[k])) return clean(item[k]);
+    }
+    const byShape = meta.find(m =>
+      !NOT_CERT_KEY_RE.test(clean(m.key)) && CERT_VALUE_RE.test(clean(m.value)));
+    if (byShape) return clean(byShape.value);
+    return clean(attr("Title") ?? item?.name).match(/\b\d{7,12}\b/)?.[0] ?? "";
+  }
+
   function normalizePhygitalsCard(item) {
     const meta = item.metadata ?? [];  // [{key, value}, ...]
     const attr = name => meta.find(m => (m.key ?? "").toLowerCase() === name.toLowerCase())?.value ?? null;
@@ -2771,8 +2800,12 @@
     const category = attr("Category") ?? "";
     const set      = attr("Set") ?? attr("Set Name") ?? "";
     const yearRaw  = attr("Year") ?? attr("Set Release Date") ?? "";
-    const title    = attr("Title") ?? item.name ?? "";
-    const serial   = attr("Cert Number") ?? attr("Cert") ?? attr("Serial") ?? "";
+    const title    = attr("Title") ?? attr("Name") ?? item.name ?? item.title ?? "";
+    // A real card name, when the listing carries one, beats matching the search
+    // against the title — the title bundles the set in, which is how a Squirtle
+    // from the "Mew EN-151" set answers to a search for "mew".
+    const cardName = attr("Card Name") ?? attr("Character") ?? "";
+    const serial   = phygitalsCert(item, meta, attr);
     // price is micro-USDC (6 decimal places)
     const priceUsdc = item.price != null ? parseFloat(item.price) / 1_000_000 : null;
     const createdAt = item.createdAt ?? item.listedAt ?? null;
@@ -2781,12 +2814,15 @@
     const cardUrl   = `https://www.phygitals.com/card/${address}`;
     return {
       nftAddress:     `phygitals-${address}`,
-      gradingID:      serial || address,
+      // Deliberately not falling back to the mint address: it isn't a cert, and
+      // using one as if it were burned an ALT lookup per row and showed a dead
+      // psacard.com link. An empty cert renders as "—" and is skipped instead.
+      gradingID:      serial,
       gradingCompany: grader,
       grade,
       year:           parseInt(yearRaw) || null,
       language,
-      cardName:       "",
+      cardName,
       name:           "",
       set,
       itemName:       title,
@@ -2880,7 +2916,12 @@
       currentPage = 1;
       applyLiveFilters();
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
-      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Phygitals listings");
+      // Reference prices all hang off the cert, so a listing without one is the
+      // single likeliest reason a scan comes back with empty ALT columns. Count
+      // them in the status line rather than leaving it to look like ALT is down.
+      const noCert = cards.filter(c => !c.gradingID).length;
+      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Phygitals listings")
+        + (noCert ? ` — ${noCert} without a cert number, so no ALT match` : "");
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
