@@ -933,7 +933,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.27</footer>
+  <footer>v1.28</footer>
 </div>
 
 <script>
@@ -2776,17 +2776,54 @@
   const NOT_CERT_KEY_RE = /year|date|price|pop|quantity|supply|edition|mint|token|listing|owner|wallet/i;
   const CERT_VALUE_RE = /^\d{7,12}$/;
 
+  // A cert on the listing object rather than in its metadata, possibly nested —
+  // Courtyard keeps theirs at certification.number, so the same shape is likely
+  // here. Only accept a cert-shaped value, so a "certificateUrl" or a boolean
+  // "certified" flag can't be mistaken for the number itself.
+  const CERT_FIELD_VALUE_RE = /^[A-Za-z0-9-]{5,15}$/;
+
+  // inCert says the enclosing key already named this a certification block, so
+  // its plain "number" / "id" field is the cert — that is how Courtyard shapes
+  // theirs (certification.number) and the likeliest shape to meet here.
+  const CERT_SUBKEY_RE = /^(number|no|num|id|value|code)$/i;
+
+  function scanForCert(obj, depth = 1, inCert = false) {
+    if (!obj || typeof obj !== "object" || depth > 3) return "";
+    const scalar = v => (typeof v === "string" || typeof v === "number") ? String(v).trim() : "";
+    for (const [k, v] of Object.entries(obj)) {
+      const named = CERT_KEY_RE.test(k) || (inCert && CERT_SUBKEY_RE.test(k));
+      if (named && CERT_FIELD_VALUE_RE.test(scalar(v))) return scalar(v);
+    }
+    for (const [k, v] of Object.entries(obj)) {
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        const found = scanForCert(v, depth + 1, CERT_KEY_RE.test(k));
+        if (found) return found;
+      }
+    }
+    return "";
+  }
+
   function phygitalsCert(item, meta, attr) {
     const clean = v => String(v ?? "").trim();
     const named = meta.find(m => CERT_KEY_RE.test(clean(m.key)) && clean(m.value));
     if (named) return clean(named.value);
-    for (const k of ["certNumber", "certificationNumber", "cert", "serialNumber", "serial", "gradingId"]) {
-      if (clean(item?.[k])) return clean(item[k]);
-    }
+    const onItem = scanForCert(item);
+    if (onItem) return onItem;
     const byShape = meta.find(m =>
       !NOT_CERT_KEY_RE.test(clean(m.key)) && CERT_VALUE_RE.test(clean(m.value)));
     if (byShape) return clean(byShape.value);
     return clean(attr("Title") ?? item?.name).match(/\b\d{7,12}\b/)?.[0] ?? "";
+  }
+
+  // When a scan finds no certs at all, the useful thing to report is what the
+  // listing does carry, so the missing field can be named without digging
+  // through a network tab.
+  function phygitalsFieldsHint(item) {
+    if (!item) return "";
+    const meta = (item.metadata ?? []).map(m => m?.key).filter(Boolean);
+    const top = Object.keys(item).filter(k => k !== "metadata");
+    const all = [...top, ...meta].slice(0, 40);
+    return all.length ? ` — fields seen: ${all.join(", ")}` : "";
   }
 
   function normalizePhygitalsCard(item) {
@@ -2876,6 +2913,7 @@
     let page = 0;
     let cards = [];
     let fetchedCount = 0;
+    let sampleItem = null;
     try {
       await getSolPrice();
       await getJpyRate();
@@ -2894,6 +2932,7 @@
         const data = await res.json();
         const rawItems = data.listings ?? data.data ?? data.items ?? [];
         fetchedCount += rawItems.length;
+        if (!sampleItem && rawItems.length) sampleItem = rawItems[0];
         // Only "Pokemon" is a confirmed category string for this API, so the
         // value sent for anything else is inferred. Re-check each listing's own
         // category rather than trusting the filter was understood; rows that
@@ -2921,7 +2960,8 @@
       // them in the status line rather than leaving it to look like ALT is down.
       const noCert = cards.filter(c => !c.gradingID).length;
       status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Phygitals listings")
-        + (noCert ? ` — ${noCert} without a cert number, so no ALT match` : "");
+        + (noCert ? ` — ${noCert} without a cert number, so no ALT match`
+                     + (noCert === cards.length ? phygitalsFieldsHint(sampleItem) : "") : "");
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
