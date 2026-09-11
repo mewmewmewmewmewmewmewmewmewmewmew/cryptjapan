@@ -933,7 +933,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.30</footer>
+  <footer>v1.31</footer>
 </div>
 
 <script>
@@ -2835,8 +2835,14 @@
     for (const [k, v] of attrs) {
       if (!NOT_CERT_KEY_RE.test(k) && CERT_VALUE_RE.test(v)) return v;
     }
-    const title = attrs.get("title") ?? item?.name ?? "";
-    return String(title).match(/\b\d{7,12}\b/)?.[0] ?? "";
+    // Last resort: a cert spelled out inside the human-readable strings. A run
+    // of 7–12 digits can't be a year or a card number, and Phygitals slugs are
+    // built from the card's own title, so one appearing there is the cert.
+    for (const text of [attrs.get("title"), item?.name, item?.slug]) {
+      const found = String(text ?? "").match(/\b\d{7,12}\b/)?.[0];
+      if (found) return found;
+    }
+    return "";
   }
 
   // When a scan finds no certs at all, the useful thing to report is what the
@@ -2866,8 +2872,10 @@
     let props = "";
     try { props = JSON.stringify(item.properties ?? null) ?? ""; } catch { props = "(unreadable)"; }
     if (props.length > 400) props = props.slice(0, 400) + "…";
+    const strings = ["name", "slug"].map(k => `${k}=${String(item[k] ?? "").slice(0, 80)}`);
     const all = [...top, ...attrs].slice(0, 60);
     return (all.length ? ` — fields seen: ${all.join(", ")}` : "")
+         + ` — ${strings.join(" | ")}`
          + (certish.length ? ` — cert-shaped: ${certish.join(", ")}` : "")
          + (props && props !== "null" ? ` — properties: ${props}` : " — properties: (none)");
   }
