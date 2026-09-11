@@ -933,7 +933,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.32</footer>
+  <footer>v1.33</footer>
 </div>
 
 <script>
@@ -2927,22 +2927,19 @@
     };
   }
 
-  // The listing response carries no grading cert, so each card's detail
-  // procedure has to supply it. Their card page calls
-  // marketplace/singleNft/chart for the price history, so a sibling under the
-  // same router holds the card itself — try the conventional names once and
-  // reuse whichever answers with a cert.
+  // The listing response carries no grading cert, grade, language or set — the
+  // card page gets those from marketplace/singleNft/get. The alternatives are
+  // kept as a fallback in case that procedure is ever renamed; they cost one
+  // extra request only if the first stops working.
   const PHYGITALS_DETAIL_PROCEDURES = [
-    "marketplace/singleNft",
-    "marketplace/singleNft/info",
+    "marketplace/singleNft/get",   // confirmed: the card page's own detail call
     "marketplace/singleNft/details",
-    "marketplace/singleNft/nft",
-    "marketplace/singleNft/card",
-    "marketplace/singleNft/chart",
+    "marketplace/singleNft",
   ];
   const MAX_CERT_LOOKUPS = 200;
   let phygitalsProcedure = null;          // discovered once, then reused
   const phygitalsCertCache = new Map();   // address → cert | ""
+  const phygitalsDetailCache = new Map(); // address → detail payload
 
   async function phygitalsDetail(procedure, address) {
     const data = encodeURIComponent(JSON.stringify({ json: { address } }));
@@ -2957,13 +2954,55 @@
     }
   }
 
-  // The detail payload's shape is unknown, so resolve it the same
-  // shape-agnostic way as the listings rather than assuming a field path.
+  // Every scalar field in the payload, however deeply nested, flattened to
+  // fieldName → value. The detail payload's exact shape is unknown and its
+  // fields may be plain scalars rather than the {key, value} pairs the listings
+  // use, so lookups go by field name across the whole object instead of a path.
+  // First occurrence wins, since the outermost is the least qualified.
+  function flattenScalars(obj, out = new Map(), depth = 0) {
+    if (!obj || typeof obj !== "object" || depth > 5 || out.size > 400) return out;
+    for (const [k, v] of Object.entries(obj)) {
+      if (v && typeof v === "object") flattenScalars(v, out, depth + 1);
+      else if ((typeof v === "string" || typeof v === "number") && String(v).trim()) {
+        const key = k.toLowerCase();
+        if (!out.has(key)) out.set(key, String(v).trim());
+      }
+    }
+    return out;
+  }
+
   function certFromDetail(body) {
     for (const [k, v] of collectAttrs(body)) {
       if (CERT_KEY_RE.test(k) && v) return v;
     }
+    const flat = flattenScalars(body);
+    for (const [k, v] of flat) {
+      if (CERT_KEY_RE.test(k) && CERT_FIELD_VALUE_RE.test(v)) return v;
+    }
     return scanForCert(body) || "";
+  }
+
+  // The listing gave us no grade, language or set either, and the detail call
+  // has them. Only fills what is missing, so nothing the listing did supply is
+  // overwritten by a guess.
+  function enrichFromDetail(card, body) {
+    // Attributes may arrive as labelled pairs or as plain nested scalars, so
+    // consult both readings of the payload before giving up on a field.
+    const attrs = collectAttrs(body);
+    const flat = flattenScalars(body);
+    const pick = (...names) => {
+      for (const n of names) { const v = attrs.get(n) ?? flat.get(n); if (v) return v; }
+      return "";
+    };
+    if (!card.grade) {
+      const g = pick("grade", "gradename", "gradelabel", "gradevalue");
+      if (g) card.grade = String(g).replace(/^[A-Za-z]+\s*/, "").trim();
+    }
+    if (!card.gradingCompany) card.gradingCompany = pick("grader", "gradingcompany", "gradingservice");
+    if (!card.language) card.language = pick("language", "lang");
+    if (!card.set) card.set = pick("set", "setname", "series");
+    if (!card.cardName) card.cardName = pick("cardname", "cardtitle");
+    if (!card.year) card.year = parseInt(pick("year", "releaseyear"), 10) || null;
   }
 
   // Fills in c.gradingID where it can, and returns a note for the status line.
@@ -2981,9 +3020,13 @@
         if (cert) {
           phygitalsProcedure = proc;
           phygitalsCertCache.set(pending[0]._address, cert);
+          phygitalsDetailCache.set(pending[0]._address, body);
           break;
         }
-        tried.push(`${proc.split("/").pop()}: no cert`);
+        // Responded but held no cert we recognise: name its fields, so the one
+        // holding the cert is identifiable without another round of guessing.
+        const keys = [...flattenScalars(body).keys()].slice(0, 40).join(",");
+        tried.push(`${proc.split("/").pop()}: no cert in [${keys}]`);
       }
       if (!phygitalsProcedure) return ` — card detail lookup found no cert (${tried.join("; ")})`;
     }
@@ -2994,8 +3037,11 @@
         if (!phygitalsCertCache.has(c._address)) {
           const { body } = await phygitalsDetail(phygitalsProcedure, c._address);
           phygitalsCertCache.set(c._address, body ? certFromDetail(body) : "");
+          if (body) phygitalsDetailCache.set(c._address, body);
         }
         c.gradingID = phygitalsCertCache.get(c._address) || "";
+        const detail = phygitalsDetailCache.get(c._address);
+        if (detail) enrichFromDetail(c, detail);
         done++;
       }));
       status.textContent = `Resolving certs ${done}/${pending.length}…`;
