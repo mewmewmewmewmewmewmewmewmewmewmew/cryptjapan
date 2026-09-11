@@ -85,6 +85,10 @@ export default {
       return phygitalsOrpc(path.slice("/phygitals/orpc/".length), url);
     }
 
+    if (path === "/phygitals/probe") {
+      return phygitalsProbe(url);
+    }
+
     if (path === "/courtyard/search") {
       return courtyardSearch(request);
     }
@@ -1013,6 +1017,51 @@ async function phygitalsOrpc(procedure, workerUrl) {
       }
     },
   );
+}
+
+// Diagnostic. The listing API exposes no cert and the card detail procedure's
+// name is unknown, so this fetches the card page itself — server-side, where
+// there is no CORS to fight — and reports what it references: the oRPC paths
+// its bundle calls, any text around the word "cert", and cert-shaped numbers.
+// Enough to identify where the grading cert lives, or to establish that the
+// site never publishes it.
+async function phygitalsProbe(workerUrl) {
+  const address = workerUrl.searchParams.get("address") || "";
+  if (!/^[A-Za-z0-9]{32,50}$/.test(address)) {
+    return new Response(JSON.stringify({ error: "pass ?address=<solana address>" }), {
+      status: 400,
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+  try {
+    const page = await fetch(`https://www.phygitals.com/card/${address}`, {
+      headers: {
+        "Accept": "text/html,application/xhtml+xml",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const html = await page.text();
+    const uniq = (re, cap) => [...new Set(html.match(re) || [])].slice(0, cap);
+    const certContexts = [];
+    const re = /.{0,100}cert.{0,140}/gi;
+    let m;
+    while ((m = re.exec(html)) !== null && certContexts.length < 8) certContexts.push(m[0]);
+    return new Response(JSON.stringify({
+      status: page.status,
+      htmlLength: html.length,
+      orpcPaths: uniq(/\/api\/orpc\/[A-Za-z0-9_/.-]+/g, 40),
+      apiPaths: uniq(/\/api\/(?!orpc)[A-Za-z0-9_/.-]+/g, 20),
+      certContexts,
+      digitRuns: uniq(/\b\d{7,12}\b/g, 30),
+      hasNextData: html.includes("__NEXT_DATA__"),
+    }, null, 1), { headers: { ...CORS, "Content-Type": "application/json" } });
+  } catch (e) {
+    return new Response(JSON.stringify({ error: String(e?.message ?? e) }), {
+      status: 502,
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
 }
 
 async function beezieListings(request) {
