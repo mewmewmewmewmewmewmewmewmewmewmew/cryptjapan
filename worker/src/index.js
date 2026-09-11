@@ -81,6 +81,10 @@ export default {
       return phygitalsListings(url);
     }
 
+    if (path.startsWith("/phygitals/orpc/")) {
+      return phygitalsOrpc(path.slice("/phygitals/orpc/".length), url);
+    }
+
     if (path === "/courtyard/search") {
       return courtyardSearch(request);
     }
@@ -966,6 +970,49 @@ async function phygitalsListings(workerUrl) {
     status: upstream.status,
     headers: { ...CORS, "Content-Type": "application/json" },
   });
+}
+
+// Phygitals' marketplace listing response carries no grading cert, so a card's
+// detail procedure has to supply it. Only their marketplace oRPC namespace is
+// forwarded, and only well-formed procedure paths, so this cannot be used as a
+// general-purpose proxy. A card's identity doesn't change, so responses are
+// edge-cached for the same 12h as Collector Crypt's detail calls.
+const PHYGITALS_ORPC_TTL = 43200;
+
+async function phygitalsOrpc(procedure, workerUrl) {
+  if (!/^marketplace\/[A-Za-z0-9_-]+(\/[A-Za-z0-9_-]+){0,3}$/.test(procedure)) {
+    return new Response(JSON.stringify({ error: "unsupported procedure" }), {
+      status: 403,
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+  return cachedJson(
+    `https://phygitals-orpc.internal/${procedure}${workerUrl.search}`,
+    d => (d && !d.__error ? PHYGITALS_ORPC_TTL : 0),
+    async () => {
+      try {
+        const upstream = await fetch(
+          `https://api.phygitals.com/api/orpc/${procedure}${workerUrl.search}`,
+          {
+            headers: {
+              "Accept": "application/json, text/plain, */*",
+              "Origin": "https://www.phygitals.com",
+              "Referer": "https://www.phygitals.com/",
+            },
+            signal: AbortSignal.timeout(8000),
+          },
+        );
+        const text = await upstream.text();
+        if (!upstream.ok) {
+          return JSON.stringify({ __error: `HTTP ${upstream.status}`, body: text.slice(0, 300) });
+        }
+        try { JSON.parse(text); } catch { return JSON.stringify({ __error: "not JSON" }); }
+        return text;
+      } catch (e) {
+        return JSON.stringify({ __error: String(e?.message ?? e) });
+      }
+    },
+  );
 }
 
 async function beezieListings(request) {

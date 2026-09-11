@@ -933,7 +933,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.31</footer>
+  <footer>v1.32</footer>
 </div>
 
 <script>
@@ -2905,6 +2905,7 @@
     const cardUrl   = `https://www.phygitals.com/card/${address}`;
     return {
       nftAddress:     `phygitals-${address}`,
+      _address:       address,
       // Deliberately not falling back to the mint address: it isn't a cert, and
       // using one as if it were burned an ALT lookup per row and showed a dead
       // psacard.com link. An empty cert renders as "—" and is skipped instead.
@@ -2924,6 +2925,83 @@
       _image:         pickCardImage(item),
       _altCardName:   "",
     };
+  }
+
+  // The listing response carries no grading cert, so each card's detail
+  // procedure has to supply it. Their card page calls
+  // marketplace/singleNft/chart for the price history, so a sibling under the
+  // same router holds the card itself — try the conventional names once and
+  // reuse whichever answers with a cert.
+  const PHYGITALS_DETAIL_PROCEDURES = [
+    "marketplace/singleNft",
+    "marketplace/singleNft/info",
+    "marketplace/singleNft/details",
+    "marketplace/singleNft/nft",
+    "marketplace/singleNft/card",
+    "marketplace/singleNft/chart",
+  ];
+  const MAX_CERT_LOOKUPS = 200;
+  let phygitalsProcedure = null;          // discovered once, then reused
+  const phygitalsCertCache = new Map();   // address → cert | ""
+
+  async function phygitalsDetail(procedure, address) {
+    const data = encodeURIComponent(JSON.stringify({ json: { address } }));
+    try {
+      const res = await fetch(`${WORKER_URL}/phygitals/orpc/${procedure}?data=${data}`);
+      if (!res.ok) return { error: `HTTP ${res.status}` };
+      const body = await res.json();
+      if (body?.__error) return { error: body.__error };
+      return { body };
+    } catch (e) {
+      return { error: String(e?.message ?? e) };
+    }
+  }
+
+  // The detail payload's shape is unknown, so resolve it the same
+  // shape-agnostic way as the listings rather than assuming a field path.
+  function certFromDetail(body) {
+    for (const [k, v] of collectAttrs(body)) {
+      if (CERT_KEY_RE.test(k) && v) return v;
+    }
+    return scanForCert(body) || "";
+  }
+
+  // Fills in c.gradingID where it can, and returns a note for the status line.
+  async function resolvePhygitalsCerts(cards, status) {
+    const pending = cards.filter(c => !c.gradingID && c._address).slice(0, MAX_CERT_LOOKUPS);
+    if (!pending.length) return "";
+
+    if (!phygitalsProcedure) {
+      const tried = [];
+      for (const proc of PHYGITALS_DETAIL_PROCEDURES) {
+        status.textContent = `Looking up card details (${proc.split("/").pop()})…`;
+        const { body, error } = await phygitalsDetail(proc, pending[0]._address);
+        if (error) { tried.push(`${proc.split("/").pop()}: ${error}`); continue; }
+        const cert = certFromDetail(body);
+        if (cert) {
+          phygitalsProcedure = proc;
+          phygitalsCertCache.set(pending[0]._address, cert);
+          break;
+        }
+        tried.push(`${proc.split("/").pop()}: no cert`);
+      }
+      if (!phygitalsProcedure) return ` — card detail lookup found no cert (${tried.join("; ")})`;
+    }
+
+    let done = 0;
+    for (let i = 0; i < pending.length; i += 6) {
+      await Promise.all(pending.slice(i, i + 6).map(async c => {
+        if (!phygitalsCertCache.has(c._address)) {
+          const { body } = await phygitalsDetail(phygitalsProcedure, c._address);
+          phygitalsCertCache.set(c._address, body ? certFromDetail(body) : "");
+        }
+        c.gradingID = phygitalsCertCache.get(c._address) || "";
+        done++;
+      }));
+      status.textContent = `Resolving certs ${done}/${pending.length}…`;
+    }
+    const found = pending.filter(c => c.gradingID).length;
+    return found ? ` — ${found} certs via ${phygitalsProcedure.split("/").pop()}` : "";
   }
 
   async function fetchPhygitalsListings() {
@@ -3005,6 +3083,9 @@
         page++;
       }
       if (cards.length > limit) cards = cards.slice(0, limit);
+      // The cert comes from a second call per card, and the table keys its
+      // reference columns on the cert, so resolve before the first render.
+      const certNote = await resolvePhygitalsCerts(cards, status);
       allRows = cards;
       currentPage = 1;
       applyLiveFilters();
@@ -3014,6 +3095,7 @@
       // them in the status line rather than leaving it to look like ALT is down.
       const noCert = cards.filter(c => !c.gradingID).length;
       status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Phygitals listings")
+        + certNote
         + (noCert ? ` — ${noCert} without a cert number, so no ALT match`
                      + (noCert === cards.length ? phygitalsFieldsHint(sampleItem) : "") : "");
       window.scrollTo(0, 0);
