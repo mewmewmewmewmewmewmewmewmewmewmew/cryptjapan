@@ -933,7 +933,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.28</footer>
+  <footer>v1.29</footer>
 </div>
 
 <script>
@@ -2788,47 +2788,76 @@
   const CERT_SUBKEY_RE = /^(number|no|num|id|value|code)$/i;
 
   function scanForCert(obj, depth = 1, inCert = false) {
-    if (!obj || typeof obj !== "object" || depth > 3) return "";
+    if (!obj || typeof obj !== "object" || depth > 4) return "";
     const scalar = v => (typeof v === "string" || typeof v === "number") ? String(v).trim() : "";
-    for (const [k, v] of Object.entries(obj)) {
+    const entries = Array.isArray(obj) ? obj.map((v, i) => [String(i), v]) : Object.entries(obj);
+    for (const [k, v] of entries) {
       const named = CERT_KEY_RE.test(k) || (inCert && CERT_SUBKEY_RE.test(k));
       if (named && CERT_FIELD_VALUE_RE.test(scalar(v))) return scalar(v);
     }
-    for (const [k, v] of Object.entries(obj)) {
-      if (v && typeof v === "object" && !Array.isArray(v)) {
-        const found = scanForCert(v, depth + 1, CERT_KEY_RE.test(k));
+    for (const [k, v] of entries) {
+      if (v && typeof v === "object") {
+        // An array inherits its parent's cert-ness rather than resetting it, so
+        // a certification block holding a list still reads as one.
+        const found = scanForCert(v, depth + 1, Array.isArray(v) ? inCert : CERT_KEY_RE.test(k));
         if (found) return found;
       }
     }
     return "";
   }
 
-  function phygitalsCert(item, meta, attr) {
-    const clean = v => String(v ?? "").trim();
-    const named = meta.find(m => CERT_KEY_RE.test(clean(m.key)) && clean(m.value));
-    if (named) return clean(named.value);
+  // A Phygitals listing splits its attributes across shapes: a metadata array of
+  // {key, value}, and a Metaplex-style block whose attributes are {trait_type,
+  // value}. The metadata array alone carries only Category, Grader and Title —
+  // not the grade, language, set or cert — so gather every labelled pair found
+  // anywhere in the listing and look attributes up by name across all of them.
+  function collectAttrs(obj, out = new Map(), depth = 0) {
+    if (!obj || typeof obj !== "object" || depth > 4) return out;
+    const scalar = v => (typeof v === "string" || typeof v === "number") ? String(v).trim() : null;
+    for (const v of Array.isArray(obj) ? obj : Object.values(obj)) {
+      if (!v || typeof v !== "object") continue;
+      if (!Array.isArray(v)) {
+        const key = scalar(v.key ?? v.trait_type ?? v.traitType ?? v.name ?? v.label);
+        const val = scalar(v.value ?? v.val);
+        if (key && val && !out.has(key.toLowerCase())) out.set(key.toLowerCase(), val);
+      }
+      collectAttrs(v, out, depth + 1);
+    }
+    return out;
+  }
+
+  function phygitalsCert(item, attrs) {
+    for (const [k, v] of attrs) {
+      if (CERT_KEY_RE.test(k) && v) return v;
+    }
     const onItem = scanForCert(item);
     if (onItem) return onItem;
-    const byShape = meta.find(m =>
-      !NOT_CERT_KEY_RE.test(clean(m.key)) && CERT_VALUE_RE.test(clean(m.value)));
-    if (byShape) return clean(byShape.value);
-    return clean(attr("Title") ?? item?.name).match(/\b\d{7,12}\b/)?.[0] ?? "";
+    for (const [k, v] of attrs) {
+      if (!NOT_CERT_KEY_RE.test(k) && CERT_VALUE_RE.test(v)) return v;
+    }
+    const title = attrs.get("title") ?? item?.name ?? "";
+    return String(title).match(/\b\d{7,12}\b/)?.[0] ?? "";
   }
 
   // When a scan finds no certs at all, the useful thing to report is what the
   // listing does carry, so the missing field can be named without digging
-  // through a network tab.
+  // through a network tab. Cert-shaped values are called out with their field
+  // name, since one of them may be the number under an unexpected label.
   function phygitalsFieldsHint(item) {
     if (!item) return "";
-    const meta = (item.metadata ?? []).map(m => m?.key).filter(Boolean);
     const top = Object.keys(item).filter(k => k !== "metadata");
-    const all = [...top, ...meta].slice(0, 40);
-    return all.length ? ` — fields seen: ${all.join(", ")}` : "";
+    const attrs = [...collectAttrs(item).keys()].map(k => `attr:${k}`);
+    const certish = Object.entries(item)
+      .filter(([, v]) => CERT_VALUE_RE.test(String(v ?? "").trim()))
+      .map(([k, v]) => `${k}=${v}`);
+    const all = [...top, ...attrs].slice(0, 60);
+    return (all.length ? ` — fields seen: ${all.join(", ")}` : "")
+         + (certish.length ? ` — cert-shaped: ${certish.join(", ")}` : "");
   }
 
   function normalizePhygitalsCard(item) {
-    const meta = item.metadata ?? [];  // [{key, value}, ...]
-    const attr = name => meta.find(m => (m.key ?? "").toLowerCase() === name.toLowerCase())?.value ?? null;
+    const attrs = collectAttrs(item);
+    const attr = name => attrs.get(String(name).toLowerCase()) ?? null;
     const grader   = attr("Grader") ?? "";
     const gradeRaw = attr("Grade") ?? "";
     // "CGC 9.0" → "9.0", "PSA 10" → "10" — strip leading grader prefix
@@ -2842,7 +2871,7 @@
     // against the title — the title bundles the set in, which is how a Squirtle
     // from the "Mew EN-151" set answers to a search for "mew".
     const cardName = attr("Card Name") ?? attr("Character") ?? "";
-    const serial   = phygitalsCert(item, meta, attr);
+    const serial   = phygitalsCert(item, attrs);
     // price is micro-USDC (6 decimal places)
     const priceUsdc = item.price != null ? parseFloat(item.price) / 1_000_000 : null;
     const createdAt = item.createdAt ?? item.listedAt ?? null;
