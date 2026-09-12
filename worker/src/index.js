@@ -89,10 +89,6 @@ export default {
       return phygitalsProbe(url);
     }
 
-    if (path === "/jupiter/browse") {
-      return jupiterBrowse(url);
-    }
-
     if (path === "/courtyard/search") {
       return courtyardSearch(request);
     }
@@ -1060,38 +1056,6 @@ async function phygitalsProbe(workerUrl) {
       digitRuns: uniq(/\b\d{7,12}\b/g, 30),
       hasNextData: html.includes("__NEXT_DATA__"),
     }, null, 1), { headers: { ...CORS, "Content-Type": "application/json" } });
-  } catch (e) {
-    return new Response(JSON.stringify({ error: String(e?.message ?? e) }), {
-      status: 502,
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
-  }
-}
-
-// Jupiter's gacha marketplace is a second storefront over Collector Crypt's
-// vault — the browse response uses the same field names as CC's own API — so
-// its listings need no translation. Proxied rather than called from the page
-// because the endpoint is same-origin to jup.ag and sends no CORS headers.
-// Deliberately uncached: seeing new listings promptly is the point.
-async function jupiterBrowse(workerUrl) {
-  try {
-    const upstream = await fetch(
-      `https://jup.ag/api/gacha/marketplace/browse${workerUrl.search}`,
-      {
-        headers: {
-          "Accept": "application/json, text/plain, */*",
-          "Origin": "https://jup.ag",
-          "Referer": "https://jup.ag/gacha/marketplace",
-          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
-        },
-        signal: AbortSignal.timeout(15000),
-      },
-    );
-    const text = await upstream.text();
-    return new Response(text, {
-      status: upstream.status,
-      headers: { ...CORS, "Content-Type": "application/json" },
-    });
   } catch (e) {
     return new Response(JSON.stringify({ error: String(e?.message ?? e) }), {
       status: 502,

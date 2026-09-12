@@ -765,7 +765,6 @@
       <option value="beezie">Beezie</option>
       <option value="phygitals">Phygitals</option>
       <option value="courtyard">Courtyard</option>
-      <option value="jupiter">Jupiter</option>
     </select>
   </div>
 
@@ -935,7 +934,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.35</footer>
+  <footer>v1.36</footer>
 </div>
 
 <script>
@@ -1038,10 +1037,6 @@
     courtyard: {
       fetch: () => fetchCourtyardListings(),
       clientFilter: clientFilterByDropdowns,
-    },
-    jupiter: {
-      fetch: () => fetchJupiterListings(),
-      clientFilter: jupiterClientFilter,
     },
   };
 
@@ -2188,11 +2183,8 @@
   // hidden on other marketplaces rather than showing blanks.
   const grCache = new Map();   // nftAddress → population | null
 
-  // GemRate population comes from Collector Crypt's per-NFT endpoint. Jupiter
-  // resells cards from the same vault under the same Solana addresses, so the
-  // lookup works there too; the other marketplaces hold their own inventory.
   function gemrateSupported() {
-    return ["cc", "jupiter"].includes(document.getElementById("source")?.value ?? "cc");
+    return (document.getElementById("source")?.value ?? "cc") === "cc";
   }
 
   function updateGrCells(nft, pop) {
@@ -2765,130 +2757,6 @@
       fetchClForVisible();
     } catch (e) {
       status.textContent = `Beezie error: ${e.message}`;
-    } finally {
-      btn.disabled = false;
-    }
-  }
-  // ─────────────────────────────────────────────────────────────────────
-
-  // ── Jupiter (jup.ag gacha) marketplace integration ───────────────────
-  // Jupiter's browse endpoint returns Collector Crypt's own card records —
-  // same field names, same listing shape — so rows pass through untouched
-  // apart from tagging their source. Confirmed query parameters are page,
-  // step, categories, orderBy and listPriceMin; the names match CC's API, so
-  // the grader/grade/language ones probably work too, but rather than assume,
-  // the first page is requested with them and the request is retried without
-  // if that comes back empty. Whatever the server doesn't filter, we do.
-  const JUPITER_STEP = 30;          // what their own marketplace requests
-  const JUPITER_MAX_PAGES = 25;
-
-  function jupiterGradeNum(c) {
-    const n = Number(c.gradeNum);
-    return isFinite(n) ? n : parseFloat(gradeNumber(c.grade ?? ""));
-  }
-
-  // Jupiter leaves language null even on English cards, so filtering strictly
-  // would empty the table. Rows that declare a language are held to it; rows
-  // that don't are kept, since there's nothing to judge them on.
-  function jupiterClientFilter(rows) {
-    let out = rows;
-    const gc = document.getElementById("gradingCompany")?.value;
-    if (gc) {
-      const grader = gc === "Beckett" ? "BGS" : gc;
-      out = out.filter(c => c.gradingCompany === grader);
-    }
-    const grades = getSelectedGrades();
-    if (grades.length > 0) {
-      out = out.filter(c => {
-        const n = jupiterGradeNum(c);
-        return grades.some(g => (g.match(/\d+(?:\.\d+)?/g) || []).map(parseFloat).some(x => x === n));
-      });
-    }
-    const lang = document.getElementById("language")?.value;
-    if (lang) out = out.filter(c => !c.language || c.language.toLowerCase() === lang.toLowerCase());
-    return out;
-  }
-
-  function jupiterItems(data) {
-    const items = data?.items ?? data?.data ?? data?.cards ?? data?.listings ?? data?.results
-               ?? data?.nfts ?? data?.filterNFtCard ?? (Array.isArray(data) ? data : null);
-    if (!items) {
-      throw new Error(`unexpected response shape (top-level keys: ${Object.keys(data ?? {}).slice(0, 8).join(", ") || "none"})`);
-    }
-    return items;
-  }
-
-  async function fetchJupiterPage(page, useServerFilters) {
-    const params = new URLSearchParams({
-      page: String(page),
-      step: String(JUPITER_STEP),
-      listPriceMin: "0.01",
-      categories: document.getElementById("categories").value,
-      orderBy: document.getElementById("orderBy").value,
-    });
-    if (useServerFilters) {
-      const gc = document.getElementById("gradingCompany")?.value;
-      const lang = document.getElementById("language")?.value;
-      const grades = getSelectedGrades();
-      if (gc) params.set("gradingCompany", gc);
-      if (lang) params.set("language", lang);
-      if (grades.length === 1) params.set("grade", grades[0]);
-      const term = apiSearchTerm(marketplaceSearchTerm());
-      if (term) params.set("search", term);
-    }
-    const res = await fetch(`${WORKER_URL}/jupiter/browse?${params}`);
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    return jupiterItems(await res.json());
-  }
-
-  async function fetchJupiterListings() {
-    const searchTerm = marketplaceSearchTerm();
-    const btn = document.getElementById("fetch-btn");
-    const status = document.getElementById("status");
-    btn.disabled = true;
-    status.textContent = "Fetching Jupiter listings…";
-    document.getElementById("results-body").innerHTML = "";
-    document.getElementById("empty-msg").style.display = "none";
-    allRows = [];
-
-    let cards = [];
-    let fetchedCount = 0;
-    let serverFiltered = true;
-    try {
-      await getSolPrice();
-      await getJpyRate();
-      const limit = loadLimit();
-      const seen = new Set();
-      for (let page = 1; page <= JUPITER_MAX_PAGES && cards.length < limit; page++) {
-        let raw = await fetchJupiterPage(page, serverFiltered);
-        // An empty first page may mean the extra filters aren't understood
-        // rather than that nothing matches, so check before trusting it.
-        if (serverFiltered && page === 1 && raw.length === 0) {
-          serverFiltered = false;
-          raw = await fetchJupiterPage(page, false);
-        }
-        fetchedCount += raw.length;
-        const fresh = raw.filter(c => c?.listing?.price != null && !seen.has(c.nftAddress));
-        for (const c of fresh) seen.add(c.nftAddress);
-        cards = cards.concat(filterBySearch(
-          jupiterClientFilter(fresh.map(c => ({ ...c, _source: "jupiter" }))), searchTerm));
-        status.textContent = `${cards.length} Jupiter listings…`;
-        if (raw.length < JUPITER_STEP) break;
-      }
-      if (cards.length > limit) cards = cards.slice(0, limit);
-      allRows = cards;
-      currentPage = 1;
-      applyLiveFilters();
-      if (!cards.length) document.getElementById("empty-msg").style.display = "block";
-      status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Jupiter listings")
-        + (cards.some(c => c.language) ? "" : " — Jupiter publishes no language, so that filter is not applied");
-      window.scrollTo(0, 0);
-      enableRefreshButtons();
-      fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
-      fetchGemratePops(cards);
-      fetchClForVisible();
-    } catch (e) {
-      status.textContent = `Jupiter error: ${e.message}`;
     } finally {
       btn.disabled = false;
     }
