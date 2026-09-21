@@ -89,6 +89,10 @@ export default {
       return phygitalsProbe(url);
     }
 
+    if (path === "/courtyard/probe") {
+      return courtyardProbe();
+    }
+
     if (path === "/courtyard/search") {
       return courtyardSearch(request);
     }
@@ -1062,6 +1066,60 @@ async function phygitalsProbe(workerUrl) {
       headers: { ...CORS, "Content-Type": "application/json" },
     });
   }
+}
+
+// Diagnostic. Courtyard's Algolia index went empty, so the one we query has
+// been retired and the replacement's name has to be found. Their marketplace
+// page and its bundles name it, so fetch them server-side and pull out the
+// Algolia identifiers: index names, application id and the public search key.
+const CY_INDEX_RE = /["'`]([a-z][a-z0-9_]{5,60})["'`]/g;
+const CY_INDEX_HINT = /(marketplace|listed|listing|asset|prod)/i;
+
+async function courtyardProbe() {
+  const grab = async url => {
+    try {
+      const res = await fetch(url, {
+        headers: {
+          "Accept": "text/html,application/xhtml+xml,application/javascript,*/*",
+          "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+        },
+        signal: AbortSignal.timeout(12000),
+      });
+      return res.ok ? await res.text() : "";
+    } catch { return ""; }
+  };
+
+  const page = await grab("https://courtyard.io/marketplace");
+  if (!page) {
+    return new Response(JSON.stringify({ error: "could not fetch courtyard.io/marketplace" }), {
+      status: 502, headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  // Their index name lives in the bundle more often than the HTML, so follow a
+  // few of the scripts the page loads.
+  const scripts = [...new Set(page.match(/(?:src=["'])([^"']+\.js[^"']*)/g) || [])]
+    .map(m => m.replace(/^src=["']/, ""))
+    .map(u => (u.startsWith("http") ? u : `https://courtyard.io${u.startsWith("/") ? "" : "/"}${u}`))
+    .slice(0, 8);
+  const bundles = await Promise.all(scripts.map(grab));
+  const all = [page, ...bundles].join("\n");
+
+  const indexes = new Set();
+  let m;
+  while ((m = CY_INDEX_RE.exec(all)) !== null && indexes.size < 40) {
+    if (CY_INDEX_HINT.test(m[1])) indexes.add(m[1]);
+  }
+  const uniq = (re, cap) => [...new Set(all.match(re) || [])].slice(0, cap);
+
+  return new Response(JSON.stringify({
+    scriptsScanned: scripts.length,
+    indexCandidates: [...indexes],
+    algoliaAppIds: uniq(/\b[A-Z0-9]{10}\b(?=-dsn|["'`,\s])/g, 8),
+    algoliaHosts: uniq(/[A-Za-z0-9]+-dsn\.algolia\.net/g, 5),
+    searchKeys: uniq(/\b[a-f0-9]{32}\b/g, 5),
+    apiPaths: uniq(/https:\/\/api\.courtyard\.io\/[A-Za-z0-9_/-]{2,60}/g, 12),
+  }, null, 1), { headers: { ...CORS, "Content-Type": "application/json" } });
 }
 
 async function beezieListings(request) {
