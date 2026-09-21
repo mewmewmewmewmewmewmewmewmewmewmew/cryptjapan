@@ -1,0 +1,35 @@
+name: Deploy Cloudflare Worker
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - worker/**
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Set Worker secrets
+        working-directory: worker
+        run: |
+          echo "${{ secrets.ALT_TOKEN }}" | npx wrangler@latest secret put ALT_TOKEN
+          echo "${{ secrets.CARDLADDER_EMAIL }}" | npx wrangler@latest secret put CARDLADDER_EMAIL
+          echo "${{ secrets.CARDLADDER_PASSWORD }}" | npx wrangler@latest secret put CARDLADDER_PASSWORD
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+      - name: Deploy Worker
+        working-directory: worker
+        run: npx wrangler@latest deploy --no-bundle
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
