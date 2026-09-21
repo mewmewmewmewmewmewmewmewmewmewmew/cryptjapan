@@ -934,7 +934,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.38</footer>
+  <footer>v1.39</footer>
 </div>
 
 <script>
@@ -2533,8 +2533,8 @@
   // that field's actual values. Counts only (hitsPerPage=0), spaced out, and
   // only ever after a scan already came back empty.
   async function courtyardDiagnose(facetFilters, searchTerm) {
-    const countFor = async (groups, facetFields) => {
-      const params = new URLSearchParams({ hitsPerPage: "0", page: "0", query: apiSearchTerm(searchTerm) });
+    const countFor = async (groups, facetFields, hitsPerPage = 0) => {
+      const params = new URLSearchParams({ hitsPerPage: String(hitsPerPage), page: "0", query: apiSearchTerm(searchTerm) });
       if (groups.length) params.set("facetFilters", JSON.stringify(groups));
       if (facetFields) {
         params.set("facets", JSON.stringify(facetFields));
@@ -2546,6 +2546,17 @@
     };
 
     const fieldOf = group => String(group[0] ?? "").split(":")[0];
+
+    // Before blaming a filter, check the index answers at all. If an unfiltered
+    // search is also empty, the index is retired or emptied and no facet is at
+    // fault; if it returns records, their shape says what the fields are called
+    // now, which is what makes every facet miss at once.
+    const bare = await countFor([], null, 1);
+    if (!bare) return " — the unfiltered search failed too";
+    if (!(bare.nbHits > 0)) {
+      return ` — the index ${COURTYARD_INDEX} returns nothing even unfiltered, so it has been emptied or retired`;
+    }
+
     const culprits = [];
     for (let i = 0; i < facetFilters.length; i++) {
       await new Promise(r => setTimeout(r, 200));
@@ -2553,7 +2564,20 @@
       const result = await countFor(without);
       if (result && (result.nbHits ?? 0) > 0) culprits.push({ group: facetFilters[i], hits: result.nbHits });
     }
-    if (!culprits.length) return " — no single filter explains it; the combination matches nothing";
+    if (!culprits.length) {
+      // Several facets are dead at once, which normally means the records were
+      // restructured and our attribute paths no longer exist. Report what a
+      // record actually looks like now.
+      const rec = bare.hits?.[0] ?? {};
+      const top = Object.keys(rec).slice(0, 25).join(", ");
+      const nested = Object.entries(rec)
+        .filter(([, v]) => v && typeof v === "object" && !Array.isArray(v))
+        .slice(0, 3)
+        .map(([k, v]) => `${k}{${Object.keys(v).slice(0, 15).join(", ")}}`)
+        .join(" ");
+      return ` — no single filter explains it, and the index holds ${bare.nbHits.toLocaleString()} records;`
+           + ` a record now looks like: ${top}${nested ? ` — ${nested}` : ""}`;
+    }
 
     // Ask what values those fields actually carry now.
     await new Promise(r => setTimeout(r, 200));
