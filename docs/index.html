@@ -934,7 +934,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.37</footer>
+  <footer>v1.38</footer>
 </div>
 
 <script>
@@ -2526,6 +2526,51 @@
     };
   }
 
+  // A valid query that matches nothing means one of our facet values no longer
+  // exists — their labels are Courtyard's to change, and a renamed value is
+  // indistinguishable from an empty marketplace. Re-run the search dropping one
+  // facet group at a time to find which one empties it, then ask Algolia for
+  // that field's actual values. Counts only (hitsPerPage=0), spaced out, and
+  // only ever after a scan already came back empty.
+  async function courtyardDiagnose(facetFilters, searchTerm) {
+    const countFor = async (groups, facetFields) => {
+      const params = new URLSearchParams({ hitsPerPage: "0", page: "0", query: apiSearchTerm(searchTerm) });
+      if (groups.length) params.set("facetFilters", JSON.stringify(groups));
+      if (facetFields) {
+        params.set("facets", JSON.stringify(facetFields));
+        params.set("maxValuesPerFacet", "12");
+      }
+      const res = await courtyardQuery(params.toString());
+      if (!res.ok) return null;
+      return (await res.json())?.results?.[0] ?? null;
+    };
+
+    const fieldOf = group => String(group[0] ?? "").split(":")[0];
+    const culprits = [];
+    for (let i = 0; i < facetFilters.length; i++) {
+      await new Promise(r => setTimeout(r, 200));
+      const without = facetFilters.filter((_, j) => j !== i);
+      const result = await countFor(without);
+      if (result && (result.nbHits ?? 0) > 0) culprits.push({ group: facetFilters[i], hits: result.nbHits });
+    }
+    if (!culprits.length) return " — no single filter explains it; the combination matches nothing";
+
+    // Ask what values those fields actually carry now.
+    await new Promise(r => setTimeout(r, 200));
+    const fields = [...new Set(culprits.map(c => fieldOf(c.group)))];
+    const sample = await countFor([], fields);
+    const facets = sample?.facets ?? {};
+    const parts = culprits.map(c => {
+      const field = fieldOf(c.group);
+      const values = Object.entries(facets[field] ?? {})
+        .sort((a, b) => b[1] - a[1]).slice(0, 8)
+        .map(([v, n]) => `${v} (${n})`);
+      return `${c.group.join(" or ")} matches nothing — without it: ${c.hits.toLocaleString()} hits`
+           + (values.length ? `; ${field} now has: ${values.join(", ")}` : "");
+    });
+    return ` — ${parts.join(" | ")}`;
+  }
+
   async function fetchCourtyardListings() {
     const searchTerm = marketplaceSearchTerm();
     const btn = document.getElementById("fetch-btn");
@@ -2612,10 +2657,14 @@
       applyLiveFilters();
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
       // An empty result is usually an over-narrow filter combination rather
-      // than a fault, and the facets are invisible in the UI, so name them.
-      const facetNote = !cards.length && !rateLimited && facetFilters.length
-        ? ` — filters sent: ${facetFilters.map(g => g.join(" or ")).join(", ")}`
-        : "";
+      // than a fault, and the facets are invisible in the UI, so name them —
+      // then work out which one is responsible.
+      let facetNote = "";
+      if (!cards.length && !rateLimited && facetFilters.length) {
+        facetNote = ` — filters sent: ${facetFilters.map(g => g.join(" or ")).join(", ")}`;
+        status.textContent = "No matches — checking which filter is responsible…";
+        try { facetNote += await courtyardDiagnose(facetFilters, searchTerm); } catch {}
+      }
       status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Courtyard listings")
         + (rateLimited ? " — Courtyard rate-limited the search, try again in a few minutes" : "")
         + facetNote;
