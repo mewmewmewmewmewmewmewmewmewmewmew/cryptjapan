@@ -934,7 +934,7 @@
       <line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/>
     </svg>
   </button>
-  <footer>v1.36</footer>
+  <footer>v1.37</footer>
 </div>
 
 <script>
@@ -2583,7 +2583,17 @@
         }
         if (res.status === 429) { rateLimited = true; break; }
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const result = (await res.json())?.results?.[0] ?? {};
+        const payload = await res.json();
+        // Algolia answers 200 with an error body when a key is revoked or an
+        // index renamed. Reading results[0] blindly turned that into a cheerful
+        // "0 listings loaded", which reads as an empty marketplace rather than
+        // a broken query — say what it actually returned instead.
+        if (!Array.isArray(payload?.results)) {
+          throw new Error(payload?.message
+            ? `Courtyard's search rejected the query — ${payload.message}`
+            : `unexpected search response (keys: ${Object.keys(payload ?? {}).slice(0, 6).join(", ") || "none"})`);
+        }
+        const result = payload.results[0] ?? {};
         const hits = result.hits ?? [];
         fetchedCount += hits.length;
         // Grade is filtered locally (their labels vary by grader), so apply it
@@ -2601,8 +2611,14 @@
       currentPage = 1;
       applyLiveFilters();
       if (!cards.length) document.getElementById("empty-msg").style.display = "block";
+      // An empty result is usually an over-narrow filter combination rather
+      // than a fault, and the facets are invisible in the UI, so name them.
+      const facetNote = !cards.length && !rateLimited && facetFilters.length
+        ? ` — filters sent: ${facetFilters.map(g => g.join(" or ")).join(", ")}`
+        : "";
       status.textContent = listingsMsg(cards.length, fetchedCount, searchTerm, "Courtyard listings")
-        + (rateLimited ? " — Courtyard rate-limited the search, try again in a few minutes" : "");
+        + (rateLimited ? " — Courtyard rate-limited the search, try again in a few minutes" : "")
+        + facetNote;
       window.scrollTo(0, 0);
       enableRefreshButtons();
       fetchAltPrices(cards).then(() => fetchSnkrdunkPrices(refineSearchWithAltNames(cards, fetchedCount)));
