@@ -1112,13 +1112,62 @@ async function courtyardProbe() {
   }
   const uniq = (re, cap) => [...new Set(all.match(re) || [])].slice(0, cap);
 
+  // An Algolia application id is 10 uppercase alphanumerics containing at least
+  // one letter — without that last condition the match is every 10-digit
+  // analytics container id on the page.
+  const appIds = uniq(/\b(?![0-9]{10}\b)[A-Z0-9]{10}\b/g, 10);
+  const keys = uniq(/\b[a-f0-9]{32}\b/g, 6);
+
+  // Context around the wiring, which pairs an app id with its key.
+  const contexts = [];
+  const ctxRe = /.{0,90}(?:algolia|indexName|searchClient|appId).{0,120}/gi;
+  let c;
+  while ((c = ctxRe.exec(all)) !== null && contexts.length < 6) contexts.push(c[0]);
+
+  // The decisive part: actually run a count-only query for each plausible
+  // application id and key pair. Algolia's error messages distinguish a bad
+  // key from a missing index, so one of these answers says what changed.
+  const indexNames = [...indexes].filter(i => /marketplace|listing|asset/i.test(i));
+  if (!indexNames.length) indexNames.push("marketplace_prod_recently_listed");
+  const apps = [...new Set(["Y8TL3M06QA", ...appIds])].slice(0, 4);
+  const tries = [];
+  outer:
+  for (const app of apps) {
+    for (const key of keys.slice(0, 3)) {
+      for (const index of indexNames.slice(0, 3)) {
+        if (tries.length >= 9) break outer;
+        let outcome;
+        try {
+          const res = await fetch(
+            `https://${app}-dsn.algolia.net/1/indexes/*/queries?x-algolia-application-id=${app}&x-algolia-api-key=${key}`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ requests: [{ indexName: index, params: "hitsPerPage=0&page=0&query=" }] }),
+              signal: AbortSignal.timeout(8000),
+            },
+          );
+          const body = await res.json().catch(() => null);
+          outcome = res.ok
+            ? { nbHits: body?.results?.[0]?.nbHits ?? null }
+            : { status: res.status, message: String(body?.message ?? "").slice(0, 120) };
+        } catch (e) {
+          outcome = { error: String(e?.message ?? e).slice(0, 80) };
+        }
+        tries.push({ app, key: `${key.slice(0, 8)}…`, index, ...outcome });
+      }
+    }
+  }
+
   return new Response(JSON.stringify({
     scriptsScanned: scripts.length,
     indexCandidates: [...indexes],
-    algoliaAppIds: uniq(/\b[A-Z0-9]{10}\b(?=-dsn|["'`,\s])/g, 8),
+    algoliaAppIds: appIds,
     algoliaHosts: uniq(/[A-Za-z0-9]+-dsn\.algolia\.net/g, 5),
-    searchKeys: uniq(/\b[a-f0-9]{32}\b/g, 5),
+    searchKeys: keys,
     apiPaths: uniq(/https:\/\/api\.courtyard\.io\/[A-Za-z0-9_/-]{2,60}/g, 12),
+    contexts,
+    liveQueries: tries,
   }, null, 1), { headers: { ...CORS, "Content-Type": "application/json" } });
 }
 
