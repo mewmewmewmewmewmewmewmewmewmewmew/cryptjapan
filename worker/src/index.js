@@ -57,6 +57,10 @@ export default {
       return cardladderPrice(url, env);
     }
 
+    if (path === "/alt-schema") {
+      return altSchemaProbe(url, env);
+    }
+
     if (path.startsWith("/alt/")) {
       return proxyAlt(request, path, env);
     }
@@ -154,6 +158,88 @@ const ALT_CACHE_TTL = {
   AssetDetails: 6 * 3600,
   AssetCardPops: 6 * 3600,
 };
+
+// Diagnostic. altValueInfo takes a TimeSeriesFilter and we only ever read
+// currentAltValue from it, so the series behind that value is probably already
+// one selection away. Introspect the schema to find out what the type actually
+// offers; if introspection is disabled, ask for a field that cannot exist and
+// read the validation error, which names the type and often suggests the real
+// field. Runs here rather than in the page because only the worker holds the
+// ALT token.
+async function altGraphql(operation, query, variables, env) {
+  const res = await fetch(`${ALT_BASE}/graphql/${operation}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.ALT_TOKEN}` },
+    body: JSON.stringify({ operationName: operation, query, variables }),
+    signal: AbortSignal.timeout(ALT_TIMEOUT_MS),
+  });
+  const text = await res.text();
+  try { return { status: res.status, body: JSON.parse(text) }; }
+  catch { return { status: res.status, raw: text.slice(0, 300) }; }
+}
+
+const INTROSPECT = `query IntrospectType($name: String!) {
+  __type(name: $name) {
+    name kind
+    fields {
+      name
+      args { name }
+      type { name kind ofType { name kind ofType { name kind } } }
+    }
+  }
+}`;
+
+async function altSchemaProbe(workerUrl, env) {
+  const out = {};
+  const unwrap = t => t?.name ?? t?.ofType?.name ?? t?.ofType?.ofType?.name ?? null;
+  const summarise = type => (type?.fields ?? []).map(f =>
+    `${f.name}${f.args?.length ? `(${f.args.map(a => a.name).join(",")})` : ""}: ${unwrap(f.type) ?? "?"}`);
+
+  // 1. What does Asset offer, and what type does altValueInfo return?
+  const asset = await altGraphql("IntrospectType", INTROSPECT, { name: "Asset" }, env);
+  out.introspectionEnabled = !!asset.body?.data?.__type;
+  if (asset.body?.errors) out.assetErrors = asset.body.errors.map(e => e.message).slice(0, 3);
+
+  if (out.introspectionEnabled) {
+    const assetType = asset.body.data.__type;
+    const fields = summarise(assetType);
+    out.assetFields = fields;
+    out.assetFieldsOfInterest = fields.filter(f => /value|sale|price|history|series|comp|chart|trend|market/i.test(f));
+
+    const valueField = (assetType.fields ?? []).find(f => f.name === "altValueInfo");
+    const valueTypeName = unwrap(valueField?.type);
+    out.altValueInfoType = valueTypeName;
+    if (valueTypeName) {
+      const vt = await altGraphql("IntrospectType", INTROSPECT, { name: valueTypeName }, env);
+      out.altValueInfoFields = summarise(vt.body?.data?.__type);
+    }
+    // The filter's own shape says what windows can be asked for.
+    const tsf = await altGraphql("IntrospectType", INTROSPECT, { name: "TimeSeriesFilter" }, env);
+    out.timeSeriesFilterType = tsf.body?.data?.__type
+      ? (tsf.body.data.__type.inputFields ?? tsf.body.data.__type.fields ?? []).map(f => f.name)
+      : "not introspectable";
+    return new Response(JSON.stringify(out, null, 1), {
+      headers: { ...CORS, "Content-Type": "application/json" },
+    });
+  }
+
+  // 2. Introspection is off: make the server tell us through a validation error.
+  const cert = workerUrl.searchParams.get("cert") || "00000000";
+  const bogus = `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
+    cert(certNumber: $certNumber) {
+      asset { altValueInfo(tsFilter: $tsFilter) { __typename zzUnknownFieldProbe } }
+    }
+  }`;
+  const probe = await altGraphql("Cert", bogus, {
+    certNumber: cert,
+    tsFilter: { gradeNumber: "10", gradingCompany: "PSA", autograph: null },
+  }, env);
+  out.validationErrors = (probe.body?.errors ?? []).map(e => e.message).slice(0, 5);
+  if (!out.validationErrors.length) out.rawProbe = probe.raw ?? JSON.stringify(probe.body).slice(0, 400);
+  return new Response(JSON.stringify(out, null, 1), {
+    headers: { ...CORS, "Content-Type": "application/json" },
+  });
+}
 
 async function proxyAlt(request, path, env) {
   const operation = path.slice(5); // strip "/alt/"
