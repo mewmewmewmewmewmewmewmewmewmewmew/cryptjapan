@@ -400,11 +400,18 @@ async function probeAltHistoryShape(env) {
   return { listField, elementType, dateField, valueField, scope, discoveredBy: "probing", tried };
 }
 
-async function altHistoryShape(env) {
+// Bumped whenever the probe logic changes: a cached failure from older, weaker
+// probing would otherwise be served for an hour after a deploy and look as if
+// the new attempt had failed too.
+const ALT_SHAPE_VERSION = 2;
+
+async function altHistoryShape(env, fresh = false) {
   const cache = caches.default;
-  const key = new Request("https://alt-cache.internal/history-shape");
-  const hit = await cache.match(key);
-  if (hit) { try { return JSON.parse(await hit.text()); } catch {} }
+  const key = new Request(`https://alt-cache.internal/history-shape?v=${ALT_SHAPE_VERSION}`);
+  if (!fresh) {
+    const hit = await cache.match(key);
+    if (hit) { try { return JSON.parse(await hit.text()); } catch {} }
+  }
   let shape = await discoverAltHistoryShape(env);
   if (!shape.listField) {
     const probed = await probeAltHistoryShape(env);
@@ -446,9 +453,12 @@ async function altHistory(workerUrl, env) {
 
   const grade = workerUrl.searchParams.get("grade");
   const grader = workerUrl.searchParams.get("grader");
+  // Escape hatch for exactly the case that bit here: re-run discovery instead
+  // of being told what a previous, weaker attempt concluded.
+  const fresh = workerUrl.searchParams.get("fresh") === "1";
 
   if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
-    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env);
+    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh);
     return new Response(JSON.stringify(body, null, 1), {
       status: body.error === "cert not found on ALT" ? 404 : 200,
       headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": cached ? "hit" : "miss" },
@@ -460,7 +470,7 @@ async function altHistory(workerUrl, env) {
   for (let i = 0; i < certs.length; i += 5) {
     const batch = await Promise.all(
       certs.slice(i, i + 5).map(c =>
-        altHistoryOne(c, grade, grader, env)
+        altHistoryOne(c, grade, grader, env, fresh)
           .then(r => r.body)
           .catch(e => ({ cert: c, history: null, error: String(e?.message ?? e) }))),
     );
@@ -473,15 +483,17 @@ async function altHistory(workerUrl, env) {
   });
 }
 
-async function altHistoryOne(cert, gradeOverride, graderOverride, env) {
+async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = false) {
   const cache = caches.default;
   const cacheKey = new Request(
     `https://alt-cache.internal/history?cert=${encodeURIComponent(cert)}`
     + `&grade=${encodeURIComponent(gradeOverride ?? "")}&grader=${encodeURIComponent(graderOverride ?? "")}`
   );
-  const cached = await cache.match(cacheKey);
-  if (cached) {
-    try { return { body: JSON.parse(await cached.text()), cached: true }; } catch {}
+  if (!fresh) {
+    const cached = await cache.match(cacheKey);
+    if (cached) {
+      try { return { body: JSON.parse(await cached.text()), cached: true }; } catch {}
+    }
   }
 
   // 1. cert → asset, grade and grader (the filter selects which grade's series)
@@ -498,7 +510,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env) {
   };
 
   // 2. what is the series called?
-  const shape = await altHistoryShape(env);
+  const shape = await altHistoryShape(env, fresh);
   if (!shape.listField || !shape.dateField || !shape.valueField) {
     return { body: { cert, assetId: certData.asset.id, subject: certData.asset.subject,
                      history: null, discovery: shape,
