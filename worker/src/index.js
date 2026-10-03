@@ -307,7 +307,14 @@ async function discoverAltHistoryShape(env) {
 // that doesn't exist often returns "Did you mean …" with the real neighbours.
 // So probe a handful of plausible names and read the replies.
 const LIST_PROBES = ["history", "valueHistory", "altValueHistory", "altValueTimeSeries",
-                     "timeSeries", "series", "points", "dataPoints", "values", "trend", "chart"];
+                     "timeSeries", "series", "points", "dataPoints", "values", "trend", "chart",
+                     "altValues", "valuesByDate", "historicalValues", "historical", "graph",
+                     "priceGraph", "sparkline", "movement", "priceHistory", "valueOverTime"];
+// A series is as likely to hang off the asset as off its value summary —
+// sales and comps in particular belong to the card, not to one grade's value.
+const ASSET_LIST_PROBES = ["salesHistory", "saleHistory", "sales", "recentSales", "comps",
+                           "comparables", "priceHistory", "valueHistory", "history",
+                           "timeSeries", "transactions", "marketData", "priceData", "chart"];
 const DATE_PROBES = ["date", "timestamp", "time", "day", "periodStart", "startDate", "x"];
 const VALUE_PROBES = ["value", "altValue", "price", "amount", "avgPrice", "median", "close", "y"];
 const NEEDS_SUBFIELDS_RE = /must have a selection of subfields/i;
@@ -320,16 +327,22 @@ function errorSuggestions(message) {
   return [...m[1].matchAll(/"([A-Za-z0-9_]+)"/g)].map(x => x[1]);
 }
 
-async function probeAltSelection(selection, env) {
-  const query = `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
-    cert(certNumber: $certNumber) {
-      asset { altValueInfo(tsFilter: $tsFilter) { ${selection} } }
-    }
-  }`;
-  const res = await altGraphql("Cert", query, {
-    certNumber: "00000000",
-    tsFilter: { gradeNumber: "10", gradingCompany: "PSA", autograph: null },
-  }, env);
+async function probeAltSelection(selection, env, scope = "value") {
+  // Asset-scoped probes leave $tsFilter out entirely: an unused variable is
+  // itself a validation error, which would look like the field being rejected.
+  const query = scope === "asset"
+    ? `query Cert($certNumber: String!) {
+        cert(certNumber: $certNumber) { asset { ${selection} } }
+      }`
+    : `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
+        cert(certNumber: $certNumber) {
+          asset { altValueInfo(tsFilter: $tsFilter) { ${selection} } }
+        }
+      }`;
+  const variables = scope === "asset"
+    ? { certNumber: "00000000" }
+    : { certNumber: "00000000", tsFilter: { gradeNumber: "10", gradingCompany: "PSA", autograph: null } };
+  const res = await altGraphql("Cert", query, variables, env);
   const errors = (res.body?.errors ?? []).map(e => e.message);
   // A validation failure names the field; anything else means the selection is
   // legal and the query merely found no such cert.
@@ -339,33 +352,38 @@ async function probeAltSelection(selection, env) {
 
 async function probeAltHistoryShape(env) {
   const tried = [];
-  let listField = null, elementType = null;
-  const queue = [...LIST_PROBES];
-  const seen = new Set();
+  let listField = null, elementType = null, scope = "value";
 
-  while (queue.length && tried.length < 14) {
-    const name = queue.shift();
-    if (seen.has(name)) continue;
-    seen.add(name);
-    const { valid, error } = await probeAltSelection(name, env);
-    tried.push(`${name}: ${valid ? "scalar field, exists" : (error ?? "").slice(0, 90)}`);
-    if (!valid && NEEDS_SUBFIELDS_RE.test(error)) {
-      listField = name;
-      elementType = TYPE_IN_ERROR_RE.exec(error)?.[1] ?? null;
-      break;
+  // Search the value summary first, then the asset itself.
+  for (const pass of [{ scope: "value", names: LIST_PROBES }, { scope: "asset", names: ASSET_LIST_PROBES }]) {
+    const queue = [...pass.names];
+    const seen = new Set();
+    while (queue.length && tried.length < 40) {
+      const name = queue.shift();
+      if (seen.has(name)) continue;
+      seen.add(name);
+      const { valid, error } = await probeAltSelection(name, env, pass.scope);
+      tried.push(`${pass.scope}.${name}: ${valid ? "exists (scalar)" : (error ?? "").slice(0, 80)}`);
+      if (!valid && NEEDS_SUBFIELDS_RE.test(error)) {
+        listField = name;
+        elementType = TYPE_IN_ERROR_RE.exec(error)?.[1] ?? null;
+        scope = pass.scope;
+        break;
+      }
+      if (!valid) for (const sug of errorSuggestions(error)) if (!seen.has(sug)) queue.push(sug);
     }
-    if (!valid) for (const s of errorSuggestions(error)) if (!seen.has(s)) queue.push(s);
+    if (listField) break;
   }
   if (!listField) return { error: "no value series field found by probing", tried };
 
   const findSub = async candidates => {
     for (const c of candidates) {
-      const { valid, error } = await probeAltSelection(`${listField} { ${c} }`, env);
+      const { valid, error } = await probeAltSelection(`${listField} { ${c} }`, env, scope);
       if (valid) return c;
       const suggestion = errorSuggestions(error).find(x => candidates.some(
         cand => x.toLowerCase().includes(cand.toLowerCase())));
       if (suggestion) {
-        const check = await probeAltSelection(`${listField} { ${suggestion} }`, env);
+        const check = await probeAltSelection(`${listField} { ${suggestion} }`, env, scope);
         if (check.valid) return suggestion;
       }
     }
@@ -379,7 +397,7 @@ async function probeAltHistoryShape(env) {
     return { error: `found the series field "${listField}" but could not identify its date and value fields`,
              partial: { listField, elementType, dateField, valueField }, tried };
   }
-  return { listField, elementType, dateField, valueField, discoveredBy: "probing", tried };
+  return { listField, elementType, dateField, valueField, scope, discoveredBy: "probing", tried };
 }
 
 async function altHistoryShape(env) {
@@ -489,17 +507,20 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env) {
   }
 
   // 3. fetch it
+  const series = `${shape.listField} { ${shape.dateField} ${shape.valueField} }`;
   const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!) {
     asset(id: $id) {
       id subject
+      ${shape.scope === "asset" ? series : ""}
       altValueInfo(tsFilter: $tsFilter) {
         currentAltValue
-        ${shape.listField} { ${shape.dateField} ${shape.valueField} }
+        ${shape.scope === "asset" ? "" : series}
       }
     }
   }`;
   const res = await altGraphql("AssetHistory", query, { id: certData.asset.id, tsFilter }, env);
-  const info = res.body?.data?.asset?.altValueInfo;
+  const asset = res.body?.data?.asset;
+  const info = shape.scope === "asset" ? asset : asset?.altValueInfo;
   if (!info) {
     return { body: { cert, assetId: certData.asset.id, history: null, discovery: shape,
                      errors: res.body?.errors?.map(e => e.message).slice(0, 3) }, cached: false };
@@ -515,7 +536,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env) {
     subject: certData.asset.subject,
     grade: tsFilter.gradeNumber,
     grader: tsFilter.gradingCompany,
-    currentValue: info.currentAltValue ?? null,
+    currentValue: asset?.altValueInfo?.currentAltValue ?? null,
     points: points.length,
     history: points,
     fields: { list: shape.listField, date: shape.dateField, value: shape.valueField },
