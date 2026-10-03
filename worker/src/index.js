@@ -316,41 +316,85 @@ async function altHistoryShape(env) {
   return shape;
 }
 
+const MAX_CERTS_PER_REQUEST = 25;
+const CERT_RE = /^[A-Za-z0-9-]{4,20}$/;
+
+// Single or batch: ?cert=X for one card, ?certs=X,Y,Z for a list. Each cert is
+// cached and resolved independently, so overlapping batches mostly hit cache
+// and one bad cert can't fail the rest.
 async function altHistory(workerUrl, env) {
   const json = (body, status = 200) => new Response(JSON.stringify(body, null, 1), {
     status, headers: { ...CORS, "Content-Type": "application/json" },
   });
-  const cert = (workerUrl.searchParams.get("cert") || "").trim();
-  if (!/^[A-Za-z0-9-]{4,20}$/.test(cert)) return json({ error: "pass ?cert=<grading cert>" }, 400);
+  const raw = workerUrl.searchParams.get("certs") ?? workerUrl.searchParams.get("cert") ?? "";
+  const certs = [...new Set(raw.split(",").map(c => c.trim()).filter(Boolean))];
+  if (!certs.length || certs.some(c => !CERT_RE.test(c))) {
+    return json({ error: "pass ?cert=<grading cert> or ?certs=<comma-separated list>" }, 400);
+  }
+  if (certs.length > MAX_CERTS_PER_REQUEST) {
+    return json({ error: `at most ${MAX_CERTS_PER_REQUEST} certs per request`, received: certs.length }, 400);
+  }
 
-  const cacheKey = new Request(`https://alt-cache.internal/history?${workerUrl.searchParams}`);
+  const grade = workerUrl.searchParams.get("grade");
+  const grader = workerUrl.searchParams.get("grader");
+
+  if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
+    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env);
+    return new Response(JSON.stringify(body, null, 1), {
+      status: body.error === "cert not found on ALT" ? 404 : 200,
+      headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": cached ? "hit" : "miss" },
+    });
+  }
+
+  // Five at a time: enough to keep a page of cards quick without hammering ALT.
+  const results = [];
+  for (let i = 0; i < certs.length; i += 5) {
+    const batch = await Promise.all(
+      certs.slice(i, i + 5).map(c =>
+        altHistoryOne(c, grade, grader, env)
+          .then(r => r.body)
+          .catch(e => ({ cert: c, history: null, error: String(e?.message ?? e) }))),
+    );
+    results.push(...batch);
+  }
+  return json({
+    count: results.length,
+    withHistory: results.filter(r => r.history?.length).length,
+    results,
+  });
+}
+
+async function altHistoryOne(cert, gradeOverride, graderOverride, env) {
   const cache = caches.default;
+  const cacheKey = new Request(
+    `https://alt-cache.internal/history?cert=${encodeURIComponent(cert)}`
+    + `&grade=${encodeURIComponent(gradeOverride ?? "")}&grader=${encodeURIComponent(graderOverride ?? "")}`
+  );
   const cached = await cache.match(cacheKey);
   if (cached) {
-    return new Response(await cached.text(), {
-      headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "hit" },
-    });
+    try { return { body: JSON.parse(await cached.text()), cached: true }; } catch {}
   }
 
   // 1. cert → asset, grade and grader (the filter selects which grade's series)
   const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: cert }, env);
   const certData = certRes.body?.data?.cert;
   if (!certData?.asset?.id) {
-    return json({ cert, error: "cert not found on ALT",
-                  details: certRes.body?.errors?.map(e => e.message).slice(0, 2) }, 404);
+    return { body: { cert, history: null, error: "cert not found on ALT",
+                     details: certRes.body?.errors?.map(e => e.message).slice(0, 2) }, cached: false };
   }
   const tsFilter = {
-    gradeNumber: workerUrl.searchParams.get("grade") || certData.gradeNumber,
-    gradingCompany: workerUrl.searchParams.get("grader") || certData.gradingCompany,
+    gradeNumber: gradeOverride || certData.gradeNumber,
+    gradingCompany: graderOverride || certData.gradingCompany,
     autograph: null,
   };
 
   // 2. what is the series called?
   const shape = await altHistoryShape(env);
   if (!shape.listField) {
-    return json({ cert, assetId: certData.asset.id, subject: certData.asset.subject,
-                  history: null, discovery: shape,
-                  note: "ALT exposes no value series we could identify; the current value is still available via /alt/AssetDetails" }, 200);
+    return { body: { cert, assetId: certData.asset.id, subject: certData.asset.subject,
+                     history: null, discovery: shape,
+                     note: "ALT exposes no value series we could identify; the current value is still available via /alt/AssetDetails" },
+             cached: false };
   }
 
   // 3. fetch it
@@ -366,8 +410,8 @@ async function altHistory(workerUrl, env) {
   const res = await altGraphql("AssetHistory", query, { id: certData.asset.id, tsFilter }, env);
   const info = res.body?.data?.asset?.altValueInfo;
   if (!info) {
-    return json({ cert, assetId: certData.asset.id, history: null, discovery: shape,
-                  errors: res.body?.errors?.map(e => e.message).slice(0, 3) }, 502);
+    return { body: { cert, assetId: certData.asset.id, history: null, discovery: shape,
+                     errors: res.body?.errors?.map(e => e.message).slice(0, 3) }, cached: false };
   }
   const points = (info[shape.listField] ?? []).map(p => ({
     date: p[shape.dateField] ?? null,
@@ -385,17 +429,14 @@ async function altHistory(workerUrl, env) {
     history: points,
     fields: { list: shape.listField, date: shape.dateField, value: shape.valueField },
   };
-  const text = JSON.stringify(body, null, 1);
   if (points.length) {
     try {
-      await cache.put(cacheKey, new Response(text, {
+      await cache.put(cacheKey, new Response(JSON.stringify(body), {
         headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ALT_HISTORY_TTL}` },
       }));
     } catch {}
   }
-  return new Response(text, {
-    headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "miss" },
-  });
+  return { body, cached: false };
 }
 
 async function proxyAlt(request, path, env) {
