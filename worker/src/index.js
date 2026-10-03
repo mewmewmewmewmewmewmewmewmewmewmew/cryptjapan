@@ -330,115 +330,163 @@ function errorSuggestions(message) {
   return [...m[1].matchAll(/[`'"]([A-Za-z0-9_]+)[`'"]/g)].map(x => x[1]);
 }
 
-async function probeAltSelection(selection, env, scope = "value") {
-  // Asset-scoped probes leave $tsFilter out entirely: an unused variable is
-  // itself a validation error, which would look like the field being rejected.
-  const query = scope === "asset"
-    ? `query Cert($certNumber: String!) {
-        cert(certNumber: $certNumber) { asset { ${selection} } }
-      }`
-    : `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
-        cert(certNumber: $certNumber) {
-          asset { altValueInfo(tsFilter: $tsFilter) { ${selection} } }
-        }
-      }`;
-  const variables = scope === "asset"
-    ? { certNumber: "00000000" }
-    : { certNumber: "00000000", tsFilter: { gradeNumber: "10", gradingCompany: "PSA", autograph: null } };
+// Variables a probe may reference; declarations are emitted only for the ones
+// the selection actually uses, since an unused variable is a validation error.
+const ALT_VAR_TYPES = { tsFilter: "TimeSeriesFilter!", mtf: "MarketTransactionFilter!" };
+const REQUIRED_ARG_RE = /argument '([A-Za-z0-9_]+)' of type '([A-Za-z0-9_\[\]!]+)' is required/g;
+const REQUIRED_INPUT_RE = /Field '([A-Za-z0-9_]+)' of required type '([A-Za-z0-9_\[\]!]+)' was not provided/g;
+
+async function probeAltSelection(selection, env, scope = "value", vars = {}) {
+  const used = Object.keys(ALT_VAR_TYPES).filter(v => selection.includes(`$${v}`));
+  const decls = used.map(v => `$${v}: ${ALT_VAR_TYPES[v]}`).join(", ");
+  const inner = scope === "asset"
+    ? selection
+    : `altValueInfo(tsFilter: $tsFilter) { ${selection} }`;
+  const declList = scope === "asset"
+    ? (decls ? `, ${decls}` : "")
+    : `, $tsFilter: TimeSeriesFilter!${used.filter(v => v !== "tsFilter").map(v => `, $${v}: ${ALT_VAR_TYPES[v]}`).join("")}`;
+  const query = `query Cert($certNumber: String!${declList}) {
+    cert(certNumber: $certNumber) { asset { ${inner} } }
+  }`;
+  const variables = { certNumber: "00000000", ...vars };
+  if (scope !== "asset" && variables.tsFilter == null) {
+    variables.tsFilter = { gradeNumber: "10", gradingCompany: "PSA", autograph: null };
+  }
   const res = await altGraphql("Cert", query, variables, env);
   const errors = (res.body?.errors ?? []).map(e => e.message);
-  // A validation failure names the field; anything else means the selection is
-  // legal and the query merely found no such cert.
-  const invalid = errors.find(e => /Cannot query field|must have a selection/i.test(e));
-  return { valid: !invalid, error: invalid ?? null };
+  const invalid = errors.find(e =>
+    /Cannot query field|must have a selection|is required|was not provided|Unknown argument/i.test(e));
+  return { valid: !invalid, error: invalid ?? null, errors };
+}
+
+// A field can demand arguments before it will answer. The server names them,
+// and sending an empty object for one names its required members in turn, so a
+// usable argument can be assembled without documentation.
+async function buildRequiredArgs(fieldName, errors, env, tsFilter) {
+  const args = {};
+  const names = [...errors.join(" ").matchAll(REQUIRED_ARG_RE)].map(m => [m[1], m[2]]);
+  for (const [arg] of names) {
+    if (arg === "tsFilter") { args.tsFilter = "$tsFilter"; continue; }
+    // Probe with an empty object to learn what the input type requires.
+    const call = `${fieldName}(${[...Object.keys(args).map(a => `${a}: ${args[a]}`), `${arg}: $mtf`].join(", ")}) { __typename }`;
+    const res = await probeAltSelection(call, env, "asset", { mtf: {}, tsFilter });
+    const required = [...res.errors.join(" ").matchAll(REQUIRED_INPUT_RE)].map(m => [m[1], m[2]]);
+    const value = {};
+    for (const [field, type] of required) {
+      if (/gradeNumber/i.test(field)) value[field] = tsFilter.gradeNumber;
+      else if (/grad(ing)?Company|grader/i.test(field)) value[field] = tsFilter.gradingCompany;
+      else if (/^\[/.test(type)) value[field] = [];
+      else if (/Boolean/i.test(type)) value[field] = false;
+      else if (/Int|Float/i.test(type)) value[field] = 0;
+      else value[field] = null;
+    }
+    args[arg] = "$mtf";
+    args.__mtfValue = value;
+  }
+  return args;
+}
+
+function callWithArgs(fieldName, args) {
+  const pairs = Object.entries(args).filter(([k]) => !k.startsWith("__"));
+  return pairs.length ? `${fieldName}(${pairs.map(([k, v]) => `${k}: ${v}`).join(", ")})` : fieldName;
+}
+
+// Walks down from a container looking for a list whose elements carry a
+// date-like and a value-like field. A field that exists but reads as neither is
+// treated as another container rather than mistaken for a leaf — which is how
+// "data" came to be read as a date and "grade" as a price.
+function nestSelection(parts, inner) {
+  return parts.reduceRight((acc, f) => `${f} { ${acc} }`, inner);
+}
+
+async function findSeriesUnder(parts, env, scope, vars, tried, depth = 0) {
+  if (depth > 2 || tried.length > 100) return null;
+  const probe = c => probeAltSelection(nestSelection(parts, c), env, scope, vars);
+  const label = parts.join(" > ");
+
+  // Returns { leaf } for a plausible scalar, { container } for a field that
+  // exists or needs subfields but can't be the value we're after.
+  const classify = async (candidates, plausible) => {
+    const containers = [];
+    for (const c of candidates) {
+      const { valid, error } = await probe(c);
+      tried.push(`${label}.${c}: ${valid ? "exists" : (error ?? "").slice(0, 70)}`);
+      if (valid && plausible.test(c)) return { leaf: c, containers };
+      if (valid) { containers.push(c); continue; }
+      if (NEEDS_SUBFIELDS_RE.test(error ?? "")) { containers.push(c); continue; }
+      for (const sug of errorSuggestions(error)) {
+        const check = await probe(sug);
+        tried.push(`${label}.${sug} (suggested): ${check.valid ? "exists" : (check.error ?? "").slice(0, 50)}`);
+        if (check.valid && plausible.test(sug)) return { leaf: sug, containers };
+        if (check.valid || NEEDS_SUBFIELDS_RE.test(check.error ?? "")) containers.push(sug);
+      }
+    }
+    return { leaf: null, containers };
+  };
+
+  const d = await classify(DATE_PROBES, DATE_FIELD_RE);
+  if (d.leaf) {
+    const v = await classify(VALUE_PROBES, VALUE_FIELD_RE);
+    if (v.leaf) return { path: [], dateField: d.leaf, valueField: v.leaf };
+  }
+
+  // Not at this level: step into any container seen here, or the usual names.
+  const seen = new Set();
+  for (const c of [...d.containers, ...LIST_PROBES.slice(0, 6)]) {
+    if (seen.has(c)) continue;
+    seen.add(c);
+    const { valid, error } = await probe(c);
+    if (!valid && !NEEDS_SUBFIELDS_RE.test(error ?? "")) continue;
+    const found = await findSeriesUnder([...parts, c], env, scope, vars, tried, depth + 1);
+    if (found) return { path: [c, ...found.path], dateField: found.dateField, valueField: found.valueField };
+  }
+  return null;
 }
 
 async function probeAltHistoryShape(env) {
   const tried = [];
-  let listField = null, elementType = null, scope = "value";
+  const tsFilter = { gradeNumber: "10", gradingCompany: "PSA", autograph: null };
 
-  // Search the value summary first, then the asset itself.
   for (const pass of [{ scope: "value", names: LIST_PROBES }, { scope: "asset", names: ASSET_LIST_PROBES }]) {
     const queue = [...pass.names];
     const seen = new Set();
-    while (queue.length && tried.length < 40) {
+    while (queue.length && tried.length < 60) {
       const name = queue.shift();
       if (seen.has(name)) continue;
       seen.add(name);
-      const { valid, error } = await probeAltSelection(name, env, pass.scope);
-      tried.push(`${pass.scope}.${name}: ${valid ? "exists (scalar)" : (error ?? "").slice(0, 80)}`);
-      if (!valid && NEEDS_SUBFIELDS_RE.test(error)) {
-        listField = name;
-        elementType = TYPE_IN_ERROR_RE.exec(error)?.[1] ?? null;
-        scope = pass.scope;
-        break;
+      let probe = await probeAltSelection(name, env, pass.scope, { tsFilter });
+      let call = name, vars = { tsFilter };
+
+      // The field may demand arguments before it will answer.
+      if (!probe.valid && /is required/i.test(probe.error ?? "")) {
+        const args = await buildRequiredArgs(name, probe.errors, env, tsFilter);
+        call = callWithArgs(name, args);
+        vars = { tsFilter, mtf: args.__mtfValue ?? {} };
+        probe = await probeAltSelection(call, env, pass.scope, vars);
+        tried.push(`${pass.scope}.${name} with args: ${probe.valid ? "ok" : (probe.error ?? "").slice(0, 70)}`);
+      } else {
+        tried.push(`${pass.scope}.${name}: ${probe.valid ? "exists (scalar)" : (probe.error ?? "").slice(0, 70)}`);
       }
-      if (!valid) for (const sug of errorSuggestions(error)) if (!seen.has(sug)) queue.push(sug);
-    }
-    if (listField) break;
-  }
-  if (!listField) return { error: "no value series field found by probing", tried };
 
-  // A name like pricingData is as likely to be a container holding the series
-  // as the series itself, so selections are built from a path and the search
-  // can step one level in.
-  const wrap = (path, inner) => path.reduceRight((acc, f) => `${f} { ${acc} }`, inner);
-  const findSub = async (path, candidates) => {
-    for (const c of candidates) {
-      const { valid, error } = await probeAltSelection(wrap(path, c), env, scope);
-      tried.push(`${scope}.${path.join(".")}.${c}: ${valid ? "exists" : (error ?? "").slice(0, 70)}`);
-      if (valid) return c;
-      for (const sug of errorSuggestions(error)) {
-        const check = await probeAltSelection(wrap(path, sug), env, scope);
-        tried.push(`${scope}.${path.join(".")}.${sug} (suggested): ${check.valid ? "exists" : "no"}`);
-        if (check.valid) return sug;
-      }
-    }
-    return null;
-  };
-
-  let path = [listField];
-  let dateField = await findSub(path, DATE_PROBES);
-  let valueField = dateField ? await findSub(path, VALUE_PROBES) : null;
-
-  if (!dateField || !valueField) {
-    // Step inside: look for a list one level down, then date/value within it.
-    for (const inner of [...LIST_PROBES, ...ASSET_LIST_PROBES].slice(0, 12)) {
-      if (tried.length > 70) break;
-      const { valid, error } = await probeAltSelection(wrap([listField], inner), env, scope);
-      if (valid) continue;
-      const names = NEEDS_SUBFIELDS_RE.test(error) ? [inner] : errorSuggestions(error);
-      for (const name of names) {
-        const check = await probeAltSelection(wrap([listField], name), env, scope);
-        if (!check.valid && NEEDS_SUBFIELDS_RE.test(check.error)) {
-          const nested = [listField, name];
-          const d = await findSub(nested, DATE_PROBES);
-          const v = d ? await findSub(nested, VALUE_PROBES) : null;
-          if (d && v) {
-            path = nested; dateField = d; valueField = v;
-            elementType = TYPE_IN_ERROR_RE.exec(check.error)?.[1] ?? elementType;
-            break;
-          }
+      if (!probe.valid && NEEDS_SUBFIELDS_RE.test(probe.error ?? "")) {
+        const found = await findSeriesUnder([call], env, pass.scope, vars, tried);
+        if (found) {
+          return { listField: name, call, path: [name, ...found.path],
+                   dateField: found.dateField, valueField: found.valueField,
+                   scope: pass.scope, args: vars.mtf ? { mtf: vars.mtf } : null,
+                   discoveredBy: "probing", tried };
         }
       }
-      if (dateField && valueField) break;
+      if (!probe.valid) for (const sug of errorSuggestions(probe.error)) if (!seen.has(sug)) queue.push(sug);
     }
   }
-
-  if (!dateField || !valueField) {
-    // Deliberately not reporting listField at the top level: a caller checking
-    // only for that would build a query selecting undefined subfields.
-    return { error: `found "${listField}" but could not identify a date and value within it`,
-             partial: { listField, elementType, dateField, valueField }, tried };
-  }
-  return { listField: path[0], path, elementType, dateField, valueField,
-           scope, discoveredBy: "probing", tried };
+  return { error: "no value series field found by probing", tried };
 }
 
-// Bumped whenever the probe logic changes: a cached failure from older, weaker
-// probing would otherwise be served for an hour after a deploy and look as if
-// the new attempt had failed too.
-const ALT_SHAPE_VERSION = 3;
+// Bumped whenever the probe logic changes: a cached conclusion from older,
+// weaker probing would otherwise be served after a deploy and look as if the
+// new attempt had failed too.
+const ALT_SHAPE_VERSION = 4;
 
 async function altHistoryShape(env, fresh = false) {
   const cache = caches.default;
@@ -554,11 +602,14 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   }
 
   // 3. fetch it
-  // The series may sit one level inside a container, so build from the path.
+  // The series may sit several levels inside a container, and the outermost
+  // field may take arguments, so build from the discovered call and path.
   const path = shape.path ?? [shape.listField];
-  const series = path.reduceRight((acc, f) => `${f} { ${acc} }`,
-                                  `${shape.dateField} ${shape.valueField}`);
-  const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!) {
+  const parts = [shape.call ?? path[0], ...path.slice(1)];
+  const series = parts.reduceRight((acc, f) => `${f} { ${acc} }`,
+                                   `${shape.dateField} ${shape.valueField}`);
+  const needsMtf = !!shape.args?.mtf;
+  const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!${needsMtf ? ", $mtf: MarketTransactionFilter!" : ""}) {
     asset(id: $id) {
       id subject
       ${shape.scope === "asset" ? series : ""}
@@ -568,7 +619,9 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
       }
     }
   }`;
-  const res = await altGraphql("AssetHistory", query, { id: certData.asset.id, tsFilter }, env);
+  const variables = { id: certData.asset.id, tsFilter };
+  if (needsMtf) variables.mtf = shape.args.mtf;
+  const res = await altGraphql("AssetHistory", query, variables, env);
   const asset = res.body?.data?.asset;
   const info = shape.scope === "asset" ? asset : asset?.altValueInfo;
   if (!info) {
