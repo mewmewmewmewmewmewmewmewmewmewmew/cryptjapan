@@ -61,6 +61,10 @@ export default {
       return altSchemaProbe(url, env);
     }
 
+    if (path === "/alt-history") {
+      return altHistory(url, env);
+    }
+
     if (path.startsWith("/alt/")) {
       return proxyAlt(request, path, env);
     }
@@ -238,6 +242,159 @@ async function altSchemaProbe(workerUrl, env) {
   if (!out.validationErrors.length) out.rawProbe = probe.raw ?? JSON.stringify(probe.body).slice(0, 400);
   return new Response(JSON.stringify(out, null, 1), {
     headers: { ...CORS, "Content-Type": "application/json" },
+  });
+}
+
+// ── ALT value history ────────────────────────────────────────────────
+// A standalone endpoint for other projects: give it a cert, get back the
+// current ALT value and the series behind it. The field names on ALT's value
+// type are not documented and not visible from here, so the shape is
+// discovered by introspection on first use and cached — the alternative was
+// hard-coding a guess that silently returns nothing when wrong.
+const ALT_HISTORY_TTL = 6 * 3600;
+const ALT_SHAPE_TTL = 24 * 3600;
+const HISTORY_FIELD_RE = /history|series|values|points|trend|chart/i;
+const DATE_FIELD_RE = /date|time|timestamp|day|period|week|month/i;
+const VALUE_FIELD_RE = /value|price|amount|avg|average|median|close/i;
+
+function unwrapType(t) {
+  let cur = t, name = null, isList = false;
+  for (let i = 0; cur && i < 4; i++) {
+    if (cur.kind === "LIST") isList = true;
+    if (cur.name) name = cur.name;
+    cur = cur.ofType;
+  }
+  return { name, isList };
+}
+
+async function discoverAltHistoryShape(env) {
+  const valueType = await altGraphql("IntrospectType", INTROSPECT, { name: "AltValueInfo" }, env);
+  const fields = valueType.body?.data?.__type?.fields;
+  if (!fields) {
+    return { error: valueType.body?.errors?.[0]?.message ?? "AltValueInfo is not introspectable" };
+  }
+
+  // A series is a list field; prefer one whose name says so. Keep the field and
+  // its element type apart — the query needs the field, introspection the type.
+  const lists = fields
+    .map(f => ({ field: f.name, ...unwrapType(f.type) }))
+    .filter(f => f.isList && f.field && f.name);
+  const ordered = [...lists.filter(f => HISTORY_FIELD_RE.test(f.field)), ...lists];
+  const seen = new Set();
+  for (const candidate of ordered.slice(0, 6)) {
+    if (seen.has(candidate.field)) continue;
+    seen.add(candidate.field);
+    const pointType = await altGraphql("IntrospectType", INTROSPECT, { name: candidate.name }, env);
+    const pointFields = pointType.body?.data?.__type?.fields;
+    if (!pointFields?.length) continue;
+    const names = pointFields.map(f => f.name);
+    const dateField = names.find(n => DATE_FIELD_RE.test(n));
+    const valueField = names.find(n => VALUE_FIELD_RE.test(n));
+    if (dateField && valueField) {
+      return { listField: candidate.field, pointType: candidate.name,
+               dateField, valueField, pointFields: names.slice(0, 12) };
+    }
+  }
+  return { error: "no list field on AltValueInfo carries a date and a value",
+           listFields: lists.map(f => `${f.field}: [${f.name}]`).slice(0, 10),
+           allFields: fields.map(f => f.name).slice(0, 20) };
+}
+
+async function altHistoryShape(env) {
+  const cache = caches.default;
+  const key = new Request("https://alt-cache.internal/history-shape");
+  const hit = await cache.match(key);
+  if (hit) { try { return JSON.parse(await hit.text()); } catch {} }
+  const shape = await discoverAltHistoryShape(env);
+  if (shape.listField) {
+    try {
+      await cache.put(key, new Response(JSON.stringify(shape), {
+        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ALT_SHAPE_TTL}` },
+      }));
+    } catch {}
+  }
+  return shape;
+}
+
+async function altHistory(workerUrl, env) {
+  const json = (body, status = 200) => new Response(JSON.stringify(body, null, 1), {
+    status, headers: { ...CORS, "Content-Type": "application/json" },
+  });
+  const cert = (workerUrl.searchParams.get("cert") || "").trim();
+  if (!/^[A-Za-z0-9-]{4,20}$/.test(cert)) return json({ error: "pass ?cert=<grading cert>" }, 400);
+
+  const cacheKey = new Request(`https://alt-cache.internal/history?${workerUrl.searchParams}`);
+  const cache = caches.default;
+  const cached = await cache.match(cacheKey);
+  if (cached) {
+    return new Response(await cached.text(), {
+      headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "hit" },
+    });
+  }
+
+  // 1. cert → asset, grade and grader (the filter selects which grade's series)
+  const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: cert }, env);
+  const certData = certRes.body?.data?.cert;
+  if (!certData?.asset?.id) {
+    return json({ cert, error: "cert not found on ALT",
+                  details: certRes.body?.errors?.map(e => e.message).slice(0, 2) }, 404);
+  }
+  const tsFilter = {
+    gradeNumber: workerUrl.searchParams.get("grade") || certData.gradeNumber,
+    gradingCompany: workerUrl.searchParams.get("grader") || certData.gradingCompany,
+    autograph: null,
+  };
+
+  // 2. what is the series called?
+  const shape = await altHistoryShape(env);
+  if (!shape.listField) {
+    return json({ cert, assetId: certData.asset.id, subject: certData.asset.subject,
+                  history: null, discovery: shape,
+                  note: "ALT exposes no value series we could identify; the current value is still available via /alt/AssetDetails" }, 200);
+  }
+
+  // 3. fetch it
+  const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!) {
+    asset(id: $id) {
+      id subject
+      altValueInfo(tsFilter: $tsFilter) {
+        currentAltValue
+        ${shape.listField} { ${shape.dateField} ${shape.valueField} }
+      }
+    }
+  }`;
+  const res = await altGraphql("AssetHistory", query, { id: certData.asset.id, tsFilter }, env);
+  const info = res.body?.data?.asset?.altValueInfo;
+  if (!info) {
+    return json({ cert, assetId: certData.asset.id, history: null, discovery: shape,
+                  errors: res.body?.errors?.map(e => e.message).slice(0, 3) }, 502);
+  }
+  const points = (info[shape.listField] ?? []).map(p => ({
+    date: p[shape.dateField] ?? null,
+    value: p[shape.valueField] ?? null,
+  })).filter(p => p.date != null && p.value != null);
+
+  const body = {
+    cert,
+    assetId: certData.asset.id,
+    subject: certData.asset.subject,
+    grade: tsFilter.gradeNumber,
+    grader: tsFilter.gradingCompany,
+    currentValue: info.currentAltValue ?? null,
+    points: points.length,
+    history: points,
+    fields: { list: shape.listField, date: shape.dateField, value: shape.valueField },
+  };
+  const text = JSON.stringify(body, null, 1);
+  if (points.length) {
+    try {
+      await cache.put(cacheKey, new Response(text, {
+        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ALT_HISTORY_TTL}` },
+      }));
+    } catch {}
+  }
+  return new Response(text, {
+    headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": "miss" },
   });
 }
 
