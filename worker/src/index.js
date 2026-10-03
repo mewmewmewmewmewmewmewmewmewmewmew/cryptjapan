@@ -177,9 +177,17 @@ const ALT_CACHE_TTL = {
 // probe sequence turned into a 1101. Every upstream call is counted and the
 // search stops while there is still room to answer.
 class SubrequestBudget {
-  constructor(max = 32) { this.max = max; this.used = 0; }
-  take() { if (this.used >= this.max) return false; this.used++; return true; }
-  get exhausted() { return this.used >= this.max; }
+  constructor(max = 32, parent = null) { this.max = max; this.used = 0; this.parent = parent; }
+  take() {
+    if (this.used >= this.max) return false;
+    if (this.parent && !this.parent.take()) return false;
+    this.used++;
+    return true;
+  }
+  get exhausted() { return this.used >= this.max || !!this.parent?.exhausted; }
+  // A sub-budget that draws on this one but stops sooner, so an open-ended
+  // search can't spend what the actual lookups still need.
+  child(max) { return new SubrequestBudget(max, this); }
 }
 
 async function altGraphql(operation, query, variables, env, budget = null) {
@@ -542,7 +550,7 @@ async function probeAltHistoryShape(env, budget) {
 // Bumped whenever the probe logic changes: a cached conclusion from older,
 // weaker probing would otherwise be served after a deploy and look as if the
 // new attempt had failed too.
-const ALT_SHAPE_VERSION = 6;
+const ALT_SHAPE_VERSION = 7;
 
 async function altHistoryShape(env, fresh = false, budget = null) {
   const cache = caches.default;
@@ -605,7 +613,10 @@ async function altHistory(workerUrl, env) {
 
   // Resolve the schema shape once. Letting each cert do it meant five parallel
   // discoveries on a cold cache, which is how a batch blew the subrequest cap.
-  const shape = await altHistoryShape(env, fresh, budget);
+  // Discovery gets a sub-budget: searching the schema must never consume what
+  // the cert lookups themselves need, or the answer is a budget error instead
+  // of a card.
+  const shape = await altHistoryShape(env, fresh, budget.child(24));
 
   if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
     const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh, budget, shape);
@@ -651,7 +662,9 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   // 1. cert → asset, grade and grader (the filter selects which grade's series)
   const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: cert }, env, budget);
   if (certRes.budgetExhausted) {
-    return { body: { cert, history: null, error: "upstream call budget for this request was exhausted" }, cached: false };
+    return { body: { cert, history: null,
+                     error: "upstream call budget for this request was exhausted",
+                     discovery: sharedShape?.listField ? undefined : sharedShape }, cached: false };
   }
   const certData = certRes.body?.data?.cert;
   if (!certData?.asset?.id) {
