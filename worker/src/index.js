@@ -312,8 +312,8 @@ const LIST_PROBES = ["history", "valueHistory", "altValueHistory", "altValueTime
                      "priceGraph", "sparkline", "movement", "priceHistory", "valueOverTime"];
 // A series is as likely to hang off the asset as off its value summary —
 // sales and comps in particular belong to the card, not to one grade's value.
-const ASSET_LIST_PROBES = ["salesHistory", "saleHistory", "sales", "recentSales", "comps",
-                           "comparables", "priceHistory", "valueHistory", "history",
+const ASSET_LIST_PROBES = ["pricingData", "salesHistory", "saleHistory", "sales", "recentSales",
+                           "comps", "comparables", "priceHistory", "valueHistory", "history",
                            "timeSeries", "transactions", "marketData", "priceData", "chart"];
 const DATE_PROBES = ["date", "timestamp", "time", "day", "periodStart", "startDate", "x"];
 const VALUE_PROBES = ["value", "altValue", "price", "amount", "avgPrice", "median", "close", "y"];
@@ -321,10 +321,13 @@ const NEEDS_SUBFIELDS_RE = /must have a selection of subfields/i;
 const SUGGESTION_RE = /Did you mean ([^?]+)\?/i;
 const TYPE_IN_ERROR_RE = /of type "\[?([A-Za-z0-9_]+)/;
 
+// ALT quotes suggestions with apostrophes ("Did you mean 'pricingData'?"), not
+// the double quotes graphql-js uses by default. Missing that threw away the
+// one thing the server volunteers about its own schema.
 function errorSuggestions(message) {
   const m = SUGGESTION_RE.exec(message || "");
   if (!m) return [];
-  return [...m[1].matchAll(/"([A-Za-z0-9_]+)"/g)].map(x => x[1]);
+  return [...m[1].matchAll(/[`'"]([A-Za-z0-9_]+)[`'"]/g)].map(x => x[1]);
 }
 
 async function probeAltSelection(selection, env, scope = "value") {
@@ -376,34 +379,66 @@ async function probeAltHistoryShape(env) {
   }
   if (!listField) return { error: "no value series field found by probing", tried };
 
-  const findSub = async candidates => {
+  // A name like pricingData is as likely to be a container holding the series
+  // as the series itself, so selections are built from a path and the search
+  // can step one level in.
+  const wrap = (path, inner) => path.reduceRight((acc, f) => `${f} { ${acc} }`, inner);
+  const findSub = async (path, candidates) => {
     for (const c of candidates) {
-      const { valid, error } = await probeAltSelection(`${listField} { ${c} }`, env, scope);
+      const { valid, error } = await probeAltSelection(wrap(path, c), env, scope);
+      tried.push(`${scope}.${path.join(".")}.${c}: ${valid ? "exists" : (error ?? "").slice(0, 70)}`);
       if (valid) return c;
-      const suggestion = errorSuggestions(error).find(x => candidates.some(
-        cand => x.toLowerCase().includes(cand.toLowerCase())));
-      if (suggestion) {
-        const check = await probeAltSelection(`${listField} { ${suggestion} }`, env, scope);
-        if (check.valid) return suggestion;
+      for (const sug of errorSuggestions(error)) {
+        const check = await probeAltSelection(wrap(path, sug), env, scope);
+        tried.push(`${scope}.${path.join(".")}.${sug} (suggested): ${check.valid ? "exists" : "no"}`);
+        if (check.valid) return sug;
       }
     }
     return null;
   };
-  const dateField = await findSub(DATE_PROBES);
-  const valueField = await findSub(VALUE_PROBES);
+
+  let path = [listField];
+  let dateField = await findSub(path, DATE_PROBES);
+  let valueField = dateField ? await findSub(path, VALUE_PROBES) : null;
+
+  if (!dateField || !valueField) {
+    // Step inside: look for a list one level down, then date/value within it.
+    for (const inner of [...LIST_PROBES, ...ASSET_LIST_PROBES].slice(0, 12)) {
+      if (tried.length > 70) break;
+      const { valid, error } = await probeAltSelection(wrap([listField], inner), env, scope);
+      if (valid) continue;
+      const names = NEEDS_SUBFIELDS_RE.test(error) ? [inner] : errorSuggestions(error);
+      for (const name of names) {
+        const check = await probeAltSelection(wrap([listField], name), env, scope);
+        if (!check.valid && NEEDS_SUBFIELDS_RE.test(check.error)) {
+          const nested = [listField, name];
+          const d = await findSub(nested, DATE_PROBES);
+          const v = d ? await findSub(nested, VALUE_PROBES) : null;
+          if (d && v) {
+            path = nested; dateField = d; valueField = v;
+            elementType = TYPE_IN_ERROR_RE.exec(check.error)?.[1] ?? elementType;
+            break;
+          }
+        }
+      }
+      if (dateField && valueField) break;
+    }
+  }
+
   if (!dateField || !valueField) {
     // Deliberately not reporting listField at the top level: a caller checking
     // only for that would build a query selecting undefined subfields.
-    return { error: `found the series field "${listField}" but could not identify its date and value fields`,
+    return { error: `found "${listField}" but could not identify a date and value within it`,
              partial: { listField, elementType, dateField, valueField }, tried };
   }
-  return { listField, elementType, dateField, valueField, scope, discoveredBy: "probing", tried };
+  return { listField: path[0], path, elementType, dateField, valueField,
+           scope, discoveredBy: "probing", tried };
 }
 
 // Bumped whenever the probe logic changes: a cached failure from older, weaker
 // probing would otherwise be served for an hour after a deploy and look as if
 // the new attempt had failed too.
-const ALT_SHAPE_VERSION = 2;
+const ALT_SHAPE_VERSION = 3;
 
 async function altHistoryShape(env, fresh = false) {
   const cache = caches.default;
@@ -519,7 +554,10 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   }
 
   // 3. fetch it
-  const series = `${shape.listField} { ${shape.dateField} ${shape.valueField} }`;
+  // The series may sit one level inside a container, so build from the path.
+  const path = shape.path ?? [shape.listField];
+  const series = path.reduceRight((acc, f) => `${f} { ${acc} }`,
+                                  `${shape.dateField} ${shape.valueField}`);
   const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!) {
     asset(id: $id) {
       id subject
@@ -537,7 +575,8 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     return { body: { cert, assetId: certData.asset.id, history: null, discovery: shape,
                      errors: res.body?.errors?.map(e => e.message).slice(0, 3) }, cached: false };
   }
-  const points = (info[shape.listField] ?? []).map(p => ({
+  const rows = path.reduce((node, f) => (node == null ? null : node[f]), info);
+  const points = (Array.isArray(rows) ? rows : []).map(p => ({
     date: p[shape.dateField] ?? null,
     value: p[shape.valueField] ?? null,
   })).filter(p => p.date != null && p.value != null);
@@ -551,7 +590,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     currentValue: asset?.altValueInfo?.currentAltValue ?? null,
     points: points.length,
     history: points,
-    fields: { list: shape.listField, date: shape.dateField, value: shape.valueField },
+    fields: { path, date: shape.dateField, value: shape.valueField, scope: shape.scope ?? "value" },
   };
   if (points.length) {
     try {
