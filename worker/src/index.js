@@ -62,7 +62,9 @@ export default {
     }
 
     if (path === "/alt-history") {
-      return altHistory(url, env);
+      return altHistory(url, env).catch(e => new Response(
+        JSON.stringify({ error: String(e?.message ?? e) }, null, 1),
+        { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }));
     }
 
     if (path.startsWith("/alt/")) {
@@ -170,7 +172,20 @@ const ALT_CACHE_TTL = {
 // read the validation error, which names the type and often suggests the real
 // field. Runs here rather than in the page because only the worker holds the
 // ALT token.
-async function altGraphql(operation, query, variables, env) {
+// Cloudflare allows a limited number of subrequests per invocation, and
+// exceeding it throws rather than failing a call — which is how an over-eager
+// probe sequence turned into a 1101. Every upstream call is counted and the
+// search stops while there is still room to answer.
+class SubrequestBudget {
+  constructor(max = 32) { this.max = max; this.used = 0; }
+  take() { if (this.used >= this.max) return false; this.used++; return true; }
+  get exhausted() { return this.used >= this.max; }
+}
+
+async function altGraphql(operation, query, variables, env, budget = null) {
+  if (budget && !budget.take()) {
+    return { status: 0, body: { errors: [{ message: "subrequest budget exhausted" }] }, budgetExhausted: true };
+  }
   const res = await fetch(`${ALT_BASE}/graphql/${operation}`, {
     method: "POST",
     headers: { "Content-Type": "application/json", "Authorization": `Bearer ${env.ALT_TOKEN}` },
@@ -267,8 +282,8 @@ function unwrapType(t) {
   return { name, isList };
 }
 
-async function discoverAltHistoryShape(env) {
-  const valueType = await altGraphql("IntrospectType", INTROSPECT, { name: "AltValueInfo" }, env);
+async function discoverAltHistoryShape(env, budget = null) {
+  const valueType = await altGraphql("IntrospectType", INTROSPECT, { name: "AltValueInfo" }, env, budget);
   const fields = valueType.body?.data?.__type?.fields;
   if (!fields) {
     return { error: valueType.body?.errors?.[0]?.message ?? "AltValueInfo is not introspectable" };
@@ -284,7 +299,7 @@ async function discoverAltHistoryShape(env) {
   for (const candidate of ordered.slice(0, 6)) {
     if (seen.has(candidate.field)) continue;
     seen.add(candidate.field);
-    const pointType = await altGraphql("IntrospectType", INTROSPECT, { name: candidate.name }, env);
+    const pointType = await altGraphql("IntrospectType", INTROSPECT, { name: candidate.name }, env, budget);
     const pointFields = pointType.body?.data?.__type?.fields;
     if (!pointFields?.length) continue;
     const names = pointFields.map(f => f.name);
@@ -336,7 +351,7 @@ const ALT_VAR_TYPES = { tsFilter: "TimeSeriesFilter!", mtf: "MarketTransactionFi
 const REQUIRED_ARG_RE = /argument '([A-Za-z0-9_]+)' of type '([A-Za-z0-9_\[\]!]+)' is required/g;
 const REQUIRED_INPUT_RE = /Field '([A-Za-z0-9_]+)' of required type '([A-Za-z0-9_\[\]!]+)' was not provided/g;
 
-async function probeAltSelection(selection, env, scope = "value", vars = {}) {
+async function probeAltSelection(selection, env, scope = "value", vars = {}, budget = null) {
   const used = Object.keys(ALT_VAR_TYPES).filter(v => selection.includes(`$${v}`));
   const decls = used.map(v => `$${v}: ${ALT_VAR_TYPES[v]}`).join(", ");
   const inner = scope === "asset"
@@ -352,7 +367,8 @@ async function probeAltSelection(selection, env, scope = "value", vars = {}) {
   if (scope !== "asset" && variables.tsFilter == null) {
     variables.tsFilter = { gradeNumber: "10", gradingCompany: "PSA", autograph: null };
   }
-  const res = await altGraphql("Cert", query, variables, env);
+  const res = await altGraphql("Cert", query, variables, env, budget);
+  if (res.budgetExhausted) return { valid: false, error: null, errors: [], exhausted: true };
   const errors = (res.body?.errors ?? []).map(e => e.message);
   const invalid = errors.find(e =>
     /Cannot query field|must have a selection|is required|was not provided|Unknown argument/i.test(e));
@@ -362,14 +378,14 @@ async function probeAltSelection(selection, env, scope = "value", vars = {}) {
 // A field can demand arguments before it will answer. The server names them,
 // and sending an empty object for one names its required members in turn, so a
 // usable argument can be assembled without documentation.
-async function buildRequiredArgs(fieldName, errors, env, tsFilter) {
+async function buildRequiredArgs(fieldName, errors, env, tsFilter, budget) {
   const args = {};
   const names = [...errors.join(" ").matchAll(REQUIRED_ARG_RE)].map(m => [m[1], m[2]]);
   for (const [arg] of names) {
     if (arg === "tsFilter") { args.tsFilter = "$tsFilter"; continue; }
     // Probe with an empty object to learn what the input type requires.
     const call = `${fieldName}(${[...Object.keys(args).map(a => `${a}: ${args[a]}`), `${arg}: $mtf`].join(", ")}) { __typename }`;
-    const res = await probeAltSelection(call, env, "asset", { mtf: {}, tsFilter });
+    const res = await probeAltSelection(call, env, "asset", { mtf: {}, tsFilter }, budget);
     const required = [...res.errors.join(" ").matchAll(REQUIRED_INPUT_RE)].map(m => [m[1], m[2]]);
     const value = {};
     for (const [field, type] of required) {
@@ -399,9 +415,9 @@ function nestSelection(parts, inner) {
   return parts.reduceRight((acc, f) => `${f} { ${acc} }`, inner);
 }
 
-async function findSeriesUnder(parts, env, scope, vars, tried, depth = 0) {
-  if (depth > 2 || tried.length > 100) return null;
-  const probe = c => probeAltSelection(nestSelection(parts, c), env, scope, vars);
+async function findSeriesUnder(parts, env, scope, vars, tried, budget, depth = 0) {
+  if (depth > 2 || budget.exhausted) return null;
+  const probe = c => probeAltSelection(nestSelection(parts, c), env, scope, vars, budget);
   const label = parts.join(" > ");
 
   // Returns { leaf } for a plausible scalar, { container } for a field that
@@ -437,39 +453,77 @@ async function findSeriesUnder(parts, env, scope, vars, tried, depth = 0) {
     seen.add(c);
     const { valid, error } = await probe(c);
     if (!valid && !NEEDS_SUBFIELDS_RE.test(error ?? "")) continue;
-    const found = await findSeriesUnder([...parts, c], env, scope, vars, tried, depth + 1);
+    const found = await findSeriesUnder([...parts, c], env, scope, vars, tried, budget, depth + 1);
     if (found) return { path: [c, ...found.path], dateField: found.dateField, valueField: found.valueField };
   }
   return null;
 }
 
-async function probeAltHistoryShape(env) {
+// ALT has already told us where its series lives: asset.pricingData, behind a
+// tsFilter and a marketTransactionFilter, with altValueTimeSeries inside it.
+// Starting there costs a handful of calls instead of a blind sweep, and the
+// general search stays as a fallback for when that stops being true.
+const ALT_KNOWN_SERIES = { scope: "asset", field: "pricingData", inner: ["altValueTimeSeries", "data"] };
+
+async function tryKnownSeries(env, tsFilter, budget, tried) {
+  const { field, inner, scope } = ALT_KNOWN_SERIES;
+  const first = await probeAltSelection(field, env, scope, { tsFilter }, budget);
+  if (first.exhausted) return null;
+  if (!/is required|must have a selection/i.test(first.error ?? "")) {
+    tried.push(`known.${field}: ${(first.error ?? "unexpectedly valid").slice(0, 70)}`);
+    return null;
+  }
+  const args = await buildRequiredArgs(field, first.errors, env, tsFilter, budget);
+  const call = callWithArgs(field, args);
+  const vars = { tsFilter, mtf: args.__mtfValue ?? {} };
+
+  for (const path of [inner, [inner[0]], []]) {
+    const parts = [call, ...path];
+    const found = await findSeriesUnder(parts, env, scope, vars, tried, budget);
+    if (found) {
+      return { listField: field, call, path: [field, ...path, ...found.path],
+               dateField: found.dateField, valueField: found.valueField,
+               scope, args: { mtf: vars.mtf }, discoveredBy: "known path", tried };
+    }
+    if (budget.exhausted) break;
+  }
+  return null;
+}
+
+async function probeAltHistoryShape(env, budget) {
   const tried = [];
   const tsFilter = { gradeNumber: "10", gradingCompany: "PSA", autograph: null };
+
+  const known = await tryKnownSeries(env, tsFilter, budget, tried);
+  if (known) return known;
+  if (budget.exhausted) {
+    return { error: "ran out of subrequest budget before identifying the series; re-run with fresh=1 to continue",
+             tried };
+  }
 
   for (const pass of [{ scope: "value", names: LIST_PROBES }, { scope: "asset", names: ASSET_LIST_PROBES }]) {
     const queue = [...pass.names];
     const seen = new Set();
-    while (queue.length && tried.length < 60) {
+    while (queue.length && !budget.exhausted) {
       const name = queue.shift();
       if (seen.has(name)) continue;
       seen.add(name);
-      let probe = await probeAltSelection(name, env, pass.scope, { tsFilter });
+      let probe = await probeAltSelection(name, env, pass.scope, { tsFilter }, budget);
       let call = name, vars = { tsFilter };
 
       // The field may demand arguments before it will answer.
       if (!probe.valid && /is required/i.test(probe.error ?? "")) {
-        const args = await buildRequiredArgs(name, probe.errors, env, tsFilter);
+        const args = await buildRequiredArgs(name, probe.errors, env, tsFilter, budget);
         call = callWithArgs(name, args);
         vars = { tsFilter, mtf: args.__mtfValue ?? {} };
-        probe = await probeAltSelection(call, env, pass.scope, vars);
+        probe = await probeAltSelection(call, env, pass.scope, vars, budget);
         tried.push(`${pass.scope}.${name} with args: ${probe.valid ? "ok" : (probe.error ?? "").slice(0, 70)}`);
       } else {
         tried.push(`${pass.scope}.${name}: ${probe.valid ? "exists (scalar)" : (probe.error ?? "").slice(0, 70)}`);
       }
 
       if (!probe.valid && NEEDS_SUBFIELDS_RE.test(probe.error ?? "")) {
-        const found = await findSeriesUnder([call], env, pass.scope, vars, tried);
+        const found = await findSeriesUnder([call], env, pass.scope, vars, tried, budget);
         if (found) {
           return { listField: name, call, path: [name, ...found.path],
                    dateField: found.dateField, valueField: found.valueField,
@@ -480,24 +534,26 @@ async function probeAltHistoryShape(env) {
       if (!probe.valid) for (const sug of errorSuggestions(probe.error)) if (!seen.has(sug)) queue.push(sug);
     }
   }
-  return { error: "no value series field found by probing", tried };
+  return { error: budget.exhausted
+             ? "ran out of subrequest budget before identifying the series; re-run with fresh=1 to continue"
+             : "no value series field found by probing", tried };
 }
 
 // Bumped whenever the probe logic changes: a cached conclusion from older,
 // weaker probing would otherwise be served after a deploy and look as if the
 // new attempt had failed too.
-const ALT_SHAPE_VERSION = 4;
+const ALT_SHAPE_VERSION = 6;
 
-async function altHistoryShape(env, fresh = false) {
+async function altHistoryShape(env, fresh = false, budget = null) {
   const cache = caches.default;
   const key = new Request(`https://alt-cache.internal/history-shape?v=${ALT_SHAPE_VERSION}`);
   if (!fresh) {
     const hit = await cache.match(key);
     if (hit) { try { return JSON.parse(await hit.text()); } catch {} }
   }
-  let shape = await discoverAltHistoryShape(env);
+  let shape = await discoverAltHistoryShape(env, budget);
   if (!shape.listField) {
-    const probed = await probeAltHistoryShape(env);
+    const probed = await probeAltHistoryShape(env, budget ?? new SubrequestBudget(40));
     shape = probed.listField ? probed : { ...shape, probe: probed };
   }
   // Cache the answer either way: a successful shape for a day, a failed search
@@ -515,7 +571,9 @@ async function altHistoryShape(env, fresh = false) {
   return shape;
 }
 
-const MAX_CERTS_PER_REQUEST = 25;
+// Each uncached cert costs two upstream calls, against a platform limit of 50
+// per invocation; cached ones cost none, so a repeat of a larger list is fine.
+const MAX_CERTS_PER_REQUEST = 20;
 const CERT_RE = /^[A-Za-z0-9-]{4,20}$/;
 
 // Single or batch: ?cert=X for one card, ?certs=X,Y,Z for a list. Each cert is
@@ -540,8 +598,17 @@ async function altHistory(workerUrl, env) {
   // of being told what a previous, weaker attempt concluded.
   const fresh = workerUrl.searchParams.get("fresh") === "1";
 
+  // One budget for the whole invocation: a batch of certs shares it with
+  // discovery, so a long list can't walk into Cloudflare's subrequest limit —
+  // which throws, rather than failing the call that crossed it.
+  const budget = new SubrequestBudget(45);
+
+  // Resolve the schema shape once. Letting each cert do it meant five parallel
+  // discoveries on a cold cache, which is how a batch blew the subrequest cap.
+  const shape = await altHistoryShape(env, fresh, budget);
+
   if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
-    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh);
+    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh, budget, shape);
     return new Response(JSON.stringify(body, null, 1), {
       status: body.error === "cert not found on ALT" ? 404 : 200,
       headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": cached ? "hit" : "miss" },
@@ -553,20 +620,22 @@ async function altHistory(workerUrl, env) {
   for (let i = 0; i < certs.length; i += 5) {
     const batch = await Promise.all(
       certs.slice(i, i + 5).map(c =>
-        altHistoryOne(c, grade, grader, env, fresh)
+        altHistoryOne(c, grade, grader, env, fresh, budget, shape)
           .then(r => r.body)
           .catch(e => ({ cert: c, history: null, error: String(e?.message ?? e) }))),
     );
     results.push(...batch);
   }
+  const incomplete = results.filter(r => !r.history && /budget/i.test(r.error ?? "")).length;
   return json({
     count: results.length,
     withHistory: results.filter(r => r.history?.length).length,
+    ...(incomplete ? { note: `${incomplete} cert(s) hit this request's upstream call limit — ask for them in a second request; answered certs are now cached` } : {}),
     results,
   });
 }
 
-async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = false) {
+async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = false, budget = null, sharedShape = null) {
   const cache = caches.default;
   const cacheKey = new Request(
     `https://alt-cache.internal/history?cert=${encodeURIComponent(cert)}`
@@ -580,7 +649,10 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   }
 
   // 1. cert → asset, grade and grader (the filter selects which grade's series)
-  const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: cert }, env);
+  const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: cert }, env, budget);
+  if (certRes.budgetExhausted) {
+    return { body: { cert, history: null, error: "upstream call budget for this request was exhausted" }, cached: false };
+  }
   const certData = certRes.body?.data?.cert;
   if (!certData?.asset?.id) {
     return { body: { cert, history: null, error: "cert not found on ALT",
@@ -593,7 +665,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   };
 
   // 2. what is the series called?
-  const shape = await altHistoryShape(env, fresh);
+  const shape = sharedShape ?? await altHistoryShape(env, fresh, budget);
   if (!shape.listField || !shape.dateField || !shape.valueField) {
     return { body: { cert, assetId: certData.asset.id, subject: certData.asset.subject,
                      history: null, discovery: shape,
@@ -621,7 +693,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   }`;
   const variables = { id: certData.asset.id, tsFilter };
   if (needsMtf) variables.mtf = shape.args.mtf;
-  const res = await altGraphql("AssetHistory", query, variables, env);
+  const res = await altGraphql("AssetHistory", query, variables, env, budget);
   const asset = res.body?.data?.asset;
   const info = shape.scope === "asset" ? asset : asset?.altValueInfo;
   if (!info) {
