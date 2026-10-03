@@ -300,19 +300,110 @@ async function discoverAltHistoryShape(env) {
            allFields: fields.map(f => f.name).slice(0, 20) };
 }
 
+// Introspection is disabled on ALT, but a GraphQL server still describes
+// itself through validation errors, which are produced before anything
+// executes. Asking for a field bare says whether it exists and, if it is an
+// object, names its type ("must have a selection of subfields"); asking for one
+// that doesn't exist often returns "Did you mean …" with the real neighbours.
+// So probe a handful of plausible names and read the replies.
+const LIST_PROBES = ["history", "valueHistory", "altValueHistory", "altValueTimeSeries",
+                     "timeSeries", "series", "points", "dataPoints", "values", "trend", "chart"];
+const DATE_PROBES = ["date", "timestamp", "time", "day", "periodStart", "startDate", "x"];
+const VALUE_PROBES = ["value", "altValue", "price", "amount", "avgPrice", "median", "close", "y"];
+const NEEDS_SUBFIELDS_RE = /must have a selection of subfields/i;
+const SUGGESTION_RE = /Did you mean ([^?]+)\?/i;
+const TYPE_IN_ERROR_RE = /of type "\[?([A-Za-z0-9_]+)/;
+
+function errorSuggestions(message) {
+  const m = SUGGESTION_RE.exec(message || "");
+  if (!m) return [];
+  return [...m[1].matchAll(/"([A-Za-z0-9_]+)"/g)].map(x => x[1]);
+}
+
+async function probeAltSelection(selection, env) {
+  const query = `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
+    cert(certNumber: $certNumber) {
+      asset { altValueInfo(tsFilter: $tsFilter) { ${selection} } }
+    }
+  }`;
+  const res = await altGraphql("Cert", query, {
+    certNumber: "00000000",
+    tsFilter: { gradeNumber: "10", gradingCompany: "PSA", autograph: null },
+  }, env);
+  const errors = (res.body?.errors ?? []).map(e => e.message);
+  // A validation failure names the field; anything else means the selection is
+  // legal and the query merely found no such cert.
+  const invalid = errors.find(e => /Cannot query field|must have a selection/i.test(e));
+  return { valid: !invalid, error: invalid ?? null };
+}
+
+async function probeAltHistoryShape(env) {
+  const tried = [];
+  let listField = null, elementType = null;
+  const queue = [...LIST_PROBES];
+  const seen = new Set();
+
+  while (queue.length && tried.length < 14) {
+    const name = queue.shift();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const { valid, error } = await probeAltSelection(name, env);
+    tried.push(`${name}: ${valid ? "scalar field, exists" : (error ?? "").slice(0, 90)}`);
+    if (!valid && NEEDS_SUBFIELDS_RE.test(error)) {
+      listField = name;
+      elementType = TYPE_IN_ERROR_RE.exec(error)?.[1] ?? null;
+      break;
+    }
+    if (!valid) for (const s of errorSuggestions(error)) if (!seen.has(s)) queue.push(s);
+  }
+  if (!listField) return { error: "no value series field found by probing", tried };
+
+  const findSub = async candidates => {
+    for (const c of candidates) {
+      const { valid, error } = await probeAltSelection(`${listField} { ${c} }`, env);
+      if (valid) return c;
+      const suggestion = errorSuggestions(error).find(x => candidates.some(
+        cand => x.toLowerCase().includes(cand.toLowerCase())));
+      if (suggestion) {
+        const check = await probeAltSelection(`${listField} { ${suggestion} }`, env);
+        if (check.valid) return suggestion;
+      }
+    }
+    return null;
+  };
+  const dateField = await findSub(DATE_PROBES);
+  const valueField = await findSub(VALUE_PROBES);
+  if (!dateField || !valueField) {
+    // Deliberately not reporting listField at the top level: a caller checking
+    // only for that would build a query selecting undefined subfields.
+    return { error: `found the series field "${listField}" but could not identify its date and value fields`,
+             partial: { listField, elementType, dateField, valueField }, tried };
+  }
+  return { listField, elementType, dateField, valueField, discoveredBy: "probing", tried };
+}
+
 async function altHistoryShape(env) {
   const cache = caches.default;
   const key = new Request("https://alt-cache.internal/history-shape");
   const hit = await cache.match(key);
   if (hit) { try { return JSON.parse(await hit.text()); } catch {} }
-  const shape = await discoverAltHistoryShape(env);
-  if (shape.listField) {
-    try {
-      await cache.put(key, new Response(JSON.stringify(shape), {
-        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ALT_SHAPE_TTL}` },
-      }));
-    } catch {}
+  let shape = await discoverAltHistoryShape(env);
+  if (!shape.listField) {
+    const probed = await probeAltHistoryShape(env);
+    shape = probed.listField ? probed : { ...shape, probe: probed };
   }
+  // Cache the answer either way: a successful shape for a day, a failed search
+  // for an hour. Without the second, every request would re-run the whole probe
+  // sequence against ALT for as long as the schema stays unreadable.
+  const found = shape.listField && shape.dateField && shape.valueField;
+  try {
+    await cache.put(key, new Response(JSON.stringify(shape), {
+      headers: {
+        "Content-Type": "application/json",
+        "Cache-Control": `s-maxage=${found ? ALT_SHAPE_TTL : 3600}`,
+      },
+    }));
+  } catch {}
   return shape;
 }
 
@@ -390,7 +481,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env) {
 
   // 2. what is the series called?
   const shape = await altHistoryShape(env);
-  if (!shape.listField) {
+  if (!shape.listField || !shape.dateField || !shape.valueField) {
     return { body: { cert, assetId: certData.asset.id, subject: certData.asset.subject,
                      history: null, discovery: shape,
                      note: "ALT exposes no value series we could identify; the current value is still available via /alt/AssetDetails" },
