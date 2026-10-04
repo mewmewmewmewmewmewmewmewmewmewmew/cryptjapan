@@ -75,15 +75,26 @@ come from the same upstream call, so asking for them costs nothing extra.
 
 ```json
 {
-  "points": 409,
-  "history": [ /* … */ ],
-  "salesCount": 2,
+  "currentValue": 27113.77713969713,
+  "salesCount": 8,
   "sales": [
-    { "date": "2026-09-02", "price": 181.5, "currency": "USD", "source": "eBay" },
-    { "date": "2026-07-14", "price": 205.0, "currency": "USD", "source": "Goldin" }
-  ]
+    { "date": "2026-10-01", "price": 40000, "auctionHouse": "eBay" },
+    { "date": "2026-07-26", "price": 22200, "auctionHouse": "PWCC Weekly Auctions" },
+    { "date": "2021-08-15", "price": 1800, "auctionHouse": "eBay" }
+  ],
+  "salesFilter": { "gradeNumber": "10.0", "gradingCompany": "PSA" }
 }
 ```
+
+Sales are newest first. Each carries `date`, `price` (a number, USD) and
+`auctionHouse`. `salesFilter` shows which filter ALT accepted — informational.
+
+**Sales reach back much further than the value series.** The index covers about
+13 months; transactions go back years, 2021 in the example above. For long-range
+history, sales are the better source.
+
+Not every card has them. A modern bulk card may return `salesCount: 0` while a
+vintage card returns a full record — that is ALT's coverage, not an error.
 
 Sales and the value series come from the same upstream call, so there is no
 request to save by splitting them. If you only want sales, add `history=0`:
@@ -95,11 +106,9 @@ shape.
 GET /alt-history?cert=112689981&sales=1&history=0
 ```
 
-Every sale carries at least `date` and `price`. Any further fields ALT exposes
-(currency, source, grade, a link) are included when present. Sales are far
-sparser than the daily series — a card may have hundreds of index points and a
-handful of actual sales — so plot the series as the line and the sales as
-markers on it.
+Sales are far sparser than the daily series — a card may have hundreds of index
+points and a handful of actual sales — so plot the series as the line and the
+sales as markers on it.
 
 ## Parameters
 

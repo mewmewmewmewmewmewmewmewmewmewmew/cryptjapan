@@ -732,7 +732,7 @@ const SALE_DATE_FIELDS = ["soldAt", "saleDate", "soldDate", "dateSold", "date", 
 const SALE_PRICE_FIELDS = ["price", "salePrice", "soldPrice", "amount", "priceUsd", "value", "total"];
 const SALE_EXTRA_FIELDS = ["currency", "grade", "gradingCompany", "certNumber", "source", "marketplace",
                            "venue", "auctionHouse", "seller", "url", "link", "title", "quantity"];
-const ALT_SALES_VERSION = 2;
+const ALT_SALES_VERSION = 3;
 
 // An empty marketTransactionFilter validates, but validating is not the same as
 // selecting anything. Find which members it accepts, then try a few filled-in
@@ -1126,8 +1126,13 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   if (wantSales) {
     const node = asset?.pricingData ?? asset;
     const rows = Array.isArray(node?.marketTransactions) ? node.marketTransactions : [];
+    // ALT returns the price as a string ("40000.00"); consumers want to chart,
+    // sort and compare it, so hand back a number.
     sales = rows.map(row => {
-      const out = { date: row[salesShape.dateField] ?? null, price: row[salesShape.priceField] ?? null };
+      const raw = row[salesShape.priceField];
+      const price = raw == null || raw === "" ? null : Number(raw);
+      const out = { date: row[salesShape.dateField] ?? null,
+                    price: Number.isFinite(price) ? price : null };
       for (const k of salesShape.extras ?? []) if (row[k] != null) out[k] = row[k];
       return out;
     }).filter(sale => sale.price != null);
