@@ -468,20 +468,28 @@ async function findSeriesUnder(parts, env, scope, vars, tried, budget, depth = 0
     const { valid, error } = await probe(c);
     tried.push(`${label}.${c}: ${valid ? "exists (scalar list)" : (error ?? "").slice(0, 70)}`);
     if (!valid) continue;
+    // Anchors are worth two calls either way: with both ends the spacing is
+    // measured across the points rather than assumed to be daily.
+    const anchors = {};
+    for (const a of ["startDate", "endDate"]) {
+      const r = await probeAltSelection(nestSelection(parts, a), env, scope, vars, budget);
+      tried.push(`${label}.${a}: ${r.valid ? "exists (anchor)" : (r.error ?? "").slice(0, 50)}`);
+      if (r.valid) anchors[a === "startDate" ? "start" : "end"] = a;
+    }
     for (const dc of DATE_ARRAY_PROBES) {
       const dr = await probeAltSelection(nestSelection(parts, dc), env, scope, vars, budget);
       tried.push(`${label}.${dc}: ${dr.valid ? "exists" : (dr.error ?? "").slice(0, 60)}`);
-      if (dr.valid) return { path: [], mode: "parallel", valueField: c, dateField: dc };
+      if (dr.valid) return { path: [], mode: "parallel", valueField: c, dateField: dc, anchors };
       for (const sug of errorSuggestions(dr.error)) {
         if (sug === c) continue;
         const check = await probeAltSelection(nestSelection(parts, sug), env, scope, vars, budget);
         tried.push(`${label}.${sug} (suggested): ${check.valid ? "exists" : "no"}`);
-        if (check.valid) return { path: [], mode: "parallel", valueField: c, dateField: sug };
+        if (check.valid) return { path: [], mode: "parallel", valueField: c, dateField: sug, anchors };
       }
       if (budget.exhausted) break;
     }
-    // Values without dates are still a series; the caller can say so.
-    return { path: [], mode: "parallel", valueField: c, dateField: null };
+    // No parallel date array: the anchors date the points on their own.
+    return { path: [], mode: "parallel", valueField: c, dateField: null, anchors };
   }
 
   const d = await classify(DATE_PROBES, DATE_FIELD_RE);
@@ -526,7 +534,7 @@ async function tryKnownSeries(env, tsFilter, budget, tried) {
     const found = await findSeriesUnder(parts, env, scope, vars, tried, budget);
     if (found) {
       return { listField: field, call, path: [field, ...path, ...found.path],
-               mode: found.mode ?? "objects",
+               mode: found.mode ?? "objects", anchors: found.anchors ?? null,
                dateField: found.dateField, valueField: found.valueField,
                scope, args: { mtf: vars.mtf }, discoveredBy: "known path", tried };
     }
@@ -575,7 +583,7 @@ async function probeAltHistoryShape(env, budget, deep = false) {
         const found = await findSeriesUnder([call], env, pass.scope, vars, tried, budget);
         if (found) {
           return { listField: name, call, path: [name, ...found.path],
-                   mode: found.mode ?? "objects",
+                   mode: found.mode ?? "objects", anchors: found.anchors ?? null,
                    dateField: found.dateField, valueField: found.valueField,
                    scope: pass.scope, args: vars.mtf ? { mtf: vars.mtf } : null,
                    discoveredBy: "probing", tried };
@@ -592,7 +600,7 @@ async function probeAltHistoryShape(env, budget, deep = false) {
 // Bumped whenever the probe logic changes: a cached conclusion from older,
 // weaker probing would otherwise be served after a deploy and look as if the
 // new attempt had failed too.
-const ALT_SHAPE_VERSION = 11;
+const ALT_SHAPE_VERSION = 13;
 
 async function altHistoryShape(env, fresh = false, budget = null, deep = false) {
   const cache = caches.default;
@@ -738,7 +746,8 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   const path = shape.path ?? [shape.listField];
   const parts = [shape.call ?? path[0], ...path.slice(1)];
   const leaf = shape.mode === "parallel"
-    ? [shape.valueField, shape.dateField].filter(Boolean).join(" ")
+    ? [...new Set([shape.valueField, shape.dateField, shape.anchors?.start, shape.anchors?.end]
+        .filter(Boolean))].join(" ")
     : `${shape.dateField} ${shape.valueField}`;
   const series = parts.reduceRight((acc, f) => `${f} { ${acc} }`, leaf);
   const needsMtf = !!shape.args?.mtf;
@@ -765,11 +774,36 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   let points = [];
   let undated = false;
   if (shape.mode === "parallel") {
-    // Values in one array, dates alongside in another; pair them by position.
+    // Values in one array. Dates arrive one of three ways: a matching array, a
+    // start and end to spread evenly across the points, or a start alone, where
+    // the spacing is taken as daily.
     const values = Array.isArray(node?.[shape.valueField]) ? node[shape.valueField] : [];
-    const dates = shape.dateField && Array.isArray(node?.[shape.dateField]) ? node[shape.dateField] : null;
-    undated = !dates;
-    points = values.map((v, i) => ({ date: dates ? (dates[i] ?? null) : i, value: v }))
+    const dateArray = shape.dateField && Array.isArray(node?.[shape.dateField])
+      ? node[shape.dateField] : null;
+    // A "date field" that came back as a scalar is an anchor, not a series.
+    const scalarDate = !dateArray && shape.dateField ? node?.[shape.dateField] : null;
+    const startRaw = node?.[shape.anchors?.start] ?? scalarDate ?? null;
+    const endRaw = node?.[shape.anchors?.end] ?? null;
+    const asTime = v => {
+      if (v == null) return null;
+      const n = typeof v === "number" ? v : Number(v);
+      if (isFinite(n) && String(v).length >= 10) return n < 1e12 ? n * 1000 : n;  // epoch s or ms
+      const t = Date.parse(v);
+      return isFinite(t) ? t : null;
+    };
+    const start = asTime(startRaw);
+    const end = asTime(endRaw);
+    const DAY = 86400000;
+    const step = (start != null && end != null && values.length > 1)
+      ? (end - start) / (values.length - 1)
+      : DAY;
+    const dateAt = i => {
+      if (dateArray) return dateArray[i] ?? null;
+      if (start == null) return i;
+      return new Date(start + i * step).toISOString().slice(0, 10);
+    };
+    undated = !dateArray && start == null;
+    points = values.map((v, i) => ({ date: dateAt(i), value: v }))
                    .filter(pt => pt.value != null);
   } else {
     points = (Array.isArray(node) ? node : []).map(pt => ({
