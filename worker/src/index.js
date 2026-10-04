@@ -352,7 +352,8 @@ const DATE_ARRAY_PROBES = ["dates", "timestamps", "times", "labels", "days", "pe
                            "xAxis", "x", "dateLabels", "startDates", "dateRange"];
 const VALUE_ARRAY_PROBES = ["data", "values", "prices", "amounts", "y"];
 const SUGGESTION_RE = /Did you mean ([^?]+)\?/i;
-const TYPE_IN_ERROR_RE = /of type "\[?([A-Za-z0-9_]+)/;
+// ALT quotes type names with apostrophes, graphql-js with double quotes.
+const TYPE_IN_ERROR_RE = /of type ['"]\[?([A-Za-z0-9_]+)/;
 
 // ALT quotes suggestions with apostrophes ("Did you mean 'pricingData'?"), not
 // the double quotes graphql-js uses by default. Missing that threw away the
@@ -684,6 +685,46 @@ async function probeTimeSeriesFilter(env, tsFilter, budget) {
   return results;
 }
 
+// pricingData demands a marketTransactionFilter, which it would not do unless
+// it also serves transactions — and we have only ever selected the value series
+// from it. List what else it offers, so real sales can be had instead of, or
+// alongside, ALT's modelled index.
+const PRICING_FIELD_PROBES = [
+  "marketTransactions", "transactions", "sales", "salesHistory", "recentSales",
+  "comps", "comparables", "marketData", "salesData", "transactionHistory",
+  "listings", "lastSale", "salesCount",
+];
+
+async function inspectPricingData(env, tsFilter, budget) {
+  const first = await probeAltSelection("pricingData", env, "asset", { tsFilter }, budget);
+  const args = await buildRequiredArgs("pricingData", first.errors, env, tsFilter, budget);
+  const call = callWithArgs("pricingData", args);
+  const vars = { tsFilter, mtf: args.__mtfValue ?? {} };
+
+  const seen = new Set();
+  const found = [];
+  const queue = [...PRICING_FIELD_PROBES];
+  while (queue.length && !budget.exhausted && found.length < 24) {
+    const name = queue.shift();
+    if (seen.has(name)) continue;
+    seen.add(name);
+    const res = await probeAltSelection(`${call} { ${name} }`, env, "asset", vars, budget);
+    if (res.exhausted) break;
+    const needsSub = NEEDS_SUBFIELDS_RE.test(res.error ?? "");
+    const elementType = needsSub ? (TYPE_IN_ERROR_RE.exec(res.error)?.[1] ?? null) : null;
+    found.push({
+      field: name,
+      exists: res.valid || needsSub,
+      kind: needsSub ? `object or list of ${elementType ?? "?"}` : res.valid ? "scalar" : "not defined",
+      detail: res.valid || needsSub ? undefined : (res.error ?? "").slice(0, 100),
+    });
+    if (!res.valid && !needsSub) {
+      for (const sug of errorSuggestions(res.error)) if (!seen.has(sug)) queue.push(sug);
+    }
+  }
+  return { call, marketTransactionFilterSent: vars.mtf, fields: found };
+}
+
 async function altHistoryShape(env, fresh = false, budget = null, deep = false) {
   const cache = caches.default;
   const key = new Request(`https://alt-cache.internal/history-shape?v=${ALT_SHAPE_VERSION}`);
@@ -740,6 +781,7 @@ async function altHistory(workerUrl, env) {
   const fresh = workerUrl.searchParams.get("fresh") === "1";
   const deep = workerUrl.searchParams.get("deep") === "1";
   const inspectFilter = workerUrl.searchParams.get("inspectFilter") === "1";
+  const inspectPricing = workerUrl.searchParams.get("inspectPricing") === "1";
 
   // One budget for the whole invocation: a batch of certs shares it with
   // discovery, so a long list can't walk into Cloudflare's subrequest limit —
@@ -758,6 +800,17 @@ async function altHistory(workerUrl, env) {
       tsFilterSent: tsFilter,
       accepts: await probeTimeSeriesFilter(env, tsFilter, budget.child(20)),
     });
+  }
+
+  if (inspectPricing) {
+    const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: certs[0] }, env, budget);
+    const cd = certRes.body?.data?.cert;
+    const tsFilter = {
+      gradeNumber: grade || cd?.gradeNumber || "10",
+      gradingCompany: grader || cd?.gradingCompany || "PSA",
+      autograph: null,
+    };
+    return json(await inspectPricingData(env, tsFilter, budget.child(30)));
   }
 
   // Resolve the schema shape once. Letting each cert do it meant five parallel
