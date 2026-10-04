@@ -543,12 +543,57 @@ async function tryKnownSeries(env, tsFilter, budget, tried) {
   return null;
 }
 
+// Our 409 points may be ALT's whole record or merely the window the filter
+// defaults to. Work out how to ask for everything: a start date far enough back
+// if the filter takes one, otherwise a period enum set to its widest value —
+// and GraphQL names an enum's real values when it rejects a bad one.
+const ENUM_VALUE_RE = /Did you mean[^?]*\?|Value '[^']*' does not exist in '([A-Za-z0-9_]+)' enum/i;
+const WIDE_PERIODS = ["ALL", "ALL_TIME", "MAX", "LIFETIME", "FIVE_YEARS", "FIVE_YEAR", "THREE_YEARS"];
+const EARLY_DATE = "2000-01-01";
+
+async function findWidestWindow(env, tsFilter, budget) {
+  const test = async extra => {
+    const res = await altGraphql("Cert", `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
+      cert(certNumber: $certNumber) { asset { altValueInfo(tsFilter: $tsFilter) { currentAltValue } } }
+    }`, { certNumber: "00000000", tsFilter: { ...tsFilter, ...extra } }, env, budget);
+    const errors = (res.body?.errors ?? []).map(e => e.message);
+    return {
+      ok: !errors.some(e => NOT_DEFINED_RE.test(e) || /Expected type|does not exist in|cannot represent|got invalid value/i.test(e)),
+      errors,
+    };
+  };
+
+  const byDate = await test({ startDate: EARLY_DATE });
+  if (byDate.ok) return { extra: { startDate: EARLY_DATE }, how: `startDate=${EARLY_DATE}` };
+
+  // Does a period-style member exist, and what values does it take?
+  for (const field of ["period", "timePeriod", "range"]) {
+    if (budget.exhausted) break;
+    const junk = await test({ [field]: "ZZ_PROBE" });
+    if (junk.errors.some(e => NOT_DEFINED_RE.test(e) && e.includes(field))) continue;
+    // Exists. Its rejection of a bad value usually names the real ones.
+    const suggested = junk.errors.flatMap(e => errorSuggestions(e))
+      .concat(junk.errors.flatMap(e => [...e.matchAll(/\b([A-Z][A-Z0-9_]{2,})\b/g)].map(m => m[1])));
+    const ordered = [...new Set([...suggested, ...WIDE_PERIODS])]
+      .filter(v => !/^(ZZ_PROBE|TIME|ENUM|GRAPHQL)$/.test(v));
+    for (const value of ordered.slice(0, 6)) {
+      if (budget.exhausted) break;
+      const attempt = await test({ [field]: value });
+      if (attempt.ok) return { extra: { [field]: value }, how: `${field}=${value}` };
+    }
+  }
+  return { extra: null, how: "ALT's default window (no wider one offered)" };
+}
+
 async function probeAltHistoryShape(env, budget, deep = false) {
   const tried = [];
   const tsFilter = { gradeNumber: "10", gradingCompany: "PSA", autograph: null };
 
   const known = await tryKnownSeries(env, tsFilter, budget, tried);
-  if (known) return known;
+  if (known) {
+    const window = await findWidestWindow(env, tsFilter, budget);
+    return { ...known, windowExtra: window.extra, windowHow: window.how };
+  }
   if (budget.exhausted) {
     return { error: "ran out of subrequest budget before identifying the series; re-run with fresh=1 to continue",
              tried };
@@ -600,7 +645,7 @@ async function probeAltHistoryShape(env, budget, deep = false) {
 // Bumped whenever the probe logic changes: a cached conclusion from older,
 // weaker probing would otherwise be served after a deploy and look as if the
 // new attempt had failed too.
-const ALT_SHAPE_VERSION = 13;
+const ALT_SHAPE_VERSION = 14;
 
 // What else does TimeSeriesFilter accept? An input type rejects a member it
 // doesn't define, by name — so a member that survives validation is real. A
@@ -813,7 +858,9 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
       }
     }
   }`;
-  const variables = { id: certData.asset.id, tsFilter };
+  // Ask for the widest window the filter allows, not just its default.
+  const variables = { id: certData.asset.id,
+                      tsFilter: { ...tsFilter, ...(shape.windowExtra ?? {}) } };
   if (needsMtf) variables.mtf = shape.args.mtf;
   const res = await altGraphql("AssetHistory", query, variables, env, budget);
   const asset = res.body?.data?.asset;
@@ -875,6 +922,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     history: points,
     fields: { path, date: shape.dateField, value: shape.valueField,
               scope: shape.scope ?? "value", mode: shape.mode ?? "objects" },
+    window: shape.windowHow ?? "ALT's default window",
     ...(undated ? { note: "ALT returns the values without dates; positions are indices, oldest first" } : {}),
   };
   if (points.length) {
