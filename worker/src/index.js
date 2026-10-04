@@ -887,6 +887,10 @@ async function altHistory(workerUrl, env) {
   const inspectFilter = workerUrl.searchParams.get("inspectFilter") === "1";
   const inspectPricing = workerUrl.searchParams.get("inspectPricing") === "1";
   const wantSales = workerUrl.searchParams.get("sales") === "1";
+  // history=0 drops the value series. It shares an upstream call with the sales,
+  // so this saves response size rather than requests — and on a cold cache it
+  // also skips discovering the series' shape, which does cost calls.
+  const wantHistory = workerUrl.searchParams.get("history") !== "0";
 
   // One budget for the whole invocation: a batch of certs shares it with
   // discovery, so a long list can't walk into Cloudflare's subrequest limit —
@@ -923,7 +927,7 @@ async function altHistory(workerUrl, env) {
   // Discovery gets a sub-budget: searching the schema must never consume what
   // the cert lookups themselves need, or the answer is a budget error instead
   // of a card.
-  const shape = await altHistoryShape(env, fresh, budget.child(24), deep);
+  const shape = wantHistory ? await altHistoryShape(env, fresh, budget.child(24), deep) : null;
 
   // Real sales, when asked for. Discovered once and cached like the series.
   let salesShape = null;
@@ -938,6 +942,10 @@ async function altHistory(workerUrl, env) {
       autograph: null,
     };
     salesShape = await altSalesShape(env, seed, fresh, budget.child(26), seedCert?.asset?.id ?? null);
+  }
+
+  if (!wantHistory && !wantSales) {
+    return json({ error: "nothing to return: history=0 needs sales=1" }, 400);
   }
 
   if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
@@ -976,7 +984,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   const cacheKey = new Request(
     `https://alt-cache.internal/history?cert=${encodeURIComponent(cert)}`
     + `&grade=${encodeURIComponent(gradeOverride ?? "")}&grader=${encodeURIComponent(graderOverride ?? "")}`
-    + `&sales=${salesShape?.priceField ? 1 : 0}`
+    + `&sales=${salesShape?.priceField ? 1 : 0}&hist=${sharedShape ? 1 : 0}`
   );
   if (!fresh) {
     const cached = await cache.match(cacheKey);
@@ -1004,9 +1012,17 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   };
 
   // 2. what is the series called?
-  const shape = sharedShape ?? await altHistoryShape(env, fresh, budget);
-  const usable = shape.listField && shape.valueField
-    && (shape.dateField || shape.mode === "parallel");
+  // No series shape and a sales shape present means the caller asked for sales
+  // only; otherwise resolve the series as usual.
+  const wantHistory = !!sharedShape || !salesShape;
+  const wantSales = !!salesShape?.priceField;
+  const shape = sharedShape ?? (wantHistory ? await altHistoryShape(env, fresh, budget) : null);
+  if (!wantHistory && !wantSales) {
+    return { body: { cert, assetId: certData.asset.id, subject: certData.asset.subject,
+                     error: "nothing to return" }, cached: false };
+  }
+  const usable = !wantHistory || (shape.listField && shape.valueField
+    && (shape.dateField || shape.mode === "parallel"));
   if (!usable) {
     return { body: { cert, assetId: certData.asset.id, subject: certData.asset.subject,
                      history: null, discovery: shape,
@@ -1017,46 +1033,47 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   // 3. fetch it
   // The series may sit several levels inside a container, and the outermost
   // field may take arguments, so build from the discovered call and path.
-  const path = shape.path ?? [shape.listField];
-  const parts = [shape.call ?? path[0], ...path.slice(1)];
+  const path = wantHistory ? (shape.path ?? [shape.listField]) : [];
+  const parts = wantHistory ? [shape.call ?? path[0], ...path.slice(1)] : [];
   // Sales live under the same pricingData call as the series, so select both in
   // one go rather than paying for the call twice.
-  const wantSales = !!salesShape?.priceField;
   const salesInner = wantSales
     ? `marketTransactions { ${[salesShape.dateField, salesShape.priceField, ...(salesShape.extras ?? [])].join(" ")} }`
     : "";
 
-  const leaf = shape.mode === "parallel"
+  const leaf = !wantHistory ? "" : shape.mode === "parallel"
     ? [...new Set([shape.valueField, shape.dateField, shape.anchors?.start, shape.anchors?.end]
         .filter(Boolean))].join(" ")
     : `${shape.dateField} ${shape.valueField}`;
-  const sameCall = wantSales && shape.scope === "asset" && parts[0] === salesShape.call;
+  const sameCall = wantHistory && wantSales && shape.scope === "asset" && parts[0] === salesShape.call;
   const seriesInner = parts.slice(1).reduceRight((acc, f) => `${f} { ${acc} }`, leaf);
-  const series = sameCall
+  const series = !wantHistory
+    ? `${salesShape.call} { ${salesInner} }`
+    : sameCall
     ? `${parts[0]} { ${seriesInner} ${salesInner} }`
     : parts.reduceRight((acc, f) => `${f} { ${acc} }`, leaf)
       + (wantSales ? ` ${salesShape.call} { ${salesInner} }` : "");
-  const needsMtf = !!(shape.args?.mtf || salesShape?.args?.mtf);
+  const needsMtf = !!(shape?.args?.mtf || salesShape?.args?.mtf);
   const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!${needsMtf ? ", $mtf: MarketTransactionFilter!" : ""}) {
     asset(id: $id) {
       id subject
-      ${shape.scope === "asset" ? series : ""}
+      ${!wantHistory || shape.scope === "asset" ? series : ""}
       altValueInfo(tsFilter: $tsFilter) {
         currentAltValue
-        ${shape.scope === "asset" ? "" : series}
+        ${!wantHistory || shape.scope === "asset" ? "" : series}
       }
     }
   }`;
   // Ask for the widest window the filter allows, not just its default.
   const variables = { id: certData.asset.id,
-                      tsFilter: { ...tsFilter, ...(shape.windowExtra ?? {}) } };
+                      tsFilter: { ...tsFilter, ...(shape?.windowExtra ?? {}) } };
   // Both selections share one marketTransactionFilter. The series ignores it —
   // it filters on tsFilter — while the sales only return rows for the filter
   // discovery settled on, so that one wins whenever sales are being fetched.
-  if (needsMtf) variables.mtf = salesShape?.args?.mtf ?? shape.args?.mtf ?? {};
+  if (needsMtf) variables.mtf = salesShape?.args?.mtf ?? shape?.args?.mtf ?? {};
   const res = await altGraphql("AssetHistory", query, variables, env, budget);
   const asset = res.body?.data?.asset;
-  const info = shape.scope === "asset" ? asset : asset?.altValueInfo;
+  const info = !wantHistory || shape.scope === "asset" ? asset : asset?.altValueInfo;
   if (!info) {
     return { body: { cert, assetId: certData.asset.id, history: null, discovery: shape,
                      errors: res.body?.errors?.map(e => e.message).slice(0, 3) }, cached: false };
@@ -1064,7 +1081,9 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   const node = path.reduce((n, f) => (n == null ? null : n[f]), info);
   let points = [];
   let undated = false;
-  if (shape.mode === "parallel") {
+  if (!wantHistory) {
+    points = null;
+  } else if (shape.mode === "parallel") {
     // Values in one array. Dates arrive one of three ways: a matching array, a
     // start and end to spread evenly across the points, or a start alone, where
     // the spacing is taken as daily.
@@ -1121,17 +1140,18 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     grade: tsFilter.gradeNumber,
     grader: tsFilter.gradingCompany,
     currentValue: asset?.altValueInfo?.currentAltValue ?? null,
-    points: points.length,
-    history: points,
-    fields: { path, date: shape.dateField, value: shape.valueField,
-              scope: shape.scope ?? "value", mode: shape.mode ?? "objects" },
-    window: shape.windowHow ?? "ALT's default window",
+    ...(wantHistory ? { points: points.length, history: points } : {}),
+    ...(wantHistory ? {
+      fields: { path, date: shape.dateField, value: shape.valueField,
+                scope: shape.scope ?? "value", mode: shape.mode ?? "objects" },
+      window: shape.windowHow ?? "ALT's default window",
+    } : {}),
     ...(sales ? { salesCount: sales.length, sales,
                   salesFilter: salesShape.args?.mtf ?? {},
                   ...(sales.length ? {} : { salesNote: `no transactions returned; filters tried: ${(salesShape.filterTried ?? []).join(" | ")}` }) } : {}),
     ...(undated ? { note: "ALT returns the values without dates; positions are indices, oldest first" } : {}),
   };
-  if (points.length) {
+  if (points?.length || (!wantHistory && sales?.length)) {
     try {
       await cache.put(cacheKey, new Response(JSON.stringify(body), {
         headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ALT_HISTORY_TTL}` },

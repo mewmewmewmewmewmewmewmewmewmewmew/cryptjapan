@@ -85,6 +85,16 @@ come from the same upstream call, so asking for them costs nothing extra.
 }
 ```
 
+Sales and the value series come from the same upstream call, so there is no
+request to save by splitting them. If you only want sales, add `history=0`:
+the response drops the series (a few hundred points per card) and keeps
+`currentValue`, and on a cold cache it also skips discovering the series'
+shape.
+
+```
+GET /alt-history?cert=112689981&sales=1&history=0
+```
+
 Every sale carries at least `date` and `price`. Any further fields ALT exposes
 (currency, source, grade, a link) are included when present. Sales are far
 sparser than the daily series — a card may have hundreds of index points and a
@@ -100,6 +110,7 @@ markers on it.
 | `grade` | no | Override which grade's series to fetch, e.g. `9`. Defaults to the cert's own grade |
 | `grader` | no | Override the grading company, e.g. `BGS`. Defaults to the cert's own |
 | `sales` | no | `1` also returns ALT's recorded transactions for the card |
+| `history` | no | `0` omits the value series. Use with `sales=1` for sales only |
 | `fresh` | no | `1` bypasses the cache and re-runs schema discovery. Slow; for debugging |
 
 ## Errors
