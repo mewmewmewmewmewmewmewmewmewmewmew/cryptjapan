@@ -732,9 +732,50 @@ const SALE_DATE_FIELDS = ["soldAt", "saleDate", "soldDate", "dateSold", "date", 
 const SALE_PRICE_FIELDS = ["price", "salePrice", "soldPrice", "amount", "priceUsd", "value", "total"];
 const SALE_EXTRA_FIELDS = ["currency", "grade", "gradingCompany", "certNumber", "source", "marketplace",
                            "venue", "auctionHouse", "seller", "url", "link", "title", "quantity"];
-const ALT_SALES_VERSION = 1;
+const ALT_SALES_VERSION = 2;
 
-async function discoverSalesShape(env, tsFilter, budget) {
+// An empty marketTransactionFilter validates, but validating is not the same as
+// selecting anything. Find which members it accepts, then try a few filled-in
+// filters against a real card and keep the first that actually returns sales.
+const MTF_MEMBER_PROBES = [
+  ["gradeNumber", t => t.gradeNumber], ["gradingCompany", t => t.gradingCompany],
+  ["autograph", () => null], ["startDate", () => "2000-01-01"], ["endDate", () => "2100-01-01"],
+];
+
+async function chooseSalesFilter(env, tsFilter, assetId, call, selection, budget) {
+  const accepted = {};
+  for (const [member, valueOf] of MTF_MEMBER_PROBES) {
+    if (budget.exhausted) break;
+    const probe = { ...accepted, [member]: valueOf(tsFilter) };
+    const res = await probeAltSelection(`${call} { marketTransactions { ${selection} } }`,
+      env, "asset", { tsFilter, mtf: probe }, budget);
+    if (!res.errors.some(e => NOT_DEFINED_RE.test(e) || /Expected type|got invalid value|cannot represent/i.test(e))) {
+      accepted[member] = valueOf(tsFilter);
+    }
+  }
+
+  const variants = [
+    accepted,
+    Object.fromEntries(Object.entries(accepted).filter(([k]) => /grade|grading|autograph/i.test(k))),
+    Object.fromEntries(Object.entries(accepted).filter(([k]) => /date/i.test(k))),
+    {},
+  ];
+  const tried = [];
+  for (const mtf of variants) {
+    if (budget.exhausted || !assetId) break;
+    const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!, $mtf: MarketTransactionFilter!) {
+      asset(id: $id) { ${call} { marketTransactions { ${selection} } } }
+    }`;
+    const res = await altGraphql("AssetHistory", query, { id: assetId, tsFilter, mtf }, env, budget);
+    const rows = res.body?.data?.asset?.pricingData?.marketTransactions;
+    const count = Array.isArray(rows) ? rows.length : null;
+    tried.push(`${JSON.stringify(mtf)} → ${count === null ? (res.body?.errors?.[0]?.message ?? "no data").slice(0, 60) : count + " sales"}`);
+    if (count > 0) return { mtf, memberProbe: accepted, filterTried: tried };
+  }
+  return { mtf: accepted, memberProbe: accepted, filterTried: tried };
+}
+
+async function discoverSalesShape(env, tsFilter, budget, sampleAssetId = null) {
   const first = await probeAltSelection("pricingData", env, "asset", { tsFilter }, budget);
   const args = await buildRequiredArgs("pricingData", first.errors, env, tsFilter, budget);
   const call = callWithArgs("pricingData", args);
@@ -765,17 +806,20 @@ async function discoverSalesShape(env, tsFilter, budget) {
     if (budget.exhausted) break;
     if (await has(name)) extras.push(name);
   }
-  return { call, args: { mtf: vars.mtf }, dateField, priceField, extras, tried };
+  const selection = [dateField, priceField, ...extras].join(" ");
+  const chosen = await chooseSalesFilter(env, tsFilter, sampleAssetId, call, selection, budget);
+  return { call, args: { mtf: chosen.mtf }, dateField, priceField, extras,
+           filterTried: chosen.filterTried, tried };
 }
 
-async function altSalesShape(env, tsFilter, fresh, budget) {
+async function altSalesShape(env, tsFilter, fresh, budget, sampleAssetId = null) {
   const cache = caches.default;
   const key = new Request(`https://alt-cache.internal/sales-shape?v=${ALT_SALES_VERSION}`);
   if (!fresh) {
     const hit = await cache.match(key);
     if (hit) { try { return JSON.parse(await hit.text()); } catch {} }
   }
-  const shape = await discoverSalesShape(env, tsFilter, budget);
+  const shape = await discoverSalesShape(env, tsFilter, budget, sampleAssetId);
   try {
     await cache.put(key, new Response(JSON.stringify(shape), {
       headers: { "Content-Type": "application/json",
@@ -884,8 +928,16 @@ async function altHistory(workerUrl, env) {
   // Real sales, when asked for. Discovered once and cached like the series.
   let salesShape = null;
   if (wantSales) {
-    const seed = { gradeNumber: grade || "10", gradingCompany: grader || "PSA", autograph: null };
-    salesShape = await altSalesShape(env, seed, fresh, budget.child(26));
+    // Resolve one card first: choosing the filter means checking which one
+    // actually returns sales, which needs a real asset to ask about.
+    const seedRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: certs[0] }, env, budget);
+    const seedCert = seedRes.body?.data?.cert;
+    const seed = {
+      gradeNumber: grade || seedCert?.gradeNumber || "10",
+      gradingCompany: grader || seedCert?.gradingCompany || "PSA",
+      autograph: null,
+    };
+    salesShape = await altSalesShape(env, seed, fresh, budget.child(26), seedCert?.asset?.id ?? null);
   }
 
   if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
@@ -998,7 +1050,10 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   // Ask for the widest window the filter allows, not just its default.
   const variables = { id: certData.asset.id,
                       tsFilter: { ...tsFilter, ...(shape.windowExtra ?? {}) } };
-  if (needsMtf) variables.mtf = shape.args?.mtf ?? salesShape?.args?.mtf ?? {};
+  // Both selections share one marketTransactionFilter. The series ignores it —
+  // it filters on tsFilter — while the sales only return rows for the filter
+  // discovery settled on, so that one wins whenever sales are being fetched.
+  if (needsMtf) variables.mtf = salesShape?.args?.mtf ?? shape.args?.mtf ?? {};
   const res = await altGraphql("AssetHistory", query, variables, env, budget);
   const asset = res.body?.data?.asset;
   const info = shape.scope === "asset" ? asset : asset?.altValueInfo;
@@ -1071,7 +1126,9 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     fields: { path, date: shape.dateField, value: shape.valueField,
               scope: shape.scope ?? "value", mode: shape.mode ?? "objects" },
     window: shape.windowHow ?? "ALT's default window",
-    ...(sales ? { salesCount: sales.length, sales } : {}),
+    ...(sales ? { salesCount: sales.length, sales,
+                  salesFilter: salesShape.args?.mtf ?? {},
+                  ...(sales.length ? {} : { salesNote: `no transactions returned; filters tried: ${(salesShape.filterTried ?? []).join(" | ")}` }) } : {}),
     ...(undated ? { note: "ALT returns the values without dates; positions are indices, oldest first" } : {}),
   };
   if (points.length) {
