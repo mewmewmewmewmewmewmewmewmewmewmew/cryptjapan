@@ -602,6 +602,43 @@ async function probeAltHistoryShape(env, budget, deep = false) {
 // new attempt had failed too.
 const ALT_SHAPE_VERSION = 13;
 
+// What else does TimeSeriesFilter accept? An input type rejects a member it
+// doesn't define, by name — so a member that survives validation is real. A
+// wrong value type is also a pass: the complaint is then about the value, which
+// means the field itself exists. This is how we find out whether the window we
+// get is ALT's limit or just our default.
+const FILTER_PROBES = [
+  ["startDate", "2020-01-01"], ["endDate", "2026-12-31"], ["from", "2020-01-01"], ["to", "2026-12-31"],
+  ["since", "2020-01-01"], ["period", "ALL"], ["range", "ALL"], ["timeframe", "ALL"],
+  ["interval", "DAILY"], ["granularity", "DAILY"], ["days", 3650], ["months", 120],
+  ["limit", 5000], ["maxPoints", 5000], ["allTime", true],
+];
+const NOT_DEFINED_RE = /is not defined by type|Unknown (?:field|argument)/i;
+
+async function probeTimeSeriesFilter(env, tsFilter, budget) {
+  const query = `query Cert($certNumber: String!, $tsFilter: TimeSeriesFilter!) {
+    cert(certNumber: $certNumber) { asset { altValueInfo(tsFilter: $tsFilter) { currentAltValue } } }
+  }`;
+  const results = [];
+  for (const [field, value] of FILTER_PROBES) {
+    if (budget.exhausted) break;
+    const res = await altGraphql("Cert", query,
+      { certNumber: "00000000", tsFilter: { ...tsFilter, [field]: value } }, env, budget);
+    if (res.budgetExhausted) break;
+    const errors = (res.body?.errors ?? []).map(e => e.message);
+    const rejected = errors.find(e => NOT_DEFINED_RE.test(e) && e.includes(field));
+    const typeComplaint = errors.find(e => /Expected type|cannot represent|got invalid value/i.test(e));
+    results.push({
+      field,
+      accepted: !rejected,
+      note: rejected ? rejected.slice(0, 110)
+          : typeComplaint ? `exists, wrong value type: ${typeComplaint.slice(0, 90)}`
+          : "accepted",
+    });
+  }
+  return results;
+}
+
 async function altHistoryShape(env, fresh = false, budget = null, deep = false) {
   const cache = caches.default;
   const key = new Request(`https://alt-cache.internal/history-shape?v=${ALT_SHAPE_VERSION}`);
@@ -657,11 +694,26 @@ async function altHistory(workerUrl, env) {
   // of being told what a previous, weaker attempt concluded.
   const fresh = workerUrl.searchParams.get("fresh") === "1";
   const deep = workerUrl.searchParams.get("deep") === "1";
+  const inspectFilter = workerUrl.searchParams.get("inspectFilter") === "1";
 
   // One budget for the whole invocation: a batch of certs shares it with
   // discovery, so a long list can't walk into Cloudflare's subrequest limit —
   // which throws, rather than failing the call that crossed it.
   const budget = new SubrequestBudget(45);
+
+  if (inspectFilter) {
+    const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: certs[0] }, env, budget);
+    const cd = certRes.body?.data?.cert;
+    const tsFilter = {
+      gradeNumber: grade || cd?.gradeNumber || "10",
+      gradingCompany: grader || cd?.gradingCompany || "PSA",
+      autograph: null,
+    };
+    return json({
+      tsFilterSent: tsFilter,
+      accepts: await probeTimeSeriesFilter(env, tsFilter, budget.child(20)),
+    });
+  }
 
   // Resolve the schema shape once. Letting each cert do it meant five parallel
   // discoveries on a cold cache, which is how a batch blew the subrequest cap.
