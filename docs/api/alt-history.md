@@ -64,6 +64,33 @@ Each entry in `results` has the same shape as a single-card response. Maximum
 
 ---
 
+## Real sales
+
+```
+GET /alt-history?cert=112689981&sales=1
+```
+
+Adds ALT's recorded transactions for the card alongside the value series. They
+come from the same upstream call, so asking for them costs nothing extra.
+
+```json
+{
+  "points": 409,
+  "history": [ /* … */ ],
+  "salesCount": 2,
+  "sales": [
+    { "date": "2026-09-02", "price": 181.5, "currency": "USD", "source": "eBay" },
+    { "date": "2026-07-14", "price": 205.0, "currency": "USD", "source": "Goldin" }
+  ]
+}
+```
+
+Every sale carries at least `date` and `price`. Any further fields ALT exposes
+(currency, source, grade, a link) are included when present. Sales are far
+sparser than the daily series — a card may have hundreds of index points and a
+handful of actual sales — so plot the series as the line and the sales as
+markers on it.
+
 ## Parameters
 
 | Parameter | Required | Notes |
@@ -72,6 +99,7 @@ Each entry in `results` has the same shape as a single-card response. Maximum
 | `certs` | one of | Comma-separated list, max 20 |
 | `grade` | no | Override which grade's series to fetch, e.g. `9`. Defaults to the cert's own grade |
 | `grader` | no | Override the grading company, e.g. `BGS`. Defaults to the cert's own |
+| `sales` | no | `1` also returns ALT's recorded transactions for the card |
 | `fresh` | no | `1` bypasses the cache and re-runs schema discovery. Slow; for debugging |
 
 ## Errors
@@ -101,8 +129,9 @@ them again, since the ones that succeeded are now cached.
 - **Currency:** USD.
 - **Range:** roughly the last **13 months**, daily. Asking for a wider window
   returns the same series, so this is ALT's limit, not a restriction here.
-- **It is a smoothed index, not sales.** Points are ALT's modelled value, not
-  individual transactions — good for trend, wrong for "it sold for this".
+- **`history` is a smoothed index, not sales.** Points are ALT's modelled value,
+  not individual transactions — good for trend, wrong for "it sold for this".
+  For actual transactions use `sales=1`.
 - **The last few points often repeat.** ALT carries the most recent value
   forward, so day-over-day change can read as 0%. Compare across a week or more.
 - A card with few comparable sales will have a flatter, more extrapolated line.

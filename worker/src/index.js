@@ -725,6 +725,66 @@ async function inspectPricingData(env, tsFilter, budget) {
   return { call, marketTransactionFilterSent: vars.mtf, fields: found };
 }
 
+// PricingData.marketTransactions is a list of MarketTransaction: actual sales,
+// as opposed to the modelled value series. Its field names are unknown like
+// everything else here, so probe for them once and cache the result.
+const SALE_DATE_FIELDS = ["soldAt", "saleDate", "soldDate", "dateSold", "date", "timestamp", "createdAt"];
+const SALE_PRICE_FIELDS = ["price", "salePrice", "soldPrice", "amount", "priceUsd", "value", "total"];
+const SALE_EXTRA_FIELDS = ["currency", "grade", "gradingCompany", "certNumber", "source", "marketplace",
+                           "venue", "auctionHouse", "seller", "url", "link", "title", "quantity"];
+const ALT_SALES_VERSION = 1;
+
+async function discoverSalesShape(env, tsFilter, budget) {
+  const first = await probeAltSelection("pricingData", env, "asset", { tsFilter }, budget);
+  const args = await buildRequiredArgs("pricingData", first.errors, env, tsFilter, budget);
+  const call = callWithArgs("pricingData", args);
+  const vars = { tsFilter, mtf: args.__mtfValue ?? {} };
+  const tried = [];
+
+  const has = async name => {
+    const res = await probeAltSelection(`${call} { marketTransactions { ${name} } }`, env, "asset", vars, budget);
+    if (res.exhausted) return false;
+    tried.push(`${name}: ${res.valid ? "yes" : (res.error ?? "").slice(0, 60)}`);
+    return res.valid;
+  };
+  const firstOf = async names => {
+    for (const n of names) {
+      if (budget.exhausted) break;
+      if (await has(n)) return n;
+    }
+    return null;
+  };
+
+  const dateField = await firstOf(SALE_DATE_FIELDS);
+  const priceField = await firstOf(SALE_PRICE_FIELDS);
+  if (!dateField || !priceField) {
+    return { error: "could not identify a date and price on MarketTransaction", dateField, priceField, tried };
+  }
+  const extras = [];
+  for (const name of SALE_EXTRA_FIELDS) {
+    if (budget.exhausted) break;
+    if (await has(name)) extras.push(name);
+  }
+  return { call, args: { mtf: vars.mtf }, dateField, priceField, extras, tried };
+}
+
+async function altSalesShape(env, tsFilter, fresh, budget) {
+  const cache = caches.default;
+  const key = new Request(`https://alt-cache.internal/sales-shape?v=${ALT_SALES_VERSION}`);
+  if (!fresh) {
+    const hit = await cache.match(key);
+    if (hit) { try { return JSON.parse(await hit.text()); } catch {} }
+  }
+  const shape = await discoverSalesShape(env, tsFilter, budget);
+  try {
+    await cache.put(key, new Response(JSON.stringify(shape), {
+      headers: { "Content-Type": "application/json",
+                 "Cache-Control": `s-maxage=${shape.priceField ? ALT_SHAPE_TTL : 3600}` },
+    }));
+  } catch {}
+  return shape;
+}
+
 async function altHistoryShape(env, fresh = false, budget = null, deep = false) {
   const cache = caches.default;
   const key = new Request(`https://alt-cache.internal/history-shape?v=${ALT_SHAPE_VERSION}`);
@@ -782,6 +842,7 @@ async function altHistory(workerUrl, env) {
   const deep = workerUrl.searchParams.get("deep") === "1";
   const inspectFilter = workerUrl.searchParams.get("inspectFilter") === "1";
   const inspectPricing = workerUrl.searchParams.get("inspectPricing") === "1";
+  const wantSales = workerUrl.searchParams.get("sales") === "1";
 
   // One budget for the whole invocation: a batch of certs shares it with
   // discovery, so a long list can't walk into Cloudflare's subrequest limit —
@@ -820,8 +881,16 @@ async function altHistory(workerUrl, env) {
   // of a card.
   const shape = await altHistoryShape(env, fresh, budget.child(24), deep);
 
+  // Real sales, when asked for. Discovered once and cached like the series.
+  let salesShape = null;
+  if (wantSales) {
+    const seed = { gradeNumber: grade || "10", gradingCompany: grader || "PSA", autograph: null };
+    salesShape = await altSalesShape(env, seed, fresh, budget.child(26));
+  }
+
   if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
-    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh, budget, shape);
+    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh, budget, shape, salesShape);
+    if (wantSales && !salesShape?.priceField) body.salesNote = salesShape?.error ?? "sales unavailable";
     return new Response(JSON.stringify(body, null, 1), {
       status: body.error === "cert not found on ALT" ? 404 : 200,
       headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": cached ? "hit" : "miss" },
@@ -833,26 +902,29 @@ async function altHistory(workerUrl, env) {
   for (let i = 0; i < certs.length; i += 5) {
     const batch = await Promise.all(
       certs.slice(i, i + 5).map(c =>
-        altHistoryOne(c, grade, grader, env, fresh, budget, shape)
+        altHistoryOne(c, grade, grader, env, fresh, budget, shape, salesShape)
           .then(r => r.body)
           .catch(e => ({ cert: c, history: null, error: String(e?.message ?? e) }))),
     );
     results.push(...batch);
   }
   const incomplete = results.filter(r => !r.history && /budget/i.test(r.error ?? "")).length;
+  const salesProblem = wantSales && !salesShape?.priceField ? salesShape?.error : null;
   return json({
     count: results.length,
     withHistory: results.filter(r => r.history?.length).length,
     ...(incomplete ? { note: `${incomplete} cert(s) hit this request's upstream call limit — ask for them in a second request; answered certs are now cached` } : {}),
+    ...(salesProblem ? { salesNote: salesProblem } : {}),
     results,
   });
 }
 
-async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = false, budget = null, sharedShape = null) {
+async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = false, budget = null, sharedShape = null, salesShape = null) {
   const cache = caches.default;
   const cacheKey = new Request(
     `https://alt-cache.internal/history?cert=${encodeURIComponent(cert)}`
     + `&grade=${encodeURIComponent(gradeOverride ?? "")}&grader=${encodeURIComponent(graderOverride ?? "")}`
+    + `&sales=${salesShape?.priceField ? 1 : 0}`
   );
   if (!fresh) {
     const cached = await cache.match(cacheKey);
@@ -895,12 +967,24 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   // field may take arguments, so build from the discovered call and path.
   const path = shape.path ?? [shape.listField];
   const parts = [shape.call ?? path[0], ...path.slice(1)];
+  // Sales live under the same pricingData call as the series, so select both in
+  // one go rather than paying for the call twice.
+  const wantSales = !!salesShape?.priceField;
+  const salesInner = wantSales
+    ? `marketTransactions { ${[salesShape.dateField, salesShape.priceField, ...(salesShape.extras ?? [])].join(" ")} }`
+    : "";
+
   const leaf = shape.mode === "parallel"
     ? [...new Set([shape.valueField, shape.dateField, shape.anchors?.start, shape.anchors?.end]
         .filter(Boolean))].join(" ")
     : `${shape.dateField} ${shape.valueField}`;
-  const series = parts.reduceRight((acc, f) => `${f} { ${acc} }`, leaf);
-  const needsMtf = !!shape.args?.mtf;
+  const sameCall = wantSales && shape.scope === "asset" && parts[0] === salesShape.call;
+  const seriesInner = parts.slice(1).reduceRight((acc, f) => `${f} { ${acc} }`, leaf);
+  const series = sameCall
+    ? `${parts[0]} { ${seriesInner} ${salesInner} }`
+    : parts.reduceRight((acc, f) => `${f} { ${acc} }`, leaf)
+      + (wantSales ? ` ${salesShape.call} { ${salesInner} }` : "");
+  const needsMtf = !!(shape.args?.mtf || salesShape?.args?.mtf);
   const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!${needsMtf ? ", $mtf: MarketTransactionFilter!" : ""}) {
     asset(id: $id) {
       id subject
@@ -914,7 +998,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   // Ask for the widest window the filter allows, not just its default.
   const variables = { id: certData.asset.id,
                       tsFilter: { ...tsFilter, ...(shape.windowExtra ?? {}) } };
-  if (needsMtf) variables.mtf = shape.args.mtf;
+  if (needsMtf) variables.mtf = shape.args?.mtf ?? salesShape?.args?.mtf ?? {};
   const res = await altGraphql("AssetHistory", query, variables, env, budget);
   const asset = res.body?.data?.asset;
   const info = shape.scope === "asset" ? asset : asset?.altValueInfo;
@@ -964,6 +1048,17 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     })).filter(pt => pt.date != null && pt.value != null);
   }
 
+  let sales = null;
+  if (wantSales) {
+    const node = asset?.pricingData ?? asset;
+    const rows = Array.isArray(node?.marketTransactions) ? node.marketTransactions : [];
+    sales = rows.map(row => {
+      const out = { date: row[salesShape.dateField] ?? null, price: row[salesShape.priceField] ?? null };
+      for (const k of salesShape.extras ?? []) if (row[k] != null) out[k] = row[k];
+      return out;
+    }).filter(sale => sale.price != null);
+  }
+
   const body = {
     cert,
     assetId: certData.asset.id,
@@ -976,6 +1071,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     fields: { path, date: shape.dateField, value: shape.valueField,
               scope: shape.scope ?? "value", mode: shape.mode ?? "objects" },
     window: shape.windowHow ?? "ALT's default window",
+    ...(sales ? { salesCount: sales.length, sales } : {}),
     ...(undated ? { note: "ALT returns the values without dates; positions are indices, oldest first" } : {}),
   };
   if (points.length) {
