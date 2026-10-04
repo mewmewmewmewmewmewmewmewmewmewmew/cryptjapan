@@ -341,6 +341,16 @@ const ASSET_LIST_PROBES = ["pricingData", "salesHistory", "saleHistory", "sales"
 const DATE_PROBES = ["date", "timestamp", "time", "day", "periodStart", "startDate", "x"];
 const VALUE_PROBES = ["value", "altValue", "price", "amount", "avgPrice", "median", "close", "y"];
 const NEEDS_SUBFIELDS_RE = /must have a selection of subfields/i;
+// The opposite complaint: the field is a scalar, or a list of them. Note this
+// contains "must not have a selection", which the needs-subfields pattern must
+// not be allowed to match — that near-miss is why 'date' and 'value' were
+// reported as existing under a [Float].
+const NO_SUBFIELDS_RE = /must not have a selection since type '([^']+)' has no subfields/i;
+// A series can arrive as parallel arrays — the values in one field, their dates
+// in a sibling — rather than a list of records.
+const DATE_ARRAY_PROBES = ["dates", "timestamps", "times", "labels", "days", "periods",
+                           "xAxis", "x", "dateLabels", "startDates", "dateRange"];
+const VALUE_ARRAY_PROBES = ["data", "values", "prices", "amounts", "y"];
 const SUGGESTION_RE = /Did you mean ([^?]+)\?/i;
 const TYPE_IN_ERROR_RE = /of type "\[?([A-Za-z0-9_]+)/;
 
@@ -382,7 +392,7 @@ async function probeAltSelection(selection, env, scope = "value", vars = {}, bud
   if (res.budgetExhausted) return { valid: false, error: null, errors: [], exhausted: true };
   const errors = (res.body?.errors ?? []).map(e => e.message);
   const invalid = errors.find(e =>
-    /Cannot query field|must have a selection|is required|was not provided|Unknown argument/i.test(e));
+    /Cannot query field|must (not )?have a selection|is required|was not provided|Unknown argument/i.test(e));
   return { valid: !invalid, error: invalid ?? null, errors };
 }
 
@@ -451,10 +461,33 @@ async function findSeriesUnder(parts, env, scope, vars, tried, budget, depth = 0
     return { leaf: null, containers };
   };
 
+  // Parallel arrays: a scalar list of values here, with dates in a sibling.
+  // A scalar list selects cleanly on its own; an object list demands subfields
+  // and a missing field is rejected, so "selectable as-is" identifies it.
+  for (const c of VALUE_ARRAY_PROBES) {
+    const { valid, error } = await probe(c);
+    tried.push(`${label}.${c}: ${valid ? "exists (scalar list)" : (error ?? "").slice(0, 70)}`);
+    if (!valid) continue;
+    for (const dc of DATE_ARRAY_PROBES) {
+      const dr = await probeAltSelection(nestSelection(parts, dc), env, scope, vars, budget);
+      tried.push(`${label}.${dc}: ${dr.valid ? "exists" : (dr.error ?? "").slice(0, 60)}`);
+      if (dr.valid) return { path: [], mode: "parallel", valueField: c, dateField: dc };
+      for (const sug of errorSuggestions(dr.error)) {
+        if (sug === c) continue;
+        const check = await probeAltSelection(nestSelection(parts, sug), env, scope, vars, budget);
+        tried.push(`${label}.${sug} (suggested): ${check.valid ? "exists" : "no"}`);
+        if (check.valid) return { path: [], mode: "parallel", valueField: c, dateField: sug };
+      }
+      if (budget.exhausted) break;
+    }
+    // Values without dates are still a series; the caller can say so.
+    return { path: [], mode: "parallel", valueField: c, dateField: null };
+  }
+
   const d = await classify(DATE_PROBES, DATE_FIELD_RE);
   if (d.leaf) {
     const v = await classify(VALUE_PROBES, VALUE_FIELD_RE);
-    if (v.leaf) return { path: [], dateField: d.leaf, valueField: v.leaf };
+    if (v.leaf) return { path: [], mode: "objects", dateField: d.leaf, valueField: v.leaf };
   }
 
   // Not at this level: step into any container seen here, or the usual names.
@@ -474,7 +507,7 @@ async function findSeriesUnder(parts, env, scope, vars, tried, budget, depth = 0
 // tsFilter and a marketTransactionFilter, with altValueTimeSeries inside it.
 // Starting there costs a handful of calls instead of a blind sweep, and the
 // general search stays as a fallback for when that stops being true.
-const ALT_KNOWN_SERIES = { scope: "asset", field: "pricingData", inner: ["altValueTimeSeries", "data"] };
+const ALT_KNOWN_SERIES = { scope: "asset", field: "pricingData", inner: ["altValueTimeSeries"] };
 
 async function tryKnownSeries(env, tsFilter, budget, tried) {
   const { field, inner, scope } = ALT_KNOWN_SERIES;
@@ -488,11 +521,12 @@ async function tryKnownSeries(env, tsFilter, budget, tried) {
   const call = callWithArgs(field, args);
   const vars = { tsFilter, mtf: args.__mtfValue ?? {} };
 
-  for (const path of [inner, [inner[0]], []]) {
+  for (const path of [inner, [...inner, "data"], []]) {
     const parts = [call, ...path];
     const found = await findSeriesUnder(parts, env, scope, vars, tried, budget);
     if (found) {
       return { listField: field, call, path: [field, ...path, ...found.path],
+               mode: found.mode ?? "objects",
                dateField: found.dateField, valueField: found.valueField,
                scope, args: { mtf: vars.mtf }, discoveredBy: "known path", tried };
     }
@@ -541,6 +575,7 @@ async function probeAltHistoryShape(env, budget, deep = false) {
         const found = await findSeriesUnder([call], env, pass.scope, vars, tried, budget);
         if (found) {
           return { listField: name, call, path: [name, ...found.path],
+                   mode: found.mode ?? "objects",
                    dateField: found.dateField, valueField: found.valueField,
                    scope: pass.scope, args: vars.mtf ? { mtf: vars.mtf } : null,
                    discoveredBy: "probing", tried };
@@ -557,7 +592,7 @@ async function probeAltHistoryShape(env, budget, deep = false) {
 // Bumped whenever the probe logic changes: a cached conclusion from older,
 // weaker probing would otherwise be served after a deploy and look as if the
 // new attempt had failed too.
-const ALT_SHAPE_VERSION = 8;
+const ALT_SHAPE_VERSION = 11;
 
 async function altHistoryShape(env, fresh = false, budget = null, deep = false) {
   const cache = caches.default;
@@ -574,7 +609,8 @@ async function altHistoryShape(env, fresh = false, budget = null, deep = false) 
   // Cache the answer either way: a successful shape for a day, a failed search
   // for an hour. Without the second, every request would re-run the whole probe
   // sequence against ALT for as long as the schema stays unreadable.
-  const found = shape.listField && shape.dateField && shape.valueField;
+  const found = shape.listField && shape.valueField
+    && (shape.dateField || shape.mode === "parallel");
   try {
     await cache.put(key, new Response(JSON.stringify(shape), {
       headers: {
@@ -687,7 +723,9 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
 
   // 2. what is the series called?
   const shape = sharedShape ?? await altHistoryShape(env, fresh, budget);
-  if (!shape.listField || !shape.dateField || !shape.valueField) {
+  const usable = shape.listField && shape.valueField
+    && (shape.dateField || shape.mode === "parallel");
+  if (!usable) {
     return { body: { cert, assetId: certData.asset.id, subject: certData.asset.subject,
                      history: null, discovery: shape,
                      note: "ALT exposes no value series we could identify; the current value is still available via /alt/AssetDetails" },
@@ -699,8 +737,10 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   // field may take arguments, so build from the discovered call and path.
   const path = shape.path ?? [shape.listField];
   const parts = [shape.call ?? path[0], ...path.slice(1)];
-  const series = parts.reduceRight((acc, f) => `${f} { ${acc} }`,
-                                   `${shape.dateField} ${shape.valueField}`);
+  const leaf = shape.mode === "parallel"
+    ? [shape.valueField, shape.dateField].filter(Boolean).join(" ")
+    : `${shape.dateField} ${shape.valueField}`;
+  const series = parts.reduceRight((acc, f) => `${f} { ${acc} }`, leaf);
   const needsMtf = !!shape.args?.mtf;
   const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!${needsMtf ? ", $mtf: MarketTransactionFilter!" : ""}) {
     asset(id: $id) {
@@ -721,11 +761,22 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     return { body: { cert, assetId: certData.asset.id, history: null, discovery: shape,
                      errors: res.body?.errors?.map(e => e.message).slice(0, 3) }, cached: false };
   }
-  const rows = path.reduce((node, f) => (node == null ? null : node[f]), info);
-  const points = (Array.isArray(rows) ? rows : []).map(p => ({
-    date: p[shape.dateField] ?? null,
-    value: p[shape.valueField] ?? null,
-  })).filter(p => p.date != null && p.value != null);
+  const node = path.reduce((n, f) => (n == null ? null : n[f]), info);
+  let points = [];
+  let undated = false;
+  if (shape.mode === "parallel") {
+    // Values in one array, dates alongside in another; pair them by position.
+    const values = Array.isArray(node?.[shape.valueField]) ? node[shape.valueField] : [];
+    const dates = shape.dateField && Array.isArray(node?.[shape.dateField]) ? node[shape.dateField] : null;
+    undated = !dates;
+    points = values.map((v, i) => ({ date: dates ? (dates[i] ?? null) : i, value: v }))
+                   .filter(pt => pt.value != null);
+  } else {
+    points = (Array.isArray(node) ? node : []).map(pt => ({
+      date: pt[shape.dateField] ?? null,
+      value: pt[shape.valueField] ?? null,
+    })).filter(pt => pt.date != null && pt.value != null);
+  }
 
   const body = {
     cert,
@@ -736,7 +787,9 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     currentValue: asset?.altValueInfo?.currentAltValue ?? null,
     points: points.length,
     history: points,
-    fields: { path, date: shape.dateField, value: shape.valueField, scope: shape.scope ?? "value" },
+    fields: { path, date: shape.dateField, value: shape.valueField,
+              scope: shape.scope ?? "value", mode: shape.mode ?? "objects" },
+    ...(undated ? { note: "ALT returns the values without dates; positions are indices, oldest first" } : {}),
   };
   if (points.length) {
     try {
