@@ -87,7 +87,8 @@ come from the same upstream call, so asking for them costs nothing extra.
 ```
 
 Sales are newest first. Each carries `date`, `price` (a number, USD) and
-`auctionHouse`. `salesFilter` shows which filter ALT accepted — informational.
+`auctionHouse`. `salesFilter` shows the filter sent for this card — it always carries that
+card's own grade and grader, and is useful only when a card returns nothing.
 
 **Sales reach back much further than the value series.** The index covers about
 13 months; transactions go back years, 2021 in the example above. For long-range
@@ -116,7 +117,7 @@ sales as markers on it.
 |---|---|---|
 | `cert` | one of | A single certification number. 4–20 chars, `A–Z a–z 0–9 -` |
 | `certs` | one of | Comma-separated list, max 20 |
-| `grade` | no | Override which grade's series to fetch, e.g. `9`. Defaults to the cert's own grade |
+| `grade` | no | Override which grade to fetch, e.g. `9` or `9.5`. Defaults to the cert's own. Written back in ALT's format, so `10` and `10.0` behave the same |
 | `grader` | no | Override the grading company, e.g. `BGS`. Defaults to the cert's own |
 | `sales` | no | `1` also returns ALT's recorded transactions for the card |
 | `history` | no | `0` omits the value series. Use with `sales=1` for sales only |

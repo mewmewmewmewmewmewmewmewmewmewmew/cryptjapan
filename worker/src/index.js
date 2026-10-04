@@ -732,11 +732,36 @@ const SALE_DATE_FIELDS = ["soldAt", "saleDate", "soldDate", "dateSold", "date", 
 const SALE_PRICE_FIELDS = ["price", "salePrice", "soldPrice", "amount", "priceUsd", "value", "total"];
 const SALE_EXTRA_FIELDS = ["currency", "grade", "gradingCompany", "certNumber", "source", "marketplace",
                            "venue", "auctionHouse", "seller", "url", "link", "title", "quantity"];
-const ALT_SALES_VERSION = 3;
+const ALT_SALES_VERSION = 4;
 
 // An empty marketTransactionFilter validates, but validating is not the same as
 // selecting anything. Find which members it accepts, then try a few filled-in
 // filters against a real card and keep the first that actually returns sales.
+// ALT writes grades with one decimal ("10.0", "9.5"). A caller passing grade=10
+// matched nothing: the series came back empty and the value null, with no error
+// to say why. Numeric grades are normalised; anything else passes through.
+function normalizeAltGrade(value) {
+  const text = String(value ?? "").trim();
+  const n = Number(text);
+  return text && Number.isFinite(n) ? n.toFixed(1) : text;
+}
+
+// Which members the sales filter should carry. The names are a property of the
+// schema and cacheable; their values belong to the card being asked about and
+// must never be, which is how one card's grade came to filter every other
+// card's sales.
+function salesFilterFor(members, tsFilter) {
+  const out = {};
+  for (const member of members ?? []) {
+    if (member === "gradeNumber") out.gradeNumber = tsFilter.gradeNumber;
+    else if (member === "gradingCompany") out.gradingCompany = tsFilter.gradingCompany;
+    else if (member === "autograph") out.autograph = null;
+    else if (member === "startDate") out.startDate = "2000-01-01";
+    else if (member === "endDate") out.endDate = "2100-01-01";
+  }
+  return out;
+}
+
 const MTF_MEMBER_PROBES = [
   ["gradeNumber", t => t.gradeNumber], ["gradingCompany", t => t.gradingCompany],
   ["autograph", () => null], ["startDate", () => "2000-01-01"], ["endDate", () => "2100-01-01"],
@@ -754,25 +779,27 @@ async function chooseSalesFilter(env, tsFilter, assetId, call, selection, budget
     }
   }
 
+  const names = Object.keys(accepted);
   const variants = [
-    accepted,
-    Object.fromEntries(Object.entries(accepted).filter(([k]) => /grade|grading|autograph/i.test(k))),
-    Object.fromEntries(Object.entries(accepted).filter(([k]) => /date/i.test(k))),
-    {},
+    names,
+    names.filter(k => /grade|grading|autograph/i.test(k)),
+    names.filter(k => /date/i.test(k)),
+    [],
   ];
   const tried = [];
-  for (const mtf of variants) {
+  for (const members of variants) {
     if (budget.exhausted || !assetId) break;
+    const mtf = salesFilterFor(members, tsFilter);
     const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!, $mtf: MarketTransactionFilter!) {
       asset(id: $id) { ${call} { marketTransactions { ${selection} } } }
     }`;
     const res = await altGraphql("AssetHistory", query, { id: assetId, tsFilter, mtf }, env, budget);
     const rows = res.body?.data?.asset?.pricingData?.marketTransactions;
     const count = Array.isArray(rows) ? rows.length : null;
-    tried.push(`${JSON.stringify(mtf)} → ${count === null ? (res.body?.errors?.[0]?.message ?? "no data").slice(0, 60) : count + " sales"}`);
-    if (count > 0) return { mtf, memberProbe: accepted, filterTried: tried };
+    tried.push(`${members.length ? members.join("+") : "(empty)"} → ${count === null ? (res.body?.errors?.[0]?.message ?? "no data").slice(0, 60) : count + " sales"}`);
+    if (count > 0) return { members, filterTried: tried };
   }
-  return { mtf: accepted, memberProbe: accepted, filterTried: tried };
+  return { members: names, filterTried: tried };
 }
 
 async function discoverSalesShape(env, tsFilter, budget, sampleAssetId = null) {
@@ -808,7 +835,8 @@ async function discoverSalesShape(env, tsFilter, budget, sampleAssetId = null) {
   }
   const selection = [dateField, priceField, ...extras].join(" ");
   const chosen = await chooseSalesFilter(env, tsFilter, sampleAssetId, call, selection, budget);
-  return { call, args: { mtf: chosen.mtf }, dateField, priceField, extras,
+  // Only schema-level facts are returned, so this is safe to cache across cards.
+  return { call, filterMembers: chosen.members, dateField, priceField, extras,
            filterTried: chosen.filterTried, tried };
 }
 
@@ -937,7 +965,7 @@ async function altHistory(workerUrl, env) {
     const seedRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: certs[0] }, env, budget);
     const seedCert = seedRes.body?.data?.cert;
     const seed = {
-      gradeNumber: grade || seedCert?.gradeNumber || "10",
+      gradeNumber: normalizeAltGrade(grade || seedCert?.gradeNumber || "10"),
       gradingCompany: grader || seedCert?.gradingCompany || "PSA",
       autograph: null,
     };
@@ -983,7 +1011,8 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   const cache = caches.default;
   const cacheKey = new Request(
     `https://alt-cache.internal/history?cert=${encodeURIComponent(cert)}`
-    + `&grade=${encodeURIComponent(gradeOverride ?? "")}&grader=${encodeURIComponent(graderOverride ?? "")}`
+    + `&grade=${encodeURIComponent(normalizeAltGrade(gradeOverride ?? ""))}`
+    + `&grader=${encodeURIComponent(graderOverride ?? "")}`
     + `&sales=${salesShape?.priceField ? 1 : 0}&hist=${sharedShape ? 1 : 0}`
   );
   if (!fresh) {
@@ -1006,7 +1035,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
                      details: certRes.body?.errors?.map(e => e.message).slice(0, 2) }, cached: false };
   }
   const tsFilter = {
-    gradeNumber: gradeOverride || certData.gradeNumber,
+    gradeNumber: normalizeAltGrade(gradeOverride || certData.gradeNumber),
     gradingCompany: graderOverride || certData.gradingCompany,
     autograph: null,
   };
@@ -1053,7 +1082,9 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
     ? `${parts[0]} { ${seriesInner} ${salesInner} }`
     : parts.reduceRight((acc, f) => `${f} { ${acc} }`, leaf)
       + (wantSales ? ` ${salesShape.call} { ${salesInner} }` : "");
-  const needsMtf = !!(shape?.args?.mtf || salesShape?.args?.mtf);
+  // Built here, from this cert's own grade and grader.
+  const salesMtf = wantSales ? salesFilterFor(salesShape.filterMembers, tsFilter) : null;
+  const needsMtf = !!(shape?.args?.mtf || salesMtf);
   const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!${needsMtf ? ", $mtf: MarketTransactionFilter!" : ""}) {
     asset(id: $id) {
       id subject
@@ -1070,7 +1101,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   // Both selections share one marketTransactionFilter. The series ignores it —
   // it filters on tsFilter — while the sales only return rows for the filter
   // discovery settled on, so that one wins whenever sales are being fetched.
-  if (needsMtf) variables.mtf = salesShape?.args?.mtf ?? shape?.args?.mtf ?? {};
+  if (needsMtf) variables.mtf = salesMtf ?? shape?.args?.mtf ?? {};
   const res = await altGraphql("AssetHistory", query, variables, env, budget);
   const asset = res.body?.data?.asset;
   const info = !wantHistory || shape.scope === "asset" ? asset : asset?.altValueInfo;
@@ -1152,7 +1183,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
       window: shape.windowHow ?? "ALT's default window",
     } : {}),
     ...(sales ? { salesCount: sales.length, sales,
-                  salesFilter: salesShape.args?.mtf ?? {},
+                  salesFilter: salesMtf ?? {},
                   ...(sales.length ? {} : { salesNote: `no transactions returned; filters tried: ${(salesShape.filterTried ?? []).join(" | ")}` }) } : {}),
     ...(undated ? { note: "ALT returns the values without dates; positions are indices, oldest first" } : {}),
   };
