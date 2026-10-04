@@ -356,7 +356,10 @@ function errorSuggestions(message) {
 // Variables a probe may reference; declarations are emitted only for the ones
 // the selection actually uses, since an unused variable is a validation error.
 const ALT_VAR_TYPES = { tsFilter: "TimeSeriesFilter!", mtf: "MarketTransactionFilter!" };
-const REQUIRED_ARG_RE = /argument '([A-Za-z0-9_]+)' of type '([A-Za-z0-9_\[\]!]+)' is required/g;
+// Two phrasings for the same thing, and ALT emits both:
+//   Argument 'x' of required type 'T!' was not provided.
+//   Field 'f' argument 'x' of type 'T!' is required, but it was not provided.
+const REQUIRED_ARG_RE = /[Aa]rgument '([A-Za-z0-9_]+)' of (?:required )?type '([A-Za-z0-9_\[\]!]+)'/g;
 const REQUIRED_INPUT_RE = /Field '([A-Za-z0-9_]+)' of required type '([A-Za-z0-9_\[\]!]+)' was not provided/g;
 
 async function probeAltSelection(selection, env, scope = "value", vars = {}, budget = null) {
@@ -477,7 +480,7 @@ async function tryKnownSeries(env, tsFilter, budget, tried) {
   const { field, inner, scope } = ALT_KNOWN_SERIES;
   const first = await probeAltSelection(field, env, scope, { tsFilter }, budget);
   if (first.exhausted) return null;
-  if (!/is required|must have a selection/i.test(first.error ?? "")) {
+  if (!/is required|was not provided|must have a selection/i.test(first.error ?? "")) {
     tried.push(`known.${field}: ${(first.error ?? "unexpectedly valid").slice(0, 70)}`);
     return null;
   }
@@ -498,7 +501,7 @@ async function tryKnownSeries(env, tsFilter, budget, tried) {
   return null;
 }
 
-async function probeAltHistoryShape(env, budget) {
+async function probeAltHistoryShape(env, budget, deep = false) {
   const tried = [];
   const tsFilter = { gradeNumber: "10", gradingCompany: "PSA", autograph: null };
 
@@ -508,6 +511,10 @@ async function probeAltHistoryShape(env, budget) {
     return { error: "ran out of subrequest budget before identifying the series; re-run with fresh=1 to continue",
              tried };
   }
+  // ALT has named where the series lives, so the open-ended sweep is no longer
+  // the likely route to it — it just spends the budget and buries the one error
+  // that matters. Keep it behind deep=1 for when the known path stops working.
+  if (!deep) return { error: "the known path (asset.pricingData) did not yield a series", tried };
 
   for (const pass of [{ scope: "value", names: LIST_PROBES }, { scope: "asset", names: ASSET_LIST_PROBES }]) {
     const queue = [...pass.names];
@@ -550,9 +557,9 @@ async function probeAltHistoryShape(env, budget) {
 // Bumped whenever the probe logic changes: a cached conclusion from older,
 // weaker probing would otherwise be served after a deploy and look as if the
 // new attempt had failed too.
-const ALT_SHAPE_VERSION = 7;
+const ALT_SHAPE_VERSION = 8;
 
-async function altHistoryShape(env, fresh = false, budget = null) {
+async function altHistoryShape(env, fresh = false, budget = null, deep = false) {
   const cache = caches.default;
   const key = new Request(`https://alt-cache.internal/history-shape?v=${ALT_SHAPE_VERSION}`);
   if (!fresh) {
@@ -561,7 +568,7 @@ async function altHistoryShape(env, fresh = false, budget = null) {
   }
   let shape = await discoverAltHistoryShape(env, budget);
   if (!shape.listField) {
-    const probed = await probeAltHistoryShape(env, budget ?? new SubrequestBudget(40));
+    const probed = await probeAltHistoryShape(env, budget ?? new SubrequestBudget(40), deep);
     shape = probed.listField ? probed : { ...shape, probe: probed };
   }
   // Cache the answer either way: a successful shape for a day, a failed search
@@ -605,6 +612,7 @@ async function altHistory(workerUrl, env) {
   // Escape hatch for exactly the case that bit here: re-run discovery instead
   // of being told what a previous, weaker attempt concluded.
   const fresh = workerUrl.searchParams.get("fresh") === "1";
+  const deep = workerUrl.searchParams.get("deep") === "1";
 
   // One budget for the whole invocation: a batch of certs shares it with
   // discovery, so a long list can't walk into Cloudflare's subrequest limit —
@@ -616,7 +624,7 @@ async function altHistory(workerUrl, env) {
   // Discovery gets a sub-budget: searching the schema must never consume what
   // the cert lookups themselves need, or the answer is a budget error instead
   // of a card.
-  const shape = await altHistoryShape(env, fresh, budget.child(24));
+  const shape = await altHistoryShape(env, fresh, budget.child(24), deep);
 
   if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
     const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh, budget, shape);
