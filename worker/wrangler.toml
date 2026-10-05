@@ -1,3 +1,15 @@
 name = "cryptjapan-proxy"
 main = "src/index.js"
 compatibility_date = "2024-01-01"
+
+# Result cache for /alt-history. KV rather than the edge cache so every data
+# centre shares one copy, and so the warming job can enumerate what to refresh.
+[[kv_namespaces]]
+binding = "ALT_HISTORY"
+id = "afd540b8db244fd496e3f84ded791968"
+
+# Hourly, not twelve-hourly: a single run can only refresh what fits in one
+# invocation's subrequest allowance, so it renews the oldest slice each hour and
+# everything stays under twelve hours old.
+[triggers]
+crons = ["0 * * * *"]

@@ -37,6 +37,12 @@ const ONE_WEEK_MS   = 7  * 24 * 60 * 60 * 1000;
 const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
 
 export default {
+  // Cron entry point: keeps the cached results warm so the first visitor after a
+  // quiet period is served from KV rather than waiting on ALT.
+  async scheduled(event, env, ctx) {
+    ctx.waitUntil(warmAltHistory(env).catch(() => {}));
+  },
+
   async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS });
@@ -59,6 +65,14 @@ export default {
 
     if (path === "/alt-schema") {
       return altSchemaProbe(url, env);
+    }
+
+    if (path === "/alt-warm") {
+      return warmAltHistory(env)
+        .then(r => new Response(JSON.stringify(r, null, 1),
+          { headers: { ...CORS, "Content-Type": "application/json" } }))
+        .catch(e => new Response(JSON.stringify({ error: String(e?.message ?? e) }),
+          { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }));
     }
 
     if (path === "/alt-history") {
@@ -841,28 +855,21 @@ async function discoverSalesShape(env, tsFilter, budget, sampleAssetId = null) {
 }
 
 async function altSalesShape(env, tsFilter, fresh, budget, sampleAssetId = null) {
-  const cache = caches.default;
-  const key = new Request(`https://alt-cache.internal/sales-shape?v=${ALT_SALES_VERSION}`);
+  const name = `sales-v${ALT_SALES_VERSION}`;
   if (!fresh) {
-    const hit = await cache.match(key);
-    if (hit) { try { return JSON.parse(await hit.text()); } catch {} }
+    const cached = await readShapeCache(env, name);
+    if (cached) return cached;
   }
   const shape = await discoverSalesShape(env, tsFilter, budget, sampleAssetId);
-  try {
-    await cache.put(key, new Response(JSON.stringify(shape), {
-      headers: { "Content-Type": "application/json",
-                 "Cache-Control": `s-maxage=${shape.priceField ? ALT_SHAPE_TTL : 3600}` },
-    }));
-  } catch {}
+  await writeShapeCache(env, name, shape, shape.priceField ? ALT_SHAPE_TTL : 3600);
   return shape;
 }
 
 async function altHistoryShape(env, fresh = false, budget = null, deep = false) {
-  const cache = caches.default;
-  const key = new Request(`https://alt-cache.internal/history-shape?v=${ALT_SHAPE_VERSION}`);
+  const name = `history-v${ALT_SHAPE_VERSION}`;
   if (!fresh) {
-    const hit = await cache.match(key);
-    if (hit) { try { return JSON.parse(await hit.text()); } catch {} }
+    const cached = await readShapeCache(env, name);
+    if (cached) return cached;
   }
   let shape = await discoverAltHistoryShape(env, budget);
   if (!shape.listField) {
@@ -874,14 +881,7 @@ async function altHistoryShape(env, fresh = false, budget = null, deep = false) 
   // sequence against ALT for as long as the schema stays unreadable.
   const found = shape.listField && shape.valueField
     && (shape.dateField || shape.mode === "parallel");
-  try {
-    await cache.put(key, new Response(JSON.stringify(shape), {
-      headers: {
-        "Content-Type": "application/json",
-        "Cache-Control": `s-maxage=${found ? ALT_SHAPE_TTL : 3600}`,
-      },
-    }));
-  } catch {}
+  await writeShapeCache(env, name, shape, found ? ALT_SHAPE_TTL : 3600);
   return shape;
 }
 
@@ -893,6 +893,64 @@ const CERT_RE = /^[A-Za-z0-9-]{4,20}$/;
 // Single or batch: ?cert=X for one card, ?certs=X,Y,Z for a list. Each cert is
 // cached and resolved independently, so overlapping batches mostly hit cache
 // and one bad cert can't fail the rest.
+// Hourly warming. Everything the site has asked for is already a KV key, so the
+// job lists them, takes the stalest that are still being used, and refreshes
+// those. A run is bounded by the same per-invocation subrequest allowance as a
+// request, which is why this runs hourly in slices instead of once every twelve
+// hours: a single run cannot refresh a few hundred cards.
+const WARM_STALE_AFTER_MS = 11 * 3600 * 1000;
+
+async function warmAltHistory(env) {
+  if (!env?.ALT_HISTORY) return { skipped: "no KV binding" };
+  const now = Date.now();
+  const budget = new SubrequestBudget(40);
+
+  // 1. what is cached, and which of it is both stale and still wanted
+  const due = [];
+  let cursor;
+  do {
+    const page = await env.ALT_HISTORY.list({ prefix: KV_PREFIX, limit: 1000, cursor });
+    for (const entry of page.keys) {
+      const meta = entry.metadata ?? {};
+      const requested = Date.parse(meta.lastRequestedAt ?? meta.fetchedAt ?? "");
+      if (isFinite(requested) && now - requested > ALT_HISTORY_ABANDON_MS) continue;
+      const fetched = Date.parse(meta.fetchedAt ?? "");
+      const age = isFinite(fetched) ? now - fetched : Infinity;
+      if (age < WARM_STALE_AFTER_MS) continue;
+      due.push({ key: entry.name, age, lastRequestedAt: meta.lastRequestedAt ?? null });
+    }
+    cursor = page.list_complete ? null : page.cursor;
+  } while (cursor);
+  due.sort((a, b) => b.age - a.age);   // stalest first
+
+  // 2. resolve the schema once, then refresh what the allowance permits
+  const wantsHistory = due.some(d => parseAltHistoryKey(d.key).history);
+  const wantsSales = due.some(d => parseAltHistoryKey(d.key).sales);
+  const shape = wantsHistory ? await altHistoryShape(env, false, budget.child(24)) : null;
+  let salesShape = null;
+  if (wantsSales) {
+    const sample = parseAltHistoryKey(due.find(d => parseAltHistoryKey(d.key).sales).key);
+    salesShape = await altSalesShape(env, {
+      gradeNumber: normalizeAltGrade(sample.grade || "10"),
+      gradingCompany: sample.grader || "PSA",
+      autograph: null,
+    }, false, budget.child(10), null);
+  }
+
+  let refreshed = 0;
+  for (const item of due) {
+    if (budget.exhausted) break;
+    const { cert, grade, grader, sales, history } = parseAltHistoryKey(item.key);
+    const body = await fetchAltHistoryBody(cert, grade || null, grader || null, env, budget,
+                                           history ? shape : null,
+                                           sales ? salesShape : null);
+    // Keep the original request time: refreshing is not a sign of demand, and
+    // overwriting it would keep an abandoned card warm forever.
+    if (await writeAltHistoryCache(env, item.key, body, item.lastRequestedAt)) refreshed++;
+  }
+  return { due: due.length, refreshed, callsUsed: budget.used };
+}
+
 async function altHistory(workerUrl, env, ctx = null) {
   const json = (body, status = 200) => new Response(JSON.stringify(body, null, 1), {
     status, headers: { ...CORS, "Content-Type": "application/json" },
@@ -1023,35 +1081,94 @@ async function altHistory(workerUrl, env, ctx = null) {
 // freshness window and an older one is still served, then refreshed behind the
 // request. Keyed on everything that changes the answer.
 const ALT_HISTORY_FRESH_MS = 12 * 3600 * 1000;
-const ALT_HISTORY_KEEP = 7 * 24 * 3600;
+const ALT_HISTORY_KEEP = 14 * 24 * 3600;
 const MAX_BACKGROUND_REFRESHES = 6;
 
-function altHistoryCacheKey(cert, gradeOverride, graderOverride, sharedShape, salesShape) {
-  return new Request(
-    `https://alt-cache.internal/history?cert=${encodeURIComponent(cert)}`
-    + `&grade=${encodeURIComponent(normalizeAltGrade(gradeOverride ?? ""))}`
-    + `&grader=${encodeURIComponent(graderOverride ?? "")}`
-    + `&sales=${salesShape?.priceField ? 1 : 0}&hist=${sharedShape ? 1 : 0}`
-  );
+// Entries live in KV, so every data centre reads the same copy and the warming
+// job can enumerate what to refresh — neither of which the edge cache can do.
+// Where the binding is absent the edge cache still serves, so an unbound deploy
+// degrades rather than breaks.
+const KV_PREFIX = "h:";
+// The discovered schema is global knowledge, not per-region, and deriving it
+// costs a sweep of probes — so it belongs in KV, where one discovery serves
+// every data centre instead of the first visitor to each paying for it.
+async function readShapeCache(env, name) {
+  try {
+    if (env?.ALT_HISTORY) return await env.ALT_HISTORY.get(`shape:${name}`, { type: "json" });
+    const hit = await caches.default.match(new Request(`https://alt-cache.internal/shape/${name}`));
+    return hit ? JSON.parse(await hit.text()) : null;
+  } catch { return null; }
 }
 
-async function readAltHistoryCache(key) {
-  const hit = await caches.default.match(key);
-  if (!hit) return null;
+async function writeShapeCache(env, name, value, ttl) {
   try {
+    if (env?.ALT_HISTORY) {
+      await env.ALT_HISTORY.put(`shape:${name}`, JSON.stringify(value), { expirationTtl: ttl });
+      return;
+    }
+    await caches.default.put(new Request(`https://alt-cache.internal/shape/${name}`),
+      new Response(JSON.stringify(value), {
+        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ttl}` },
+      }));
+  } catch {}
+}
+
+// Stop warming a combination nobody has asked for in a fortnight; its own
+// expiry then removes it.
+const ALT_HISTORY_ABANDON_MS = 14 * 24 * 3600 * 1000;
+
+function altHistoryCacheKey(cert, gradeOverride, graderOverride, sharedShape, salesShape) {
+  const parts = [
+    cert,
+    normalizeAltGrade(gradeOverride ?? ""),
+    graderOverride ?? "",
+    salesShape?.priceField ? 1 : 0,
+    sharedShape ? 1 : 0,
+  ].map(part => encodeURIComponent(String(part)));
+  return KV_PREFIX + parts.join(":");
+}
+
+function parseAltHistoryKey(key) {
+  const [cert, grade, grader, sales, hist] =
+    key.slice(KV_PREFIX.length).split(":").map(decodeURIComponent);
+  return { cert, grade, grader, sales: sales === "1", history: hist === "1" };
+}
+
+function edgeKeyFor(key) {
+  return new Request(`https://alt-cache.internal/${encodeURIComponent(key)}`);
+}
+
+async function readAltHistoryCache(env, key) {
+  try {
+    if (env?.ALT_HISTORY) {
+      const entry = await env.ALT_HISTORY.get(key, { type: "json" });
+      return entry?.body && entry?.fetchedAt ? entry : null;
+    }
+    const hit = await caches.default.match(edgeKeyFor(key));
+    if (!hit) return null;
     const entry = JSON.parse(await hit.text());
     return entry?.body && entry?.fetchedAt ? entry : null;
   } catch { return null; }
 }
 
-async function writeAltHistoryCache(key, body) {
+async function writeAltHistoryCache(env, key, body, lastRequestedAt = null) {
   // A result carrying an error is a failure to retry, not an answer to keep.
   if (!body || body.error) return null;
   const fetchedAt = new Date().toISOString();
+  const payload = JSON.stringify({ fetchedAt, body });
   try {
-    await caches.default.put(key, new Response(JSON.stringify({ fetchedAt, body }), {
-      headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ALT_HISTORY_KEEP}` },
-    }));
+    if (env?.ALT_HISTORY) {
+      await env.ALT_HISTORY.put(key, payload, {
+        expirationTtl: ALT_HISTORY_KEEP,
+        // Carried on the key itself so the warming job can read it from a list,
+        // without fetching every value.
+        metadata: { fetchedAt, lastRequestedAt: lastRequestedAt ?? fetchedAt },
+      });
+    } else {
+      await caches.default.put(edgeKeyFor(key), new Response(payload, {
+        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ALT_HISTORY_KEEP}` },
+      }));
+    }
   } catch {}
   return fetchedAt;
 }
@@ -1062,7 +1179,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
                              sharedShape = null, salesShape = null, ctx = null, swr = null) {
   const key = altHistoryCacheKey(cert, gradeOverride, graderOverride, sharedShape, salesShape);
   if (!fresh) {
-    const entry = await readAltHistoryCache(key);
+    const entry = await readAltHistoryCache(env, key);
     if (entry) {
       const age = Date.now() - Date.parse(entry.fetchedAt);
       const stale = !(age >= 0 && age < ALT_HISTORY_FRESH_MS);
@@ -1073,7 +1190,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
         ctx.waitUntil((async () => {
           const body = await fetchAltHistoryBody(cert, gradeOverride, graderOverride, env,
                                                  swr.budget, sharedShape, salesShape);
-          await writeAltHistoryCache(key, body);
+          await writeAltHistoryCache(env, key, body);
         })().catch(() => {}));
       }
       return { body: { ...entry.body, cachedAt: entry.fetchedAt, cache: stale ? "stale" : "hit" },
@@ -1083,7 +1200,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
 
   const body = await fetchAltHistoryBody(cert, gradeOverride, graderOverride, env, budget,
                                          sharedShape, salesShape);
-  const fetchedAt = await writeAltHistoryCache(key, body);
+  const fetchedAt = await writeAltHistoryCache(env, key, body, new Date().toISOString());
   // Nothing was stored for a failure, so don't label it as though it were.
   return { body: fetchedAt ? { ...body, cachedAt: fetchedAt, cache: "miss" } : body,
            cached: false };

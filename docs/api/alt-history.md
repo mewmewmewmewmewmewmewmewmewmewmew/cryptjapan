@@ -149,12 +149,17 @@ Every result carries two fields:
 
 A batch response also carries a `cache` tally, e.g. `{ "hit": 18, "miss": 2 }`.
 
-- An entry is **fresh for 12 hours** and kept for seven days.
+- Results live in **Workers KV**, so every region reads the same copy.
+- An entry is **fresh for 12 hours** and kept for fourteen days.
 - Past 12 hours it is still returned **immediately**, then refreshed behind the
   response, so nobody waits on ALT. Up to six renewals run per request.
 - Failures are never cached, so a cert that errored is retried next time.
-- The cache lives at the Cloudflare edge, which is **per data centre**: visitors
-  in another region warm their own copy.
+- An **hourly cron** refreshes the stalest entries, so the first visitor after a
+  quiet period is still served from cache. A combination nobody has requested
+  for fourteen days stops being refreshed and expires.
+- The cron runs hourly rather than every 12 hours because one run can only
+  refresh what fits in a single invocation's upstream-call allowance — roughly
+  twenty cards. Hourly slices keep a few hundred cards under twelve hours old.
 - A repeated batch of already-cached certs costs **no** upstream calls.
 - A first call for 20 uncached certs can leave one or two short of the request's
   call ceiling. They resolve on the next call.
