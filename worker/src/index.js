@@ -37,7 +37,7 @@ const ONE_WEEK_MS   = 7  * 24 * 60 * 60 * 1000;
 const THREE_WEEK_MS = 21 * 24 * 60 * 60 * 1000;
 
 export default {
-  async fetch(request, env) {
+  async fetch(request, env, ctx) {
     if (request.method === "OPTIONS") {
       return new Response(null, { status: 204, headers: CORS });
     }
@@ -62,7 +62,7 @@ export default {
     }
 
     if (path === "/alt-history") {
-      return altHistory(url, env).catch(e => new Response(
+      return altHistory(url, env, ctx).catch(e => new Response(
         JSON.stringify({ error: String(e?.message ?? e) }, null, 1),
         { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }));
     }
@@ -274,7 +274,7 @@ async function altSchemaProbe(workerUrl, env) {
 // type are not documented and not visible from here, so the shape is
 // discovered by introspection on first use and cached — the alternative was
 // hard-coding a guess that silently returns nothing when wrong.
-const ALT_HISTORY_TTL = 6 * 3600;
+// Superseded by ALT_HISTORY_FRESH_MS, which the wrapper applies itself.
 const ALT_SHAPE_TTL = 24 * 3600;
 const HISTORY_FIELD_RE = /history|series|values|points|trend|chart/i;
 const DATE_FIELD_RE = /date|time|timestamp|day|period|week|month/i;
@@ -893,7 +893,7 @@ const CERT_RE = /^[A-Za-z0-9-]{4,20}$/;
 // Single or batch: ?cert=X for one card, ?certs=X,Y,Z for a list. Each cert is
 // cached and resolved independently, so overlapping batches mostly hit cache
 // and one bad cert can't fail the rest.
-async function altHistory(workerUrl, env) {
+async function altHistory(workerUrl, env, ctx = null) {
   const json = (body, status = 200) => new Response(JSON.stringify(body, null, 1), {
     status, headers: { ...CORS, "Content-Type": "application/json" },
   });
@@ -908,9 +908,11 @@ async function altHistory(workerUrl, env) {
 
   const grade = workerUrl.searchParams.get("grade");
   const grader = workerUrl.searchParams.get("grader");
-  // Escape hatch for exactly the case that bit here: re-run discovery instead
-  // of being told what a previous, weaker attempt concluded.
+  // fresh=1 refreshes the data: skip the cached result and re-fetch. It
+  // deliberately does not re-derive ALT's schema, which costs a sweep of probes
+  // and is not what a "refresh" button means; rediscover=1 does that.
   const fresh = workerUrl.searchParams.get("fresh") === "1";
+  const rediscover = workerUrl.searchParams.get("rediscover") === "1";
   const deep = workerUrl.searchParams.get("deep") === "1";
   const inspectFilter = workerUrl.searchParams.get("inspectFilter") === "1";
   const inspectPricing = workerUrl.searchParams.get("inspectPricing") === "1";
@@ -924,6 +926,9 @@ async function altHistory(workerUrl, env) {
   // discovery, so a long list can't walk into Cloudflare's subrequest limit —
   // which throws, rather than failing the call that crossed it.
   const budget = new SubrequestBudget(45);
+  // Background renewals draw on the same invocation allowance as the response,
+  // so they get their own ceiling and a cap on how many may run.
+  const swr = { used: 0, budget: budget.child(16) };
 
   if (inspectFilter) {
     const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: certs[0] }, env, budget);
@@ -955,7 +960,7 @@ async function altHistory(workerUrl, env) {
   // Discovery gets a sub-budget: searching the schema must never consume what
   // the cert lookups themselves need, or the answer is a budget error instead
   // of a card.
-  const shape = wantHistory ? await altHistoryShape(env, fresh, budget.child(24), deep) : null;
+  const shape = wantHistory ? await altHistoryShape(env, rediscover, budget.child(24), deep) : null;
 
   // Real sales, when asked for. Discovered once and cached like the series.
   let salesShape = null;
@@ -969,7 +974,7 @@ async function altHistory(workerUrl, env) {
       gradingCompany: grader || seedCert?.gradingCompany || "PSA",
       autograph: null,
     };
-    salesShape = await altSalesShape(env, seed, fresh, budget.child(26), seedCert?.asset?.id ?? null);
+    salesShape = await altSalesShape(env, seed, rediscover, budget.child(26), seedCert?.asset?.id ?? null);
   }
 
   if (!wantHistory && !wantSales) {
@@ -977,11 +982,12 @@ async function altHistory(workerUrl, env) {
   }
 
   if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
-    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh, budget, shape, salesShape);
+    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh, budget, shape, salesShape, ctx, swr);
     if (wantSales && !salesShape?.priceField) body.salesNote = salesShape?.error ?? "sales unavailable";
     return new Response(JSON.stringify(body, null, 1), {
       status: body.error === "cert not found on ALT" ? 404 : 200,
-      headers: { ...CORS, "Content-Type": "application/json", "X-Edge-Cache": cached ? "hit" : "miss" },
+      headers: { ...CORS, "Content-Type": "application/json",
+                 "X-Edge-Cache": body.cache ?? (cached ? "hit" : "miss") },
     });
   }
 
@@ -990,49 +996,113 @@ async function altHistory(workerUrl, env) {
   for (let i = 0; i < certs.length; i += 5) {
     const batch = await Promise.all(
       certs.slice(i, i + 5).map(c =>
-        altHistoryOne(c, grade, grader, env, fresh, budget, shape, salesShape)
+        altHistoryOne(c, grade, grader, env, fresh, budget, shape, salesShape, ctx, swr)
           .then(r => r.body)
           .catch(e => ({ cert: c, history: null, error: String(e?.message ?? e) }))),
     );
     results.push(...batch);
   }
   const incomplete = results.filter(r => !r.history && /budget/i.test(r.error ?? "")).length;
+  const cacheCounts = results.reduce((acc, r) => {
+    if (r.cache) acc[r.cache] = (acc[r.cache] ?? 0) + 1;
+    return acc;
+  }, {});
   const salesProblem = wantSales && !salesShape?.priceField ? salesShape?.error : null;
   return json({
     count: results.length,
     withHistory: results.filter(r => r.history?.length).length,
+    cache: cacheCounts,
     ...(incomplete ? { note: `${incomplete} cert(s) hit this request's upstream call limit — ask for them in a second request; answered certs are now cached` } : {}),
     ...(salesProblem ? { salesNote: salesProblem } : {}),
     results,
   });
 }
 
-async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = false, budget = null, sharedShape = null, salesShape = null) {
-  const cache = caches.default;
-  const cacheKey = new Request(
+// A cached entry keeps the time it was fetched alongside the result, so
+// freshness is ours to decide rather than the edge's: it survives well past the
+// freshness window and an older one is still served, then refreshed behind the
+// request. Keyed on everything that changes the answer.
+const ALT_HISTORY_FRESH_MS = 12 * 3600 * 1000;
+const ALT_HISTORY_KEEP = 7 * 24 * 3600;
+const MAX_BACKGROUND_REFRESHES = 6;
+
+function altHistoryCacheKey(cert, gradeOverride, graderOverride, sharedShape, salesShape) {
+  return new Request(
     `https://alt-cache.internal/history?cert=${encodeURIComponent(cert)}`
     + `&grade=${encodeURIComponent(normalizeAltGrade(gradeOverride ?? ""))}`
     + `&grader=${encodeURIComponent(graderOverride ?? "")}`
     + `&sales=${salesShape?.priceField ? 1 : 0}&hist=${sharedShape ? 1 : 0}`
   );
+}
+
+async function readAltHistoryCache(key) {
+  const hit = await caches.default.match(key);
+  if (!hit) return null;
+  try {
+    const entry = JSON.parse(await hit.text());
+    return entry?.body && entry?.fetchedAt ? entry : null;
+  } catch { return null; }
+}
+
+async function writeAltHistoryCache(key, body) {
+  // A result carrying an error is a failure to retry, not an answer to keep.
+  if (!body || body.error) return null;
+  const fetchedAt = new Date().toISOString();
+  try {
+    await caches.default.put(key, new Response(JSON.stringify({ fetchedAt, body }), {
+      headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ALT_HISTORY_KEEP}` },
+    }));
+  } catch {}
+  return fetchedAt;
+}
+
+// Cache-aware wrapper: serves a fresh entry, serves a stale one while renewing
+// it behind the response, and otherwise fetches.
+async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = false, budget = null,
+                             sharedShape = null, salesShape = null, ctx = null, swr = null) {
+  const key = altHistoryCacheKey(cert, gradeOverride, graderOverride, sharedShape, salesShape);
   if (!fresh) {
-    const cached = await cache.match(cacheKey);
-    if (cached) {
-      try { return { body: JSON.parse(await cached.text()), cached: true }; } catch {}
+    const entry = await readAltHistoryCache(key);
+    if (entry) {
+      const age = Date.now() - Date.parse(entry.fetchedAt);
+      const stale = !(age >= 0 && age < ALT_HISTORY_FRESH_MS);
+      // Renewing costs upstream calls from this same invocation's allowance, so
+      // only a few per request, and never at the expense of answering.
+      if (stale && ctx?.waitUntil && swr && swr.used < MAX_BACKGROUND_REFRESHES && !swr.budget.exhausted) {
+        swr.used++;
+        ctx.waitUntil((async () => {
+          const body = await fetchAltHistoryBody(cert, gradeOverride, graderOverride, env,
+                                                 swr.budget, sharedShape, salesShape);
+          await writeAltHistoryCache(key, body);
+        })().catch(() => {}));
+      }
+      return { body: { ...entry.body, cachedAt: entry.fetchedAt, cache: stale ? "stale" : "hit" },
+               cached: true };
     }
   }
+
+  const body = await fetchAltHistoryBody(cert, gradeOverride, graderOverride, env, budget,
+                                         sharedShape, salesShape);
+  const fetchedAt = await writeAltHistoryCache(key, body);
+  // Nothing was stored for a failure, so don't label it as though it were.
+  return { body: fetchedAt ? { ...body, cachedAt: fetchedAt, cache: "miss" } : body,
+           cached: false };
+}
+
+async function fetchAltHistoryBody(cert, gradeOverride, graderOverride, env, budget = null,
+                                   sharedShape = null, salesShape = null) {
 
   // 1. cert → asset, grade and grader (the filter selects which grade's series)
   const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: cert }, env, budget);
   if (certRes.budgetExhausted) {
-    return { body: { cert, history: null,
+    return { cert, history: null,
                      error: "upstream call budget for this request was exhausted",
-                     discovery: sharedShape?.listField ? undefined : sharedShape }, cached: false };
+                     discovery: sharedShape?.listField ? undefined : sharedShape };
   }
   const certData = certRes.body?.data?.cert;
   if (!certData?.asset?.id) {
-    return { body: { cert, history: null, error: "cert not found on ALT",
-                     details: certRes.body?.errors?.map(e => e.message).slice(0, 2) }, cached: false };
+    return { cert, history: null, error: "cert not found on ALT",
+                     details: certRes.body?.errors?.map(e => e.message).slice(0, 2) };
   }
   const tsFilter = {
     gradeNumber: normalizeAltGrade(gradeOverride || certData.gradeNumber),
@@ -1047,16 +1117,15 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   const wantSales = !!salesShape?.priceField;
   const shape = sharedShape ?? (wantHistory ? await altHistoryShape(env, fresh, budget) : null);
   if (!wantHistory && !wantSales) {
-    return { body: { cert, assetId: certData.asset.id, subject: certData.asset.subject,
-                     error: "nothing to return" }, cached: false };
+    return { cert, assetId: certData.asset.id, subject: certData.asset.subject,
+                     error: "nothing to return" };
   }
   const usable = !wantHistory || (shape.listField && shape.valueField
     && (shape.dateField || shape.mode === "parallel"));
   if (!usable) {
-    return { body: { cert, assetId: certData.asset.id, subject: certData.asset.subject,
-                     history: null, discovery: shape,
-                     note: "ALT exposes no value series we could identify; the current value is still available via /alt/AssetDetails" },
-             cached: false };
+    return { cert, assetId: certData.asset.id, subject: certData.asset.subject,
+             history: null, discovery: shape,
+             note: "ALT exposes no value series we could identify; the current value is still available via /alt/AssetDetails" };
   }
 
   // 3. fetch it
@@ -1106,8 +1175,8 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   const asset = res.body?.data?.asset;
   const info = !wantHistory || shape.scope === "asset" ? asset : asset?.altValueInfo;
   if (!info) {
-    return { body: { cert, assetId: certData.asset.id, history: null, discovery: shape,
-                     errors: res.body?.errors?.map(e => e.message).slice(0, 3) }, cached: false };
+    return { cert, assetId: certData.asset.id, history: null, discovery: shape,
+                     errors: res.body?.errors?.map(e => e.message).slice(0, 3) };
   }
   const node = path.reduce((n, f) => (n == null ? null : n[f]), info);
   let points = [];
@@ -1187,14 +1256,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
                   ...(sales.length ? {} : { salesNote: `no transactions returned; filters tried: ${(salesShape.filterTried ?? []).join(" | ")}` }) } : {}),
     ...(undated ? { note: "ALT returns the values without dates; positions are indices, oldest first" } : {}),
   };
-  if (points?.length || (!wantHistory && sales?.length)) {
-    try {
-      await cache.put(cacheKey, new Response(JSON.stringify(body), {
-        headers: { "Content-Type": "application/json", "Cache-Control": `s-maxage=${ALT_HISTORY_TTL}` },
-      }));
-    } catch {}
-  }
-  return { body, cached: false };
+  return body;
 }
 
 async function proxyAlt(request, path, env) {
