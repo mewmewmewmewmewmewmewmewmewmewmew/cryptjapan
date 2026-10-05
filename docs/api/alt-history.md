@@ -121,7 +121,8 @@ sales as markers on it.
 | `grader` | no | Override the grading company, e.g. `BGS`. Defaults to the cert's own |
 | `sales` | no | `1` also returns ALT's recorded transactions for the card |
 | `history` | no | `0` omits the value series. Use with `sales=1` for sales only |
-| `fresh` | no | `1` bypasses the cache and re-runs schema discovery. Slow; for debugging |
+| `fresh` | no | `1` skips the cached result and re-fetches from ALT, then caches it. For a "Refresh now" button |
+| `rediscover` | no | `1` also re-derives ALT's schema. Slow (a sweep of probes); for debugging only |
 
 ## Errors
 
@@ -139,7 +140,21 @@ them again, since the ones that succeeded are now cached.
 
 ## Caching and limits
 
-- Each cert is cached **6 hours**; `X-Edge-Cache: hit|miss` says which.
+Every result carries two fields:
+
+| Field | Meaning |
+|---|---|
+| `cachedAt` | ISO time the data was fetched from ALT |
+| `cache` | `hit` — fresh from cache; `stale` — served from cache and renewed in the background; `miss` — fetched now |
+
+A batch response also carries a `cache` tally, e.g. `{ "hit": 18, "miss": 2 }`.
+
+- An entry is **fresh for 12 hours** and kept for seven days.
+- Past 12 hours it is still returned **immediately**, then refreshed behind the
+  response, so nobody waits on ALT. Up to six renewals run per request.
+- Failures are never cached, so a cert that errored is retried next time.
+- The cache lives at the Cloudflare edge, which is **per data centre**: visitors
+  in another region warm their own copy.
 - A repeated batch of already-cached certs costs **no** upstream calls.
 - A first call for 20 uncached certs can leave one or two short of the request's
   call ceiling. They resolve on the next call.
