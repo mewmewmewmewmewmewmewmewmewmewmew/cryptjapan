@@ -40,7 +40,7 @@ export default {
   // Cron entry point: keeps the cached results warm so the first visitor after a
   // quiet period is served from KV rather than waiting on ALT.
   async scheduled(event, env, ctx) {
-    ctx.waitUntil(warmAltHistory(env).catch(() => {}));
+    ctx.waitUntil(warmAltHistory(env, "cron").catch(() => {}));
   },
 
   async fetch(request, env, ctx) {
@@ -67,8 +67,16 @@ export default {
       return altSchemaProbe(url, env);
     }
 
+    if (path === "/alt-warm-status") {
+      return warmStatus(env)
+        .then(r => new Response(JSON.stringify(r, null, 1),
+          { headers: { ...CORS, "Cache-Control": "no-store", "Content-Type": "application/json" } }))
+        .catch(e => new Response(JSON.stringify({ error: String(e?.message ?? e) }),
+          { status: 500, headers: { ...CORS, "Content-Type": "application/json" } }));
+    }
+
     if (path === "/alt-warm") {
-      return warmAltHistory(env)
+      return warmAltHistory(env, "manual")
         .then(r => new Response(JSON.stringify(r, null, 1),
           { headers: { ...CORS, "Content-Type": "application/json" } }))
         .catch(e => new Response(JSON.stringify({ error: String(e?.message ?? e) }),
@@ -861,7 +869,11 @@ async function altSalesShape(env, tsFilter, fresh, budget, sampleAssetId = null)
     if (cached) return cached;
   }
   const shape = await discoverSalesShape(env, tsFilter, budget, sampleAssetId);
-  await writeShapeCache(env, name, shape, shape.priceField ? ALT_SHAPE_TTL : 3600);
+  // A run that ran out of calls can settle on an empty filter, which selects no
+  // transactions. Keeping that for a day would make every later request return
+  // nothing, so a shape without filter members is held only briefly.
+  const complete = shape.priceField && shape.filterMembers?.length;
+  await writeShapeCache(env, name, shape, complete ? ALT_SHAPE_TTL : 3600);
   return shape;
 }
 
@@ -900,7 +912,9 @@ const CERT_RE = /^[A-Za-z0-9-]{4,20}$/;
 // hours: a single run cannot refresh a few hundred cards.
 const WARM_STALE_AFTER_MS = 11 * 3600 * 1000;
 
-async function warmAltHistory(env) {
+const WARM_LOG_KEY = "meta:lastWarm";
+
+async function warmAltHistory(env, trigger = "manual") {
   if (!env?.ALT_HISTORY) return { skipped: "no KV binding" };
   const now = Date.now();
   const budget = new SubrequestBudget(40);
@@ -948,12 +962,55 @@ async function warmAltHistory(env) {
     // overwriting it would keep an abandoned card warm forever.
     if (await writeAltHistoryCache(env, item.key, body, item.lastRequestedAt)) refreshed++;
   }
-  return { due: due.length, refreshed, callsUsed: budget.used };
+
+  const summary = { at: new Date().toISOString(), trigger, due: due.length, refreshed,
+                    callsUsed: budget.used };
+  // Keep the last run, and the last cron run separately — a manual run proves
+  // the job works, only a cron entry proves the schedule fires.
+  try {
+    const previous = await env.ALT_HISTORY.get(WARM_LOG_KEY, { type: "json" });
+    await env.ALT_HISTORY.put(WARM_LOG_KEY, JSON.stringify({
+      last: summary,
+      lastCron: trigger === "cron" ? summary : (previous?.lastCron ?? null),
+    }));
+  } catch {}
+  return summary;
 }
+
+async function warmStatus(env) {
+  if (!env?.ALT_HISTORY) return { skipped: "no KV binding" };
+  const log = await env.ALT_HISTORY.get(WARM_LOG_KEY, { type: "json" }).catch(() => null);
+  const now = Date.now();
+  const ages = [];
+  let cursor;
+  do {
+    const page = await env.ALT_HISTORY.list({ prefix: KV_PREFIX, limit: 1000, cursor });
+    for (const entry of page.keys) {
+      const fetched = Date.parse(entry.metadata?.fetchedAt ?? "");
+      if (isFinite(fetched)) ages.push((now - fetched) / 3600000);
+    }
+    cursor = page.list_complete ? null : page.cursor;
+  } while (cursor);
+  ages.sort((a, b) => a - b);
+  return {
+    entries: ages.length,
+    oldestHours: ages.length ? +ages[ages.length - 1].toFixed(1) : null,
+    medianHours: ages.length ? +ages[Math.floor(ages.length / 2)].toFixed(1) : null,
+    overTwelveHours: ages.filter(a => a > 12).length,
+    lastRun: log?.last ?? null,
+    lastCronRun: log?.lastCron ?? null,
+    cronAppearsToBeRunning: !!(log?.lastCron && now - Date.parse(log.lastCron.at) < 3 * 3600 * 1000),
+  };
+}
+
+// The body carries its own freshness (cachedAt, cache), so a client reusing a
+// response shows an old reading and, worse, never reaches the Worker — so
+// nothing renews it either. Caching happens here, in KV, not in the browser.
+const NO_STORE = { "Cache-Control": "no-store" };
 
 async function altHistory(workerUrl, env, ctx = null) {
   const json = (body, status = 200) => new Response(JSON.stringify(body, null, 1), {
-    status, headers: { ...CORS, "Content-Type": "application/json" },
+    status, headers: { ...CORS, ...NO_STORE, "Content-Type": "application/json" },
   });
   const raw = workerUrl.searchParams.get("certs") ?? workerUrl.searchParams.get("cert") ?? "";
   const certs = [...new Set(raw.split(",").map(c => c.trim()).filter(Boolean))];
@@ -1044,7 +1101,7 @@ async function altHistory(workerUrl, env, ctx = null) {
     if (wantSales && !salesShape?.priceField) body.salesNote = salesShape?.error ?? "sales unavailable";
     return new Response(JSON.stringify(body, null, 1), {
       status: body.error === "cert not found on ALT" ? 404 : 200,
-      headers: { ...CORS, "Content-Type": "application/json",
+      headers: { ...CORS, ...NO_STORE, "Content-Type": "application/json",
                  "X-Edge-Cache": body.cache ?? (cached ? "hit" : "miss") },
     });
   }

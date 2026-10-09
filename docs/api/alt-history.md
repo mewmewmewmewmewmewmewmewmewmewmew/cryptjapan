@@ -154,6 +154,12 @@ A batch response also carries a `cache` tally, e.g. `{ "hit": 18, "miss": 2 }`.
 - Past 12 hours it is still returned **immediately**, then refreshed behind the
   response, so nobody waits on ALT. Up to six renewals run per request.
 - Failures are never cached, so a cert that errored is retried next time.
+- Responses are sent `Cache-Control: no-store`. The body carries its own
+  freshness, so a client reusing a response would show an old reading and, worse,
+  never reach the Worker, leaving nothing to renew it. Caching belongs here.
+- `GET /alt-warm-status` reports how many entries exist, the oldest and median
+  ages, how many are over twelve hours, and when the warming job last ran —
+  including whether that run came from the cron.
 - An **hourly cron** refreshes the stalest entries, so the first visitor after a
   quiet period is still served from cache. A combination nobody has requested
   for fourteen days stops being refreshed and expires.
