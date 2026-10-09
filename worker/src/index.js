@@ -784,9 +784,11 @@ function salesFilterFor(members, tsFilter) {
   return out;
 }
 
+// Grade and grader are what select a card's transactions; a date range was
+// tried and returns nothing, so it is no longer probed for.
 const MTF_MEMBER_PROBES = [
   ["gradeNumber", t => t.gradeNumber], ["gradingCompany", t => t.gradingCompany],
-  ["autograph", () => null], ["startDate", () => "2000-01-01"], ["endDate", () => "2100-01-01"],
+  ["autograph", () => null],
 ];
 
 async function chooseSalesFilter(env, tsFilter, assetId, call, selection, budget) {
@@ -831,29 +833,68 @@ async function discoverSalesShape(env, tsFilter, budget, sampleAssetId = null) {
   const vars = { tsFilter, mtf: args.__mtfValue ?? {} };
   const tried = [];
 
-  const has = async name => {
-    const res = await probeAltSelection(`${call} { marketTransactions { ${name} } }`, env, "asset", vars, budget);
-    if (res.exhausted) return false;
-    tried.push(`${name}: ${res.valid ? "yes" : (res.error ?? "").slice(0, 60)}`);
-    return res.valid;
-  };
-  const firstOf = async names => {
-    for (const n of names) {
-      if (budget.exhausted) break;
-      if (await has(n)) return n;
+  // One name per request burned twenty-seven calls to learn the field names, and
+  // left nothing for establishing the filter. GraphQL validates the whole
+  // selection at once and names every field it rejects, so asking for all the
+  // candidates under aliases settles them in a single request.
+  const candidates = [...new Set([...SALE_DATE_FIELDS, ...SALE_PRICE_FIELDS, ...SALE_EXTRA_FIELDS])];
+  const aliased = candidates.map((name, i) => `f${i}: ${name}`).join(" ");
+  const sweep = await probeAltSelection(`${call} { marketTransactions { ${aliased} } }`,
+                                        env, "asset", vars, budget);
+  let present;
+  if (sweep.valid) {
+    present = new Set(candidates);
+  } else {
+    // Named in an error means absent, or not a scalar we can select on its own.
+    const rejected = new Set();
+    for (const message of sweep.errors) {
+      for (const m of message.matchAll(/(?:Cannot query field|Field) ['"]([A-Za-z0-9_]+)['"]/g)) {
+        rejected.add(m[1]);
+      }
     }
-    return null;
-  };
+    present = rejected.size
+      ? new Set(candidates.filter(c => !rejected.has(c)))
+      : null;   // nothing named: fall back to asking one at a time
+  }
 
-  const dateField = await firstOf(SALE_DATE_FIELDS);
-  const priceField = await firstOf(SALE_PRICE_FIELDS);
+  if (!present) {
+    present = new Set();
+    for (const name of candidates) {
+      if (budget.exhausted) break;
+      const res = await probeAltSelection(`${call} { marketTransactions { ${name} } }`,
+                                          env, "asset", vars, budget);
+      if (res.valid) present.add(name);
+    }
+  }
+  tried.push(`fields present: ${[...present].join(", ") || "(none)"}`);
+
+  let dateField = SALE_DATE_FIELDS.find(f => present.has(f)) ?? null;
+  let priceField = SALE_PRICE_FIELDS.find(f => present.has(f)) ?? null;
+  let extras = SALE_EXTRA_FIELDS.filter(f => present.has(f) && f !== dateField && f !== priceField);
+
+  // The sweep assumes a server names every field it rejects. If one names only
+  // the first, everything looks present and the selection is full of fields
+  // that don't exist — so confirm it, and narrow down if it doesn't hold.
+  const confirm = async fields =>
+    (await probeAltSelection(`${call} { marketTransactions { ${fields.join(" ")} } }`,
+                             env, "asset", vars, budget)).valid;
+
+  if (dateField && priceField && !(await confirm([dateField, priceField, ...extras]))) {
+    extras = [];
+    if (!(await confirm([dateField, priceField]))) {
+      // Fall back to establishing each name on its own, cheapest first.
+      present = new Set();
+      for (const name of [...SALE_DATE_FIELDS, ...SALE_PRICE_FIELDS]) {
+        if (budget.exhausted) break;
+        if (await confirm([name])) present.add(name);
+      }
+      dateField = SALE_DATE_FIELDS.find(f => present.has(f)) ?? null;
+      priceField = SALE_PRICE_FIELDS.find(f => present.has(f)) ?? null;
+      tried.push(`sweep unreliable; verified individually: ${[...present].join(", ") || "(none)"}`);
+    }
+  }
   if (!dateField || !priceField) {
     return { error: "could not identify a date and price on MarketTransaction", dateField, priceField, tried };
-  }
-  const extras = [];
-  for (const name of SALE_EXTRA_FIELDS) {
-    if (budget.exhausted) break;
-    if (await has(name)) extras.push(name);
   }
   const selection = [dateField, priceField, ...extras].join(" ");
   const chosen = await chooseSalesFilter(env, tsFilter, sampleAssetId, call, selection, budget);
@@ -873,7 +914,7 @@ async function altSalesShape(env, tsFilter, fresh, budget, sampleAssetId = null)
   // transactions. Keeping that for a day would make every later request return
   // nothing, so a shape without filter members is held only briefly.
   const complete = shape.priceField && shape.filterMembers?.length;
-  await writeShapeCache(env, name, shape, complete ? ALT_SHAPE_TTL : 3600);
+  if (complete) await writeShapeCache(env, name, shape, ALT_SHAPE_TTL);
   return shape;
 }
 
@@ -1026,7 +1067,10 @@ async function altHistory(workerUrl, env, ctx = null) {
   // fresh=1 refreshes the data: skip the cached result and re-fetch. It
   // deliberately does not re-derive ALT's schema, which costs a sweep of probes
   // and is not what a "refresh" button means; rediscover=1 does that.
-  const fresh = workerUrl.searchParams.get("fresh") === "1";
+  const fresh = workerUrl.searchParams.get("fresh") === "1"
+             || workerUrl.searchParams.get("rediscover") === "1";
+  // Re-deriving the schema and then answering from cache would show none of it,
+  // so rediscover implies fresh.
   const rediscover = workerUrl.searchParams.get("rediscover") === "1";
   const deep = workerUrl.searchParams.get("deep") === "1";
   const inspectFilter = workerUrl.searchParams.get("inspectFilter") === "1";
@@ -1080,6 +1124,12 @@ async function altHistory(workerUrl, env, ctx = null) {
   // Real sales, when asked for. Discovered once and cached like the series.
   let salesShape = null;
   if (wantSales) {
+    // A known-good shape needs no seed card, and that lookup is a wasted
+    // upstream call on every request once discovery has run.
+    const known = rediscover ? null : await readShapeCache(env, `sales-v${ALT_SALES_VERSION}`);
+    if (known?.priceField && known.filterMembers?.length) salesShape = known;
+  }
+  if (wantSales && !salesShape) {
     // Resolve one card first: choosing the filter means checking which one
     // actually returns sales, which needs a real asset to ask about.
     const seedRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: certs[0] }, env, budget);
@@ -1209,8 +1259,11 @@ async function readAltHistoryCache(env, key) {
 }
 
 async function writeAltHistoryCache(env, key, body, lastRequestedAt = null) {
-  // A result carrying an error is a failure to retry, not an answer to keep.
+  // A result carrying an error is a failure to retry, not an answer to keep —
+  // and so is one whose sales filter was never established, since it selects no
+  // transactions for any card.
   if (!body || body.error) return null;
+  if (body.sales && !Object.keys(body.salesFilter ?? {}).length) return null;
   const fetchedAt = new Date().toISOString();
   const payload = JSON.stringify({ fetchedAt, body });
   try {

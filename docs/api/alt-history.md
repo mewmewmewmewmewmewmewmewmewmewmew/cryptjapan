@@ -122,7 +122,7 @@ sales as markers on it.
 | `sales` | no | `1` also returns ALT's recorded transactions for the card |
 | `history` | no | `0` omits the value series. Use with `sales=1` for sales only |
 | `fresh` | no | `1` skips the cached result and re-fetches from ALT, then caches it. For a "Refresh now" button |
-| `rediscover` | no | `1` also re-derives ALT's schema. Slow (a sweep of probes); for debugging only |
+| `rediscover` | no | `1` re-derives ALT's schema and re-fetches (implies `fresh`). Slow; for debugging only |
 
 ## Errors
 
@@ -153,7 +153,9 @@ A batch response also carries a `cache` tally, e.g. `{ "hit": 18, "miss": 2 }`.
 - An entry is **fresh for 12 hours** and kept for fourteen days.
 - Past 12 hours it is still returned **immediately**, then refreshed behind the
   response, so nobody waits on ALT. Up to six renewals run per request.
-- Failures are never cached, so a cert that errored is retried next time.
+- Failures are never cached, so a cert that errored is retried next time. Nor is
+  a result whose `salesFilter` came back empty, since that filter selects no
+  transactions for any card.
 - Responses are sent `Cache-Control: no-store`. The body carries its own
   freshness, so a client reusing a response would show an old reading and, worse,
   never reach the Worker, leaving nothing to renew it. Caching belongs here.
