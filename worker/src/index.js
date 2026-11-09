@@ -826,6 +826,104 @@ async function chooseSalesFilter(env, tsFilter, assetId, call, selection, budget
   return { members: names, filterTried: tried };
 }
 
+// Set, year and variety sit beside the card number ALT already returns for the
+// cert. Their field names are unknown like everything else here, so the
+// candidates go out together under aliases, once, and ride along on the asset
+// query that already runs — no extra call per card.
+const FACT_ATTR_PROBES = ["cardNumber", "number", "setName", "set", "series", "year",
+                          "releaseYear", "variety", "variation", "rarity", "subset",
+                          "edition", "language"];
+const FACT_ASSET_PROBES = ["setName", "set", "series", "year", "releaseYear",
+                           "variety", "variation", "rarity"];
+const ALT_FACTS_VERSION = 1;
+
+async function discoverAssetFacts(env, budget) {
+  const sweep = async (candidates, wrap) => {
+    const aliased = candidates.map((name, i) => `g${i}: ${name}`).join(" ");
+    const res = await probeAltSelection(wrap(aliased), env, "asset", {}, budget);
+    if (res.exhausted) return [];
+    if (res.valid) return [...candidates];
+    const rejected = new Set();
+    for (const message of res.errors) {
+      for (const m of message.matchAll(/(?:Cannot query field|Field) ['"]([A-Za-z0-9_]+)['"]/g)) {
+        rejected.add(m[1]);
+      }
+    }
+    if (!rejected.size) return [];          // nothing named: can't tell, take none
+    const kept = candidates.filter(c => !rejected.has(c));
+    // Confirm before trusting it: a server naming only the first bad field would
+    // make every candidate look present.
+    if (!kept.length) return [];
+    const check = await probeAltSelection(wrap(kept.join(" ")), env, "asset", {}, budget);
+    return check.valid ? kept : [];
+  };
+
+  const attrs = await sweep(FACT_ATTR_PROBES, inner => `attributes { ${inner} }`);
+  const assetLevel = await sweep(FACT_ASSET_PROBES, inner => inner);
+  // cardPops is already a known-good selection elsewhere in this worker.
+  return { attrs, assetLevel, pops: true, version: ALT_FACTS_VERSION };
+}
+
+async function altAssetFacts(env, fresh, budget) {
+  const name = `facts-v${ALT_FACTS_VERSION}`;
+  if (!fresh) {
+    const cached = await readShapeCache(env, name);
+    if (cached) return cached;
+  }
+  const facts = await discoverAssetFacts(env, budget);
+  if (facts.attrs.length || facts.assetLevel.length) {
+    await writeShapeCache(env, name, facts, ALT_SHAPE_TTL);
+  }
+  return facts;
+}
+
+// The selection those facts add to the asset query.
+function assetFactsSelection(facts) {
+  if (!facts) return "";
+  const parts = [];
+  if (facts.attrs?.length) parts.push(`attributes { ${facts.attrs.join(" ")} }`);
+  if (facts.assetLevel?.length) parts.push(facts.assetLevel.join(" "));
+  if (facts.pops) parts.push("cardPops { gradingCompany gradeNumber count }");
+  return parts.join(" ");
+}
+
+// Reads the logical fields out of whatever ALT turned out to call them. A field
+// ALT doesn't have is left out rather than sent empty.
+function readAssetFacts(assetNode, certAttributes) {
+  const attrs = { ...(certAttributes ?? {}), ...(assetNode?.attributes ?? {}) };
+  const pick = names => {
+    for (const n of names) {
+      const v = attrs[n] ?? assetNode?.[n];
+      if (v != null && String(v).trim() !== "") return v;
+    }
+    return null;
+  };
+
+  const out = {};
+  const cardNumber = pick(["cardNumber", "number"]);
+  if (cardNumber != null) out.cardNumber = String(cardNumber);
+  const set = pick(["setName", "set", "series"]);
+  if (set != null) out.set = String(set);
+  const yearRaw = pick(["year", "releaseYear"]);
+  const year = yearRaw == null ? NaN : Number(String(yearRaw).match(/\d{4}/)?.[0] ?? yearRaw);
+  if (Number.isFinite(year)) out.year = year;
+  const variety = pick(["variety", "variation", "rarity", "subset", "edition"]);
+  if (variety != null) out.variety = String(variety);
+
+  const pops = Array.isArray(assetNode?.cardPops) ? assetNode.cardPops : null;
+  if (pops) {
+    const countFor = grade => pops.find(p =>
+      String(p.gradingCompany ?? "").toUpperCase() === "PSA"
+      && Number(p.gradeNumber) === grade)?.count;
+    const population = {};
+    const ten = countFor(10), nine = countFor(9);
+    if (ten != null) population.psa10 = Number(ten);
+    if (nine != null) population.psa9 = Number(nine);
+    if (Object.keys(population).length) out.population = population;
+  }
+  return out;
+}
+
 async function discoverSalesShape(env, tsFilter, budget, sampleAssetId = null) {
   const first = await probeAltSelection("pricingData", env, "asset", { tsFilter }, budget);
   const args = await buildRequiredArgs("pricingData", first.errors, env, tsFilter, budget);
@@ -1120,6 +1218,8 @@ async function altHistory(workerUrl, env, ctx = null) {
   // the cert lookups themselves need, or the answer is a budget error instead
   // of a card.
   const shape = wantHistory ? await altHistoryShape(env, rediscover, budget.child(24), deep) : null;
+  // Identity fields for the card; discovered once and cached like the others.
+  const facts = await altAssetFacts(env, rediscover, budget.child(6));
 
   // Real sales, when asked for. Discovered once and cached like the series.
   let salesShape = null;
@@ -1147,7 +1247,7 @@ async function altHistory(workerUrl, env, ctx = null) {
   }
 
   if (certs.length === 1 && !workerUrl.searchParams.get("certs")) {
-    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh, budget, shape, salesShape, ctx, swr);
+    const { body, cached } = await altHistoryOne(certs[0], grade, grader, env, fresh, budget, shape, salesShape, ctx, swr, facts);
     if (wantSales && !salesShape?.priceField) body.salesNote = salesShape?.error ?? "sales unavailable";
     return new Response(JSON.stringify(body, null, 1), {
       status: body.error === "cert not found on ALT" ? 404 : 200,
@@ -1161,7 +1261,7 @@ async function altHistory(workerUrl, env, ctx = null) {
   for (let i = 0; i < certs.length; i += 5) {
     const batch = await Promise.all(
       certs.slice(i, i + 5).map(c =>
-        altHistoryOne(c, grade, grader, env, fresh, budget, shape, salesShape, ctx, swr)
+        altHistoryOne(c, grade, grader, env, fresh, budget, shape, salesShape, ctx, swr, facts)
           .then(r => r.body)
           .catch(e => ({ cert: c, history: null, error: String(e?.message ?? e) }))),
     );
@@ -1286,7 +1386,7 @@ async function writeAltHistoryCache(env, key, body, lastRequestedAt = null) {
 // Cache-aware wrapper: serves a fresh entry, serves a stale one while renewing
 // it behind the response, and otherwise fetches.
 async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = false, budget = null,
-                             sharedShape = null, salesShape = null, ctx = null, swr = null) {
+                             sharedShape = null, salesShape = null, ctx = null, swr = null, facts = null) {
   const key = altHistoryCacheKey(cert, gradeOverride, graderOverride, sharedShape, salesShape);
   if (!fresh) {
     const entry = await readAltHistoryCache(env, key);
@@ -1299,7 +1399,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
         swr.used++;
         ctx.waitUntil((async () => {
           const body = await fetchAltHistoryBody(cert, gradeOverride, graderOverride, env,
-                                                 swr.budget, sharedShape, salesShape);
+                                                 swr.budget, sharedShape, salesShape, facts);
           await writeAltHistoryCache(env, key, body);
         })().catch(() => {}));
       }
@@ -1309,7 +1409,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
   }
 
   const body = await fetchAltHistoryBody(cert, gradeOverride, graderOverride, env, budget,
-                                         sharedShape, salesShape);
+                                         sharedShape, salesShape, facts);
   const fetchedAt = await writeAltHistoryCache(env, key, body, new Date().toISOString());
   // Nothing was stored for a failure, so don't label it as though it were.
   return { body: fetchedAt ? { ...body, cachedAt: fetchedAt, cache: "miss" } : body,
@@ -1317,7 +1417,7 @@ async function altHistoryOne(cert, gradeOverride, graderOverride, env, fresh = f
 }
 
 async function fetchAltHistoryBody(cert, gradeOverride, graderOverride, env, budget = null,
-                                   sharedShape = null, salesShape = null) {
+                                   sharedShape = null, salesShape = null, facts = null) {
 
   // 1. cert → asset, grade and grader (the filter selects which grade's series)
   const certRes = await altGraphql("Cert", ALT_QUERIES.Cert, { certNumber: cert }, env, budget);
@@ -1381,9 +1481,10 @@ async function fetchAltHistoryBody(cert, gradeOverride, graderOverride, env, bud
   // Built here, from this cert's own grade and grader.
   const salesMtf = wantSales ? salesFilterFor(salesShape.filterMembers, tsFilter) : null;
   const needsMtf = !!(shape?.args?.mtf || salesMtf);
+  const factsSelection = assetFactsSelection(facts);
   const query = `query AssetHistory($id: ID!, $tsFilter: TimeSeriesFilter!${needsMtf ? ", $mtf: MarketTransactionFilter!" : ""}) {
     asset(id: $id) {
-      id subject
+      id subject ${factsSelection}
       ${!wantHistory || shape.scope === "asset" ? series : ""}
       altValueInfo(tsFilter: $tsFilter) {
         currentAltValue
@@ -1398,7 +1499,11 @@ async function fetchAltHistoryBody(cert, gradeOverride, graderOverride, env, bud
   // it filters on tsFilter — while the sales only return rows for the filter
   // discovery settled on, so that one wins whenever sales are being fetched.
   if (needsMtf) variables.mtf = salesMtf ?? shape?.args?.mtf ?? {};
-  const res = await altGraphql("AssetHistory", query, variables, env, budget);
+  let res = await altGraphql("AssetHistory", query, variables, env, budget);
+  // The identity fields are a bonus; never let them cost the history or sales.
+  if (factsSelection && res.body?.errors?.length && !res.body?.data?.asset) {
+    res = await altGraphql("AssetHistory", query.replace(factsSelection, ""), variables, env, budget);
+  }
   const asset = res.body?.data?.asset;
   const info = !wantHistory || shape.scope === "asset" ? asset : asset?.altValueInfo;
   if (!info) {
@@ -1469,6 +1574,7 @@ async function fetchAltHistoryBody(cert, gradeOverride, graderOverride, env, bud
     cert,
     assetId: certData.asset.id,
     subject: certData.asset.subject,
+    ...readAssetFacts(asset, certData.asset.attributes),
     grade: tsFilter.gradeNumber,
     grader: tsFilter.gradingCompany,
     currentValue: asset?.altValueInfo?.currentAltValue ?? null,

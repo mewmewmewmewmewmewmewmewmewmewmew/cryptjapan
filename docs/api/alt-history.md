@@ -37,6 +37,11 @@ GET /alt-history?cert=112689981
 |---|---|
 | `cert` | The certification number you asked for |
 | `assetId` | ALT's internal id for the card. Links to `https://alt.xyz/itm/{assetId}/research` |
+| `cardNumber` | The card's number as ALT shows it, e.g. `205/165` or `069` |
+| `set` | Set or release name |
+| `year` | Release year, as a number |
+| `variety` | Variant or rarity text, e.g. `Special Art Rare`. Absent when ALT has none |
+| `population` | PSA population, `{ "psa10": 1234, "psa9": 567 }`. Absent when ALT has none |
 | `subject` | Card name, e.g. "Sylveon V" |
 | `grade` / `grader` | The grade whose series this is, e.g. `10.0` / `PSA` |
 | `currentValue` | Today's ALT value, USD |
@@ -44,6 +49,11 @@ GET /alt-history?cert=112689981
 | `history` | `[{ date: "YYYY-MM-DD", value: Number }]`, oldest first, one point per day |
 | `window` | Which time window was requested upstream — informational |
 | `fields` | Where the series was found in ALT's schema — diagnostic, ignore in app code |
+
+Identity fields come from the asset lookup the cert already needs, so they cost
+no extra upstream call, and they are cached with the rest of the result. Any
+field ALT doesn't have is **left out** rather than sent empty — several cards
+share a name, so `cardNumber` is the field to tell them apart.
 
 ## Several cards
 
